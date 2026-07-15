@@ -1,0 +1,31 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Grid World System",
+	"Description": "Deterministic grid navigation integrated with Unreal Engine's Navigation System.",
+	"Category": "AI",
+	"CreatedBy": "Emanuele Cogotti",
+	"CanContainContent": true,
+	"IsBetaVersion": false,
+	"IsExperimentalVersion": false,
+	"Installed": false,
+	"Modules": [
+		{
+			"Name": "GridWorld",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "GridWorldEditor",
+			"Type": "Editor",
+			"LoadingPhase": "PostEngineInit"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "GameplayStateTree",
+			"Enabled": true
+		}
+	]
+}

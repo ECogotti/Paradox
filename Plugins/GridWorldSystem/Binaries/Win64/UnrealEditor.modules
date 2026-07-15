@@ -1,0 +1,8 @@
+{
+	"BuildId": "55116800",
+	"Modules": 
+	{
+		"GridWorld": "UnrealEditor-GridWorld.dll",
+		"GridWorldEditor": "UnrealEditor-GridWorldEditor.dll"
+	}
+}

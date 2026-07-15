@@ -1,0 +1,47 @@
+# Unreal Engine generated and machine-local data
+**/DerivedDataCache/
+**/Intermediate/
+**/Saved/
+
+# IDE and editor state
+**/.vs/
+**/.vscode/
+**/.idea/
+*.code-workspace
+*.sln
+*.suo
+*.user
+*.userprefs
+*.opensdf
+*.sdf
+*.VC.db
+*.VC.opendb
+*.xcodeproj/
+*.xcworkspace/
+*.xcuserdata/
+*.xcuserstate
+
+# Compiler intermediates and debug symbols
+# Binaries folders are intentionally tracked: DLLs, executables, .target and
+# .modules receipts let non-programmers open the project without compiling it.
+*.pdb
+*.ipdb
+*.iobj
+*.obj
+*.pch
+*.idb
+*.ilk
+*.exp
+*.lib
+*.sarif
+
+# Logs and temporary files outside Unreal's Saved folders
+*.log
+*.tmp
+*.temp
+*.stackdump
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
+Desktop.ini
