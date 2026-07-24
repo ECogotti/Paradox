@@ -15,6 +15,7 @@
 #include "Navigation/GridNavigationPath.h"
 #include "Navigation/GridTrafficReservation.h"
 #include "Navigation/GridWorldSnapshot.h"
+#include "Presentation/GridPathPresentationSubsystem.h"
 
 namespace
 {
@@ -26,8 +27,65 @@ namespace
 	}
 }
 
+void UGridWorldPathFollowingComponent::SetActivePathPresentationEnabled(bool bEnabled)
+{
+	if (bPresentActivePath == bEnabled)
+	{
+		return;
+	}
+	bPresentActivePath = bEnabled;
+	if (bPresentActivePath)
+	{
+		SynchronizePathPresentation(EGridPathFollowingPresentationChange::Accepted, false);
+	}
+	else
+	{
+		ReleasePathPresentation(false);
+	}
+}
+
+void UGridWorldPathFollowingComponent::SetActivePathPresentationSettings(
+	EGridPathProgressPresentationMode ProgressMode,
+	int32 Priority)
+{
+	ActivePathPresentationMode = ProgressMode;
+	ActivePathPresentationPriority = Priority;
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+		{
+			if (Presentation->IsPathPresentationValid(ActivePathPresentationHandle))
+			{
+				Presentation->SetPathPresentationMode(ActivePathPresentationHandle, ProgressMode);
+				Presentation->SetPathPresentationPriority(ActivePathPresentationHandle, Priority);
+			}
+		}
+	}
+}
+
+void UGridWorldPathFollowingComponent::SetActivePathPresentationRenderers(bool bCellOverlay, bool bLine)
+{
+	bPresentActivePathAsCellOverlay = bCellOverlay;
+	bPresentActivePathAsLine = bLine;
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+		{
+			if (Presentation->IsPathPresentationValid(ActivePathPresentationHandle))
+			{
+				Presentation->SetPathPresentationRenderers(
+					ActivePathPresentationHandle,
+					bPresentActivePathAsCellOverlay,
+					bPresentActivePathAsLine);
+			}
+		}
+	}
+}
+
 void UGridWorldPathFollowingComponent::Cleanup()
 {
+	ReleasePathPresentation(true);
+	UnbindPresentationPathObserver();
 	ReleaseTrafficCorridor(false);
 	ClearDynamicAgentDebug();
 	ResetDynamicAgentAvoidance(true);
@@ -38,6 +96,12 @@ void UGridWorldPathFollowingComponent::Cleanup()
 
 void UGridWorldPathFollowingComponent::OnPathFinished(const FPathFollowingResult& Result)
 {
+	if (!LastPresentedPathCells.IsEmpty())
+	{
+		OnGridPathPresentationFinished.Broadcast(Result.Code, static_cast<int32>(Result.Flags));
+	}
+	ReleasePathPresentation(true);
+	UnbindPresentationPathObserver();
 	const FGridPathPointFollowingData* FollowingData = GetFollowingData(MoveSegmentEndIndex);
 	if (IsPreciseFollowingData(FollowingData)
 		&& FollowingData->DriveMode == EGridPathDriveMode::DirectVelocity
@@ -53,6 +117,14 @@ void UGridWorldPathFollowingComponent::OnPathFinished(const FPathFollowingResult
 
 void UGridWorldPathFollowingComponent::OnPathUpdated()
 {
+	const FNavPathSharedPtr UpdatedPath = GetPath();
+	const FNavPathSharedPtr PreviouslyObservedPath = PresentationObservedPath.Pin();
+	const EGridPathFollowingPresentationChange PresentationChange = LastPresentedPathCells.IsEmpty()
+		? EGridPathFollowingPresentationChange::Accepted
+		: (PreviouslyObservedPath.Get() == UpdatedPath.Get()
+			? EGridPathFollowingPresentationChange::Recalculated
+			: EGridPathFollowingPresentationChange::Replaced);
+
 	const bool bPreserveRepathMemory = bDynamicAgentRepathPending;
 	ReleaseTrafficCorridor(true);
 	ResetTrafficProgress();
@@ -70,10 +142,14 @@ void UGridWorldPathFollowingComponent::OnPathUpdated()
 	bCollidedWithGoal = false;
 
 	Super::OnPathUpdated();
+	BindPresentationPathObserver(UpdatedPath);
+	SynchronizePathPresentation(PresentationChange, true);
 }
 
 void UGridWorldPathFollowingComponent::SetNavMovementInterface(INavMovementInterface* NavMoveInterface)
 {
+	ReleasePathPresentation(true);
+	UnbindPresentationPathObserver();
 	ReleaseTrafficCorridor(true);
 	ResetTrafficProgress();
 	ClearDynamicAgentDebug();
@@ -85,6 +161,8 @@ void UGridWorldPathFollowingComponent::SetNavMovementInterface(INavMovementInter
 
 void UGridWorldPathFollowingComponent::Reset()
 {
+	ReleasePathPresentation(true);
+	UnbindPresentationPathObserver();
 	ReleaseTrafficCorridor(true);
 	ResetTrafficProgress();
 	ClearDynamicAgentDebug();
@@ -99,6 +177,8 @@ void UGridWorldPathFollowingComponent::Reset()
 
 void UGridWorldPathFollowingComponent::OnNewPawn(APawn* NewPawn)
 {
+	ReleasePathPresentation(true);
+	UnbindPresentationPathObserver();
 	ReleaseTrafficCorridor(false);
 	ResetTrafficProgress();
 	ClearDynamicAgentDebug();
@@ -113,12 +193,14 @@ void UGridWorldPathFollowingComponent::OnNewPawn(APawn* NewPawn)
 void UGridWorldPathFollowingComponent::SetMoveSegment(int32 SegmentStartIndex)
 {
 	Super::SetMoveSegment(SegmentStartIndex);
+	UpdatePathPresentationProgress();
 	ApplyDrivePolicy();
 	ResetPreviousLocation();
 }
 
 void UGridWorldPathFollowingComponent::FollowPathSegment(float DeltaTime)
 {
+	UpdatePathPresentationProgress();
 	if (bYieldingToAgent)
 	{
 		ApplyDynamicAgentYield();
@@ -351,6 +433,205 @@ const FGridNavigationPath* UGridWorldPathFollowingComponent::GetGridPath() const
 	return Path.IsValid() ? Path->CastPath<FGridNavigationPath>() : nullptr;
 }
 
+void UGridWorldPathFollowingComponent::BindPresentationPathObserver(const FNavPathSharedPtr& InPath)
+{
+	const FNavPathSharedPtr ObservedPath = PresentationObservedPath.Pin();
+	if (ObservedPath.Get() == InPath.Get() && PresentationPathObserverHandle.IsValid())
+	{
+		return;
+	}
+	UnbindPresentationPathObserver();
+	if (!InPath.IsValid())
+	{
+		return;
+	}
+	PresentationObservedPath = InPath;
+	PresentationPathObserverHandle = InPath->AddObserver(
+		FNavigationPath::FPathObserverDelegate::FDelegate::CreateUObject(
+			this,
+			&UGridWorldPathFollowingComponent::HandlePresentationPathEvent));
+}
+
+void UGridWorldPathFollowingComponent::UnbindPresentationPathObserver()
+{
+	if (PresentationPathObserverHandle.IsValid())
+	{
+		if (const FNavPathSharedPtr ObservedPath = PresentationObservedPath.Pin())
+		{
+			ObservedPath->RemoveObserver(PresentationPathObserverHandle);
+		}
+	}
+	PresentationPathObserverHandle.Reset();
+	PresentationObservedPath.Reset();
+}
+
+void UGridWorldPathFollowingComponent::HandlePresentationPathEvent(
+	FNavigationPath* InPath,
+	ENavPathEvent::Type Event)
+{
+	const FNavPathSharedPtr ObservedPath = PresentationObservedPath.Pin();
+	if (!ObservedPath.IsValid() || ObservedPath.Get() != InPath)
+	{
+		return;
+	}
+
+	EGridPathPresentationInvalidationReason Reason;
+	if (Event == ENavPathEvent::Invalidated)
+	{
+		Reason = EGridPathPresentationInvalidationReason::Invalidated;
+	}
+	else if (Event == ENavPathEvent::RePathFailed)
+	{
+		Reason = EGridPathPresentationInvalidationReason::RepathFailed;
+	}
+	else
+	{
+		return;
+	}
+
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+		{
+			Presentation->MarkPathPresentationInvalid(ActivePathPresentationHandle);
+		}
+	}
+	OnGridPathInvalidated.Broadcast(Reason);
+}
+
+void UGridWorldPathFollowingComponent::SynchronizePathPresentation(
+	EGridPathFollowingPresentationChange Change,
+	bool bBroadcastChange)
+{
+	const FGridNavigationPath* GridPath = GetGridPath();
+	if (GridPath == nullptr || GridPath->CellPath.IsEmpty())
+	{
+		return;
+	}
+	const int32 CurrentCellPathIndex = ResolvePresentationCellPathIndex(*GridPath);
+	if (!GridPath->CellPath.IsValidIndex(CurrentCellPathIndex))
+	{
+		return;
+	}
+
+	if (bPresentActivePath)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+			{
+				if (Presentation->IsPathPresentationValid(ActivePathPresentationHandle))
+				{
+					Presentation->UpdatePathPresentation(ActivePathPresentationHandle, *GridPath, CurrentCellPathIndex);
+					Presentation->SetPathPresentationMode(ActivePathPresentationHandle, ActivePathPresentationMode);
+					Presentation->SetPathPresentationPriority(ActivePathPresentationHandle, ActivePathPresentationPriority);
+					Presentation->SetPathPresentationRenderers(
+						ActivePathPresentationHandle,
+						bPresentActivePathAsCellOverlay,
+						bPresentActivePathAsLine);
+				}
+				else
+				{
+					FGridPathPresentationRequest Request;
+					Request.Purpose = EGridPathPresentationPurpose::Active;
+					Request.ProgressMode = ActivePathPresentationMode;
+					Request.ReplacementPolicy = EGridPathReplacementPolicy::ReplaceImmediately;
+					Request.Lifetime = EGridPathPresentationLifetime::OwnerLifetime;
+					Request.Owner = this;
+					Request.Priority = ActivePathPresentationPriority;
+					Request.CurrentCellIndex = CurrentCellPathIndex;
+					Request.bRenderCellOverlay = bPresentActivePathAsCellOverlay;
+					Request.bRenderLine = bPresentActivePathAsLine;
+					Presentation->CreatePathPresentation(*GridPath, Request, ActivePathPresentationHandle);
+				}
+			}
+		}
+	}
+
+	LastPresentedPathCells = GridPath->CellPath;
+	LastPresentedPathRevisions = GridPath->Revisions;
+	if (bBroadcastChange)
+	{
+		OnGridPathChanged.Broadcast(Change, LastPresentedPathCells, LastPresentedPathRevisions);
+	}
+	if (PresentationCurrentCellPathIndex != CurrentCellPathIndex)
+	{
+		PresentationCurrentCellPathIndex = CurrentCellPathIndex;
+		OnGridPathProgressChanged.Broadcast(
+			PresentationCurrentCellPathIndex,
+			GridPath->CellPath[PresentationCurrentCellPathIndex]);
+	}
+}
+
+void UGridWorldPathFollowingComponent::UpdatePathPresentationProgress()
+{
+	if (!bPresentActivePath && !OnGridPathProgressChanged.IsBound())
+	{
+		return;
+	}
+	const FGridNavigationPath* GridPath = GetGridPath();
+	if (GridPath == nullptr || GridPath->CellPath.IsEmpty())
+	{
+		return;
+	}
+	const int32 CurrentCellPathIndex = ResolvePresentationCellPathIndex(*GridPath);
+	if (!GridPath->CellPath.IsValidIndex(CurrentCellPathIndex)
+		|| PresentationCurrentCellPathIndex == CurrentCellPathIndex)
+	{
+		return;
+	}
+	PresentationCurrentCellPathIndex = CurrentCellPathIndex;
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+		{
+			Presentation->UpdatePathPresentationProgress(ActivePathPresentationHandle, CurrentCellPathIndex);
+		}
+	}
+	OnGridPathProgressChanged.Broadcast(CurrentCellPathIndex, GridPath->CellPath[CurrentCellPathIndex]);
+}
+
+void UGridWorldPathFollowingComponent::ReleasePathPresentation(bool bResetCorrelationState)
+{
+	if (ActivePathPresentationHandle.IsSet())
+	{
+		if (UWorld* World = GetWorld())
+		{
+			if (UGridPathPresentationSubsystem* Presentation = World->GetSubsystem<UGridPathPresentationSubsystem>())
+			{
+				Presentation->ReleasePathPresentation(ActivePathPresentationHandle);
+			}
+		}
+		ActivePathPresentationHandle = FGridPathPresentationHandle();
+	}
+	if (bResetCorrelationState)
+	{
+		PresentationCurrentCellPathIndex = INDEX_NONE;
+		LastPresentedPathCells.Reset();
+		LastPresentedPathRevisions = FGridRevisionSet();
+	}
+}
+
+int32 UGridWorldPathFollowingComponent::ResolvePresentationCellPathIndex(const FGridNavigationPath& GridPath) const
+{
+	if (GridPath.CellPath.IsEmpty())
+	{
+		return INDEX_NONE;
+	}
+	if (NavMovementInterface.IsValid())
+	{
+		const int32 LocatedIndex = FindCurrentCellPathIndex(GridPath, NavMovementInterface->GetFeetLocation());
+		if (GridPath.CellPath.IsValidIndex(LocatedIndex))
+		{
+			return LocatedIndex;
+		}
+	}
+	return FMath::Clamp(
+		MoveSegmentStartIndex - GridPath.GetCellPathPointOffset(),
+		0,
+		GridPath.CellPath.Num() - 1);
+}
+
 const FGridPathPointFollowingData* UGridWorldPathFollowingComponent::GetFollowingData(int32 PathPointIndex) const
 {
 	const FGridNavigationPath* GridPath = GetGridPath();
@@ -570,29 +851,7 @@ void UGridWorldPathFollowingComponent::EnsurePawnOccupancy(APawn* Pawn)
 		PawnOccupancyComponent.Reset();
 		return;
 	}
-	if (UGridNavigationOccupancyComponent* Existing = UGridNavigationOccupancyComponent::FindActiveAgentOccupancy(*Pawn))
-	{
-		PawnOccupancyComponent = Existing;
-		return;
-	}
-
 	const AGridWorldAIController* GridController = Cast<AGridWorldAIController>(GetOwner());
-	if (GridController == nullptr || !GridController->bAutoRegisterPawnOccupancy)
-	{
-		return;
-	}
-
-	UGridNavigationOccupancyComponent* Component = NewObject<UGridNavigationOccupancyComponent>(
-		Pawn,
-		UGridNavigationOccupancyComponent::StaticClass(),
-		NAME_None,
-		RF_Transient);
-	if (Component == nullptr)
-	{
-		GRIDWORLD_LOG_WARNING("GridWorld controller '%s' could not create occupancy tracking for pawn '%s'.", *GetNameSafe(GetOwner()), *GetNameSafe(Pawn));
-		return;
-	}
-
 	float AgentRadius = 42.0f;
 	float AgentHalfHeight = 96.0f;
 	if (NavMovementInterface.IsValid())
@@ -601,20 +860,20 @@ void UGridWorldPathFollowingComponent::EnsurePawnOccupancy(APawn* Pawn)
 	}
 	AgentRadius = AgentRadius > 0.0f ? AgentRadius : 42.0f;
 	AgentHalfHeight = AgentHalfHeight > 0.0f ? AgentHalfHeight : 96.0f;
-	Component->BoxExtent = FVector(AgentRadius, AgentRadius, AgentHalfHeight);
-	Component->bBlocksWhenConsidered = false;
-	Component->AdditionalCost = 0;
-	if (USceneComponent* RootComponent = Pawn->GetRootComponent())
+	const bool bShouldAutoCreate = bAutoRegisterPawnOccupancy
+		&& (GridController == nullptr || GridController->bAutoRegisterPawnOccupancy);
+	UGridNavigationOccupancyComponent* Component =
+		UGridNavigationOccupancyComponent::FindOrAddAgentOccupancy(
+			*Pawn,
+			AgentRadius,
+			AgentHalfHeight * 2.0f,
+			bShouldAutoCreate);
+	if (Component == nullptr && bShouldAutoCreate)
 	{
-		Component->SetupAttachment(RootComponent);
-	}
-	Pawn->AddInstanceComponent(Component);
-	Component->OnComponentCreated();
-	Component->RegisterComponent();
-	if (!Component->IsActive())
-	{
-		Component->Activate(true);
-		Component->RefreshOccupancy();
+		GRIDWORLD_LOG_WARNING(
+			"GridWorld controller '%s' could not create occupancy tracking for pawn '%s'.",
+			*GetNameSafe(GetOwner()),
+			*GetNameSafe(Pawn));
 	}
 	PawnOccupancyComponent = Component;
 }
@@ -632,7 +891,7 @@ bool UGridWorldPathFollowingComponent::UpdateTrafficCorridor(
 		return false;
 	}
 
-	AAIController* Controller = Cast<AAIController>(GetOwner());
+	AController* Controller = Cast<AController>(GetOwner());
 	APawn* Pawn = Controller != nullptr ? Controller->GetPawn() : nullptr;
 	EnsurePawnOccupancy(Pawn);
 	UGridNavigationOccupancyComponent* Occupancy = PawnOccupancyComponent.Get();

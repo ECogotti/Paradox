@@ -10,6 +10,12 @@
 #include "Navigation/GridNavigationBoundsVolume.h"
 #include "Navigation/GridWalkingSurface.h"
 
+namespace UE::GridWorld::Private
+{
+	constexpr double ClearanceLiftSampleSpacing = 5.0;
+	constexpr int32 MaximumClearanceLiftSamples = 16;
+}
+
 TSharedPtr<FGridWorldSnapshot, ESPMode::ThreadSafe> FGridWorldBuilder::Build(UWorld& World, uint32 TopologyGeneration, TArray<FString>& OutErrors)
 {
 	check(IsInGameThread());
@@ -143,7 +149,6 @@ void FGridWorldBuilder::SampleVolume(UWorld& World, const AGridNavigationBoundsV
 	const double TraceTop = LocalBounds.Max.Z;
 	const double TraceBottom = LocalBounds.Min.Z;
 	const double HalfHeight = Volume.AgentHeight * 0.5;
-	const FCollisionShape AgentShape = FCollisionShape::MakeCapsule(Volume.AgentRadius, HalfHeight);
 	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(GridWorldBuild), false, &Volume);
 	QueryParams.bFindInitialOverlaps = true;
 	// Pawns are navigation consumers, not authored topology. Baking a placed or runtime Pawn
@@ -162,40 +167,35 @@ void FGridWorldBuilder::SampleVolume(UWorld& World, const AGridNavigationBoundsV
 		{
 			const double LocalX = (static_cast<double>(X) + 0.5) * GridTransform.CellSize.X;
 			const double LocalY = (static_cast<double>(Y) + 0.5) * GridTransform.CellSize.Y;
-			double CurrentTop = TraceTop;
-			const int32 MaxSurfaces = FMath::Max(1, FMath::CeilToInt((TraceTop - TraceBottom) / FMath::Max(1.0, Volume.LayerHeight)) + 4);
-			TSet<int32> SeenLayers;
-			for (int32 SurfaceIndex = 0; SurfaceIndex < MaxSurfaces && CurrentTop > TraceBottom; ++SurfaceIndex)
+			TArray<FHitResult> SurfaceHits;
+			GatherSurfaceHits(
+				World,
+				GridTransform,
+				LocalX,
+				LocalY,
+				TraceTop,
+				TraceBottom,
+				Volume.LayerHeight,
+				Volume.MaxSlopeDegrees,
+				Volume.AgentRadius,
+				Volume.CollisionProfileName,
+				QueryParams,
+				SurfaceHits);
+			for (const FHitResult& Hit : SurfaceHits)
 			{
-				FHitResult Hit;
-				const FVector Start = GridTransform.LocalToWorld(FVector(LocalX, LocalY, CurrentTop));
-				const FVector End = GridTransform.LocalToWorld(FVector(LocalX, LocalY, TraceBottom));
-				if (!World.LineTraceSingleByProfile(Hit, Start, End, Volume.CollisionProfileName, QueryParams))
-				{
-					break;
-				}
-
 				const FVector LocalImpactPoint = GridTransform.WorldToLocal(Hit.ImpactPoint);
-				CurrentTop = LocalImpactPoint.Z - FMath::Max(5.0, Volume.AgentRadius * 0.25);
 				const FVector FloorNormal = Hit.ImpactNormal.GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector);
 				const double UpDot = FVector::DotProduct(FloorNormal, FVector::UpVector);
-				if (UpDot + UE_KINDA_SMALL_NUMBER < FMath::Cos(FMath::DegreesToRadians(Volume.MaxSlopeDegrees)))
-				{
-					continue;
-				}
-
 				const int32 Layer = FMath::RoundToInt(LocalImpactPoint.Z / Volume.LayerHeight);
-				if (SeenLayers.Contains(Layer))
-				{
-					continue;
-				}
-				SeenLayers.Add(Layer);
-				const double CapsuleCenterHeight = UE::GridWorld::WalkingSurface::CalculateUprightCapsuleCenterHeight(
-					HalfHeight,
+				if (!HasAgentClearance(
+					World,
+					Hit.ImpactPoint,
+					UpDot,
 					Volume.AgentRadius,
-					UpDot);
-				const FVector CapsuleCenter = Hit.ImpactPoint + FVector::UpVector * CapsuleCenterHeight;
-				if (World.OverlapBlockingTestByProfile(CapsuleCenter, FQuat::Identity, Volume.CollisionProfileName, AgentShape, QueryParams))
+					HalfHeight,
+					Volume.MaxStepHeight,
+					Volume.CollisionProfileName,
+					QueryParams))
 				{
 					continue;
 				}
@@ -209,6 +209,124 @@ void FGridWorldBuilder::SampleVolume(UWorld& World, const AGridNavigationBoundsV
 			}
 		}
 	}
+}
+
+void FGridWorldBuilder::GatherSurfaceHits(
+	UWorld& World,
+	const FGridTransform& GridTransform,
+	double LocalX,
+	double LocalY,
+	double TraceTop,
+	double TraceBottom,
+	double LayerHeight,
+	double MaxSlopeDegrees,
+	double AgentRadius,
+	FName CollisionProfileName,
+	const FCollisionQueryParams& QueryParams,
+	TArray<FHitResult>& OutHits)
+{
+	OutHits.Reset();
+	FCollisionQueryParams FloorQueryParams(QueryParams);
+	FloorQueryParams.bFindInitialOverlaps = false;
+
+	double CurrentTop = TraceTop;
+	const double SurfaceAdvance = FMath::Max(5.0, AgentRadius * 0.25);
+	const int32 MaxTraceIterations = FMath::Max(
+		1,
+		FMath::CeilToInt((TraceTop - TraceBottom) / SurfaceAdvance) + 1);
+	TSet<int32> SeenLayers;
+	for (int32 TraceIndex = 0; TraceIndex < MaxTraceIterations && CurrentTop > TraceBottom; ++TraceIndex)
+	{
+		FHitResult Hit;
+		const FVector Start = GridTransform.LocalToWorld(FVector(LocalX, LocalY, CurrentTop));
+		const FVector End = GridTransform.LocalToWorld(FVector(LocalX, LocalY, TraceBottom));
+		if (!World.LineTraceSingleByProfile(Hit, Start, End, CollisionProfileName, FloorQueryParams))
+		{
+			break;
+		}
+
+		const FVector LocalImpactPoint = GridTransform.WorldToLocal(Hit.ImpactPoint);
+		CurrentTop = LocalImpactPoint.Z - SurfaceAdvance;
+		if (Hit.bStartPenetrating)
+		{
+			continue;
+		}
+		const FVector FloorNormal = Hit.ImpactNormal.GetSafeNormal(UE_SMALL_NUMBER, FVector::UpVector);
+		const double UpDot = FVector::DotProduct(FloorNormal, FVector::UpVector);
+		if (UpDot + UE_KINDA_SMALL_NUMBER < FMath::Cos(FMath::DegreesToRadians(MaxSlopeDegrees)))
+		{
+			continue;
+		}
+
+		const int32 Layer = FMath::RoundToInt(LocalImpactPoint.Z / LayerHeight);
+		if (SeenLayers.Contains(Layer))
+		{
+			continue;
+		}
+		SeenLayers.Add(Layer);
+		OutHits.Add(MoveTemp(Hit));
+	}
+}
+
+bool FGridWorldBuilder::HasAgentClearance(
+	UWorld& World,
+	const FVector& FloorLocation,
+	double FloorUpDot,
+	double AgentRadius,
+	double AgentHalfHeight,
+	double MaxStepHeight,
+	FName CollisionProfileName,
+	const FCollisionQueryParams& QueryParams)
+{
+	const double SafeRadius = FMath::Max(0.0, AgentRadius);
+	const double SafeHalfHeight = FMath::Max(AgentHalfHeight, SafeRadius);
+	const FCollisionShape AgentShape = FCollisionShape::MakeCapsule(SafeRadius, SafeHalfHeight);
+	const double CapsuleCenterHeight = UE::GridWorld::WalkingSurface::CalculateUprightCapsuleCenterHeight(
+		SafeHalfHeight,
+		SafeRadius,
+		FloorUpDot);
+	const FVector BaseCapsuleCenter = FloorLocation + FVector::UpVector * CapsuleCenterHeight;
+	auto IsBlockedAtLift = [&World, &QueryParams, CollisionProfileName, &AgentShape, &BaseCapsuleCenter](double Lift)
+	{
+		return World.OverlapBlockingTestByProfile(
+			BaseCapsuleCenter + FVector::UpVector * Lift,
+			FQuat::Identity,
+			CollisionProfileName,
+			AgentShape,
+			QueryParams);
+	};
+
+	if (!IsBlockedAtLift(0.0))
+	{
+		return true;
+	}
+
+	const double SafeMaxStepHeight = FMath::Max(0.0, MaxStepHeight);
+	if (SafeMaxStepHeight <= UE_DOUBLE_KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+
+	// Most low obstacles clear at the maximum legal step, so test that endpoint first.
+	if (!IsBlockedAtLift(SafeMaxStepHeight))
+	{
+		return true;
+	}
+
+	// A low ceiling may block the maximum lift even though a smaller legal lift clears the step.
+	const int32 LiftSampleCount = FMath::Clamp(
+		FMath::CeilToInt(SafeMaxStepHeight / UE::GridWorld::Private::ClearanceLiftSampleSpacing),
+		2,
+		UE::GridWorld::Private::MaximumClearanceLiftSamples);
+	for (int32 LiftSampleIndex = 1; LiftSampleIndex < LiftSampleCount; ++LiftSampleIndex)
+	{
+		const double Lift = SafeMaxStepHeight * static_cast<double>(LiftSampleIndex) / static_cast<double>(LiftSampleCount);
+		if (!IsBlockedAtLift(Lift))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void FGridWorldBuilder::BuildAdjacency(FGridWorldSnapshot& Snapshot)

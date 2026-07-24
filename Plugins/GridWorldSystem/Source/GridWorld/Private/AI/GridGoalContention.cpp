@@ -85,3 +85,23 @@ bool UE::GridWorld::Private::HasGridGoalOccupancySeparation(
 	}
 	return true;
 }
+
+bool UE::GridWorld::Private::BuildStopBeforeOccupiedCells(
+	TConstArrayView<FGridCellId> FullPath,
+	const FGridCellId& RequestedGoalCell,
+	TArray<FGridCellId>& OutAdjustedPath,
+	FGridCellId& OutEffectiveGoalCell)
+{
+	OutAdjustedPath.Reset();
+	OutEffectiveGoalCell = FGridCellId();
+	if (!RequestedGoalCell.IsValid()
+		|| FullPath.Num() < 2
+		|| FullPath.Last() != RequestedGoalCell)
+	{
+		return false;
+	}
+
+	OutAdjustedPath.Append(FullPath.GetData(), FullPath.Num() - 1);
+	OutEffectiveGoalCell = OutAdjustedPath.Last();
+	return OutEffectiveGoalCell.IsValid();
+}

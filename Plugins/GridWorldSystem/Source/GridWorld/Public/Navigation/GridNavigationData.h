@@ -5,15 +5,19 @@
 #include "CoreMinimal.h"
 #include "NavigationData.h"
 #include "Navigation/GridNavigationPath.h"
+#include "Navigation/GridPathInjectionTypes.h"
 #include "Navigation/GridTrafficReservation.h"
 #include "Navigation/GridWorldSnapshot.h"
 #include "GridNavigationData.generated.h"
 
 class AAIController;
 class UPathFollowingComponent;
+class UNavigationQueryFilter;
 struct FAIRequestID;
 struct FPathFollowingResult;
 class FGridTrafficReservationManager;
+struct FGridAStarQuery;
+struct FGridAStarResult;
 
 /** Game-Thread notification emitted after traffic reservations or relevant occupancy change. */
 DECLARE_MULTICAST_DELEGATE(FOnGridTrafficReservationsChanged);
@@ -57,6 +61,38 @@ public:
 	FGridWorldSnapshotPtr GetSnapshot() const;
 	/** @return Independent revision tuple of the currently published snapshot. */
 	FGridRevisionSet GetPublishedRevisions() const;
+	/** @return Non-serialized identity of this authoritative NavData instance for runtime path handoff. */
+	const FGuid& GetRuntimeNavigationDataId() const { return RuntimeNavigationDataId; }
+	/** Stable runtime hash of a fully initialized navigation filter and its GridWorld query context. */
+	static int64 BuildFilterSignature(
+		const FSharedConstNavQueryFilter& QueryFilter,
+		TSubclassOf<UNavigationQueryFilter> FilterClass);
+	/** Validates and stamps a Blueprint-safe exact path description without creating movement state. */
+	FGridInjectedPathValidationResult CreateExactInjectedPath(
+		const UObject* Querier,
+		const FNavAgentProperties& AgentProperties,
+		TSubclassOf<UNavigationQueryFilter> FilterClass,
+		const FVector& StartLocation,
+		TConstArrayView<FGridCellId> Cells,
+		const FGridCellId& OriginalGoalCell,
+		bool bAllowPartialPath,
+		bool bIsPartial,
+		EGridInjectedPathInvalidationPolicy InvalidationPolicy,
+		const FGuid& SourcePreviewId,
+		FGridInjectedPath& OutInjectedPath) const;
+	/** Revalidates a previously stamped path against the current snapshot, agent and querier context. */
+	FGridInjectedPathValidationResult ValidateInjectedPath(
+		const FGridInjectedPath& InjectedPath,
+		const UObject* Querier,
+		const FNavAgentProperties& AgentProperties,
+		const FVector& StartLocation) const;
+	/** Builds the normal engine-compatible FGridNavigationPath used by path following. */
+	FPathFindingResult MaterializeInjectedPath(
+		const FGridInjectedPath& InjectedPath,
+		const UObject* Querier,
+		const FNavAgentProperties& AgentProperties,
+		const FVector& StartLocation,
+		FNavPathSharedPtr PathInstanceToFill = nullptr) const;
 	/** Synchronously samples every valid bounds region on the Game Thread. @return True after a new valid topology is published. */
 	bool BuildFromWorld();
 	/** Clears generated topology, runtime overlays, traffic state, and debug data. */
@@ -174,6 +210,8 @@ private:
 	mutable FRWLock SnapshotLock;
 	/** Current immutable topology plus runtime overlays. */
 	FGridWorldSnapshotPtr PublishedSnapshot;
+	/** World-local identity used to reject cross-NavData injected paths. Never serialized. */
+	FGuid RuntimeNavigationDataId;
 	/** Last valid generated topology before runtime overlay composition. */
 	FGridWorldSnapshotPtr BaseTopologySnapshot;
 	/** Errors from the most recent rejected generation. */
@@ -236,6 +274,24 @@ private:
 
 	/** Invalidates only active paths whose cells/links intersect ChangeSet. */
 	void InvalidateAffectedPaths(const FGridChangeSet& ChangeSet);
+	/** Converts a fully initialized Unreal filter and agent into the pure-data A* query. */
+	FGridAStarQuery BuildAStarQuery(
+		const FNavAgentProperties& AgentProperties,
+		const FPathFindingQuery& Query,
+		int32 StartIndex,
+		int32 GoalIndex) const;
+	/** Shared materializer for A* results and validated injected paths. */
+	FPathFindingResult MaterializeGridPath(
+		const FNavAgentProperties& AgentProperties,
+		const FPathFindingQuery& Query,
+		const FGridWorldSnapshot& Snapshot,
+		const FGridAStarQuery& AStarQuery,
+		const FGridAStarResult& SearchResult,
+		EGridDynamicAgentPolicy RequestedDynamicAgentPolicy,
+		bool bUsedDynamicAgentFallback,
+		EGridNavigationPathOrigin Origin,
+		const FGuid& SourcePreviewId,
+		EGridInjectedPathInvalidationPolicy InvalidationPolicy) const;
 	/** Replaces the generic last-query path used when no controller owns it. */
 	void SetDebugPath(TConstArrayView<FNavPathPoint> PathPoints) const;
 	/** Registers symmetric path/move/controller observers and captures draw data. */

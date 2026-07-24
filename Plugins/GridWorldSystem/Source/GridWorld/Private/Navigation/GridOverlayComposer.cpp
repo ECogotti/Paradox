@@ -84,6 +84,15 @@ TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> FGridOverlayComposer::Compos
 	UE::GridWorld::Private::GatherComponents(World, Modifiers);
 	UE::GridWorld::Private::GatherComponents(World, Occupants);
 	UE::GridWorld::Private::GatherComponents(World, Links);
+	if (!bOccupancyOnly)
+	{
+		for (UGridNavigationOccupancyComponent* Occupant : Occupants)
+		{
+			// Topology may have been replaced since the last component transform. Refresh without
+			// notifying NavData recursively so Pawn owner cells participate in this publication.
+			Occupant->UpdateCachedOccupiedCells();
+		}
+	}
 	Modifiers.Sort([](const UGridNavigationModifierComponent& Left, const UGridNavigationModifierComponent& Right)
 	{
 		return Left.Priority != Right.Priority ? Left.Priority < Right.Priority : Left.ModifierId < Right.ModifierId;
@@ -150,7 +159,7 @@ TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> FGridOverlayComposer::Compos
 
 		for (const UGridNavigationOccupancyComponent* Occupant : Occupants)
 		{
-			if (Occupant->AffectsPoint(Cell.WorldCenter))
+			if (Occupant->AffectsCell(Cell.Id, Cell.WorldCenter))
 			{
 				Cell.bOccupied = true;
 				Cell.bOccupancyBlocks |= Occupant->bBlocksWhenConsidered;

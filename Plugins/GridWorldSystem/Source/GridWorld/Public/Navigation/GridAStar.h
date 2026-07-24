@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "GridWorldTypes.h"
+#include "Navigation/GridPathInjectionTypes.h"
 #include "Navigation/GridTrafficReservation.h"
 #include "Navigation/GridWorldSnapshot.h"
 
@@ -77,6 +78,17 @@ struct GRIDWORLD_API FGridAStarResult
 	bool IsSuccessful() const { return Status == EGridQueryStatus::Success || Status == EGridQueryStatus::Partial; }
 };
 
+/** Pure-data authoritative validation of one supplied ordered cell-index sequence. */
+struct GRIDWORLD_API FGridAStarPathValidationResult
+{
+	FGridAStarResult PathResult;
+	EGridInjectedPathFailureReason FailureReason = EGridInjectedPathFailureReason::InvalidPath;
+	int32 InvalidCellIndex = INDEX_NONE;
+	int32 InvalidSegmentIndex = INDEX_NONE;
+
+	bool IsValid() const { return FailureReason == EGridInjectedPathFailureReason::None; }
+};
+
 /** Deterministic, allocation-bounded A* implementation with integer costs. */
 class GRIDWORLD_API FGridAStar
 {
@@ -86,6 +98,12 @@ public:
 
 	/** Executes the selected search strategy against immutable Snapshot. @return Owned path/result values. */
 	FGridAStarResult FindPath(const FGridWorldSnapshot& Snapshot, const FGridAStarQuery& Query);
+	/** Validates and costs an exact sequence through the same transition rules used by FindPath. */
+	FGridAStarPathValidationResult ValidatePath(
+		const FGridWorldSnapshot& Snapshot,
+		const FGridAStarQuery& Query,
+		TConstArrayView<int32> CellIndices,
+		bool bIsPartial) const;
 
 private:
 	static constexpr int32 DirectionStateCount = 9;

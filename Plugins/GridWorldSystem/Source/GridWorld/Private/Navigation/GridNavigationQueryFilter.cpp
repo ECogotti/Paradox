@@ -2,8 +2,8 @@
 
 #include "Navigation/GridNavigationQueryFilter.h"
 
-#include "AIController.h"
 #include "Components/GridNavigationOccupancyComponent.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "Interfaces/GridNavigationQueryContext.h"
 
@@ -165,7 +165,7 @@ void UGridNavigationQueryFilter::InitializeFilter(const ANavigationData& NavData
 		if (IsInGameThread() && Querier != nullptr)
 		{
 			const APawn* QueryPawn = Cast<APawn>(Querier);
-			if (const AAIController* Controller = Cast<AAIController>(Querier))
+			if (const AController* Controller = Cast<AController>(Querier))
 			{
 				QueryPawn = Controller->GetPawn();
 			}

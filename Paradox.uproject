@@ -29,6 +29,38 @@
 		{
 			"Name": "GameplayStateTree",
 			"Enabled": true
+		},
+		{
+			"Name": "GameplayActions",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayActionsAI",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayActionsGridWorld",
+			"Enabled": true
+		},
+		{
+			"Name": "IntentReplay",
+			"Enabled": true
+		},
+		{
+			"Name": "WorldStateSystem",
+			"Enabled": true
+		},
+		{
+			"Name": "EntityRelations",
+			"Enabled": true
+		},
+		{
+			"Name": "TacticalPause",
+			"Enabled": true
+		},
+		{
+			"Name": "LineOfSight",
+			"Enabled": true
 		}
 	]
 }

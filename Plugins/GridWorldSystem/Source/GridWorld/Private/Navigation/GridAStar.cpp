@@ -20,6 +20,119 @@ FGridAStarResult FGridAStar::FindPath(const FGridWorldSnapshot& Snapshot, const 
 		: FindDirectionalPath(Snapshot, Query);
 }
 
+FGridAStarPathValidationResult FGridAStar::ValidatePath(
+	const FGridWorldSnapshot& Snapshot,
+	const FGridAStarQuery& Query,
+	TConstArrayView<int32> CellIndices,
+	bool bIsPartial) const
+{
+	FGridAStarPathValidationResult Output;
+	if (CellIndices.IsEmpty()
+		|| !Snapshot.Cells.IsValidIndex(Query.StartCellIndex)
+		|| !Snapshot.Cells.IsValidIndex(Query.GoalCellIndex))
+	{
+		return Output;
+	}
+	if (CellIndices[0] != Query.StartCellIndex)
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidStart;
+		Output.InvalidCellIndex = 0;
+		return Output;
+	}
+	if ((!bIsPartial && CellIndices.Last() != Query.GoalCellIndex)
+		|| (bIsPartial && (!Query.bAllowPartialPath || CellIndices.Last() == Query.GoalCellIndex)))
+	{
+		Output.FailureReason = bIsPartial
+			? EGridInjectedPathFailureReason::InvalidPartialPath
+			: EGridInjectedPathFailureReason::InvalidGoal;
+		Output.InvalidCellIndex = CellIndices.Num() - 1;
+		return Output;
+	}
+
+	for (int32 PathIndex = 0; PathIndex < CellIndices.Num(); ++PathIndex)
+	{
+		if (!Snapshot.Cells.IsValidIndex(CellIndices[PathIndex]))
+		{
+			Output.FailureReason = EGridInjectedPathFailureReason::MissingCell;
+			Output.InvalidCellIndex = PathIndex;
+			return Output;
+		}
+	}
+	if (!Snapshot.Cells[CellIndices[0]].bWalkable)
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::BlockedCell;
+		Output.InvalidCellIndex = 0;
+		return Output;
+	}
+
+	int64 TotalCost = 0;
+	for (int32 PathIndex = 1; PathIndex < CellIndices.Num(); ++PathIndex)
+	{
+		const int32 FromIndex = CellIndices[PathIndex - 1];
+		const int32 ToIndex = CellIndices[PathIndex];
+		const FGridCellData& From = Snapshot.Cells[FromIndex];
+		const FGridCellData& To = Snapshot.Cells[ToIndex];
+		bool bValidTransition = false;
+		int32 ExplicitLinkCost = 0;
+
+		if (From.Neighbors.Contains(ToIndex) && CanTraverse(Snapshot, FromIndex, ToIndex, Query))
+		{
+			bValidTransition = true;
+		}
+		else
+		{
+			bool bHasAuthoredConnection = false;
+			const uint16 QueryChannelMask = static_cast<uint16>(1u << FMath::Min<uint8>(Query.TraversalChannel, 15));
+			for (const FGridLinkData& Link : Snapshot.Links)
+			{
+				const bool bMatchesDirection = Link.FromCellIndex == FromIndex && Link.ToCellIndex == ToIndex;
+				const bool bMatchesReverse = Link.bBidirectional
+					&& Link.ToCellIndex == FromIndex
+					&& Link.FromCellIndex == ToIndex;
+				if (!bMatchesDirection && !bMatchesReverse)
+				{
+					continue;
+				}
+				bHasAuthoredConnection = true;
+				if (Query.bAllowLinks
+					&& Link.bEnabled
+					&& (Link.TraversalChannels & QueryChannelMask) != 0
+					&& CanTraverse(Snapshot, FromIndex, ToIndex, Query, true))
+				{
+					bValidTransition = true;
+					ExplicitLinkCost = Link.TraversalCost;
+					break;
+				}
+			}
+			if (!bValidTransition && bHasAuthoredConnection)
+			{
+				Output.FailureReason = EGridInjectedPathFailureReason::ForbiddenLink;
+			}
+		}
+
+		if (!bValidTransition)
+		{
+			if (Output.FailureReason != EGridInjectedPathFailureReason::ForbiddenLink)
+			{
+				Output.FailureReason = From.Neighbors.Contains(ToIndex)
+					? EGridInjectedPathFailureReason::BlockedCell
+					: EGridInjectedPathFailureReason::DisconnectedCells;
+			}
+			Output.InvalidCellIndex = PathIndex;
+			Output.InvalidSegmentIndex = PathIndex - 1;
+			return Output;
+		}
+		TotalCost += CalculateMoveCost(From, To, Query, ExplicitLinkCost);
+	}
+
+	Output.PathResult.Status = bIsPartial ? EGridQueryStatus::Partial : EGridQueryStatus::Success;
+	Output.PathResult.CellIndices.Append(CellIndices.GetData(), CellIndices.Num());
+	Output.PathResult.TotalCost = TotalCost;
+	Output.PathResult.TurnCount = CountPathTurns(Snapshot, CellIndices);
+	Output.FailureReason = EGridInjectedPathFailureReason::None;
+	return Output;
+}
+
 FGridAStarResult FGridAStar::FindShortestPath(const FGridWorldSnapshot& Snapshot, const FGridAStarQuery& Query)
 {
 	FGridAStarResult Result;

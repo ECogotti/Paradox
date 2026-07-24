@@ -13,11 +13,15 @@
 #include "AI/GridWorldPathFollowingComponent.h"
 #include "AI/StateTreeMoveToGridCellTask.h"
 #include "AIController.h"
+#include "CollisionQueryParams.h"
+#include "Components/BoxComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Engine/Blueprint.h"
 #include "Engine/World.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/PlayerController.h"
 #include "Misc/PackageName.h"
 #include "Serialization/MemoryReader.h"
 #include "Serialization/MemoryWriter.h"
@@ -26,6 +30,9 @@
 #include "Navigation/GridNavigationPath.h"
 #include "Navigation/GridNavigationQueryFilter.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Navigation/GridWalkingSurface.h"
+#include "Navigation/GridWorldBuilder.h"
+#include "Prediction/GridPathPreviewComponent.h"
 #include "Tasks/AITask_MoveTo.h"
 #include "Tasks/StateTreeMoveToTask.h"
 #include "TimerManager.h"
@@ -296,6 +303,250 @@ bool FGridNavigationSlopeWarningTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridWorldAnchoredBoundsTest, "GridWorld.Navigation.WorldAnchoredBounds", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FGridWorldAnchoredBoundsTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldAnchoredBoundsTest")));
+	if (!TestNotNull(TEXT("Transient world-anchoring world"), World))
+	{
+		return false;
+	}
+
+	AGridNavigationBoundsVolume* Bounds = World->SpawnActor<AGridNavigationBoundsVolume>();
+	if (!TestNotNull(TEXT("World-anchored Grid bounds"), Bounds))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	Bounds->HorizontalCellSize = FVector2D(100.0, 80.0);
+	Bounds->LayerHeight = 50.0;
+	Bounds->SetActorRotation(FRotator(17.0, 31.0, -9.0));
+	Bounds->SetActorLocation(FVector(725.0, -340.0, 180.0));
+	const FGridTransform FirstTransform = Bounds->GetGridTransform();
+	TestTrue(
+		TEXT("Cell zero is centered on world origin"),
+		FirstTransform.CellToWorld(FGridCellCoord(0, 0, 0)).Equals(FVector::ZeroVector, 0.01));
+
+	Bounds->SetActorLocation(FVector(-1125.0, 860.0, -75.0));
+	const FGridTransform MovedTransform = Bounds->GetGridTransform();
+	TestTrue(TEXT("Moving the volume does not move the grid origin"), MovedTransform.Origin.Equals(FirstTransform.Origin, 0.01));
+	TestTrue(TEXT("Moving the volume does not change grid rotation"), MovedTransform.Rotation.Equals(FirstTransform.Rotation, 0.01));
+	TestTrue(
+		TEXT("Cell zero remains centered after moving the volume"),
+		MovedTransform.CellToWorld(FGridCellCoord(0, 0, 0)).Equals(FVector::ZeroVector, 0.01));
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridStepClearanceTest, "GridWorld.Navigation.StepAdjustedClearance", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+bool FGridStepClearanceTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(EWorldType::Game, false, MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldStepClearanceTest")));
+	if (!TestNotNull(TEXT("Transient clearance world"), World))
+	{
+		return false;
+	}
+
+	auto AddBlockingBox = [World](const FVector& Location, const FVector& Extent)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (Actor == nullptr)
+		{
+			return static_cast<AActor*>(nullptr);
+		}
+		UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
+		Actor->AddInstanceComponent(Box);
+		Actor->SetRootComponent(Box);
+		Box->SetBoxExtent(Extent);
+		Box->SetCollisionProfileName(FName(TEXT("BlockAll")));
+		Box->RegisterComponent();
+		Actor->SetActorLocation(Location);
+		return Actor;
+	};
+
+	AActor* Floor = AddBlockingBox(FVector(0.0, 0.0, -10.0), FVector(250.0, 250.0, 10.0));
+	AActor* LowStep = AddBlockingBox(FVector(65.0, 0.0, 15.0), FVector(35.0, 100.0, 15.0));
+	if (!TestNotNull(TEXT("Clearance test floor"), Floor)
+		|| !TestNotNull(TEXT("Clearance test low step"), LowStep))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	constexpr double AgentRadius = 42.0;
+	constexpr double AgentHalfHeight = 96.0;
+	constexpr double MaxStepHeight = 45.0;
+	const double CapsuleCenterHeight = UE::GridWorld::WalkingSurface::CalculateUprightCapsuleCenterHeight(
+		AgentHalfHeight,
+		AgentRadius,
+		1.0);
+	const FCollisionShape AgentShape = FCollisionShape::MakeCapsule(AgentRadius, AgentHalfHeight);
+	const FName PawnProfile(TEXT("Pawn"));
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(GridWorldStepClearanceTest), false);
+	QueryParams.bFindInitialOverlaps = true;
+
+	TestTrue(
+		TEXT("The legacy floor-tangent capsule is blocked by the adjacent low step"),
+		World->OverlapBlockingTestByProfile(
+			FVector::UpVector * CapsuleCenterHeight,
+			FQuat::Identity,
+			PawnProfile,
+			AgentShape,
+			QueryParams));
+	TestFalse(
+		TEXT("A low step remains blocking when step clearance is disabled"),
+		FGridWorldBuilder::HasAgentClearance(
+			*World,
+			FVector::ZeroVector,
+			1.0,
+			AgentRadius,
+			AgentHalfHeight,
+			0.0,
+			PawnProfile,
+			QueryParams));
+	TestTrue(
+		TEXT("A low obstacle inside MaxStepHeight no longer removes the cell"),
+		FGridWorldBuilder::HasAgentClearance(
+			*World,
+			FVector::ZeroVector,
+			1.0,
+			AgentRadius,
+			AgentHalfHeight,
+			MaxStepHeight,
+			PawnProfile,
+			QueryParams));
+
+	AActor* TallWall = AddBlockingBox(FVector(-65.0, 0.0, 100.0), FVector(35.0, 100.0, 100.0));
+	if (TestNotNull(TEXT("Clearance test tall wall"), TallWall))
+	{
+		TestFalse(
+			TEXT("A full-height obstacle still removes the cell"),
+			FGridWorldBuilder::HasAgentClearance(
+				*World,
+				FVector::ZeroVector,
+				1.0,
+				AgentRadius,
+				AgentHalfHeight,
+				MaxStepHeight,
+				PawnProfile,
+				QueryParams));
+	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridSurfaceSamplingTest,
+	"GridWorld.Navigation.SurfaceSamplingRejectsSolidInteriors",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridSurfaceSamplingTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Game,
+		false,
+		MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldSurfaceSamplingTest")));
+	if (!TestNotNull(TEXT("Transient surface-sampling world"), World))
+	{
+		return false;
+	}
+
+	auto AddBlockingBox = [World](const FVector& Location, const FVector& Extent, const FRotator& Rotation)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (Actor == nullptr)
+		{
+			return static_cast<UBoxComponent*>(nullptr);
+		}
+		UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
+		Actor->AddInstanceComponent(Box);
+		Actor->SetRootComponent(Box);
+		Box->SetBoxExtent(Extent);
+		Box->SetCollisionProfileName(FName(TEXT("BlockAll")));
+		Box->RegisterComponent();
+		Actor->SetActorLocationAndRotation(Location, Rotation);
+		return Box;
+	};
+
+	UBoxComponent* RaisedPlatform = AddBlockingBox(
+		FVector(0.0, 0.0, 50.0),
+		FVector(100.0, 100.0, 50.0),
+		FRotator::ZeroRotator);
+	UBoxComponent* PlatformLowerFloor = AddBlockingBox(
+		FVector(0.0, 0.0, -60.0),
+		FVector(100.0, 100.0, 10.0),
+		FRotator::ZeroRotator);
+	UBoxComponent* InclinedPlatform = AddBlockingBox(
+		FVector(300.0, 0.0, 50.0),
+		FVector(100.0, 100.0, 30.0),
+		FRotator(20.0, 0.0, 0.0));
+	UBoxComponent* InclinedLowerFloor = AddBlockingBox(
+		FVector(300.0, 0.0, -60.0),
+		FVector(100.0, 100.0, 10.0),
+		FRotator::ZeroRotator);
+	if (!TestNotNull(TEXT("Raised platform"), RaisedPlatform)
+		|| !TestNotNull(TEXT("Floor below raised platform"), PlatformLowerFloor)
+		|| !TestNotNull(TEXT("Inclined platform"), InclinedPlatform)
+		|| !TestNotNull(TEXT("Floor below inclined platform"), InclinedLowerFloor))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	FGridTransform GridTransform;
+	GridTransform.Origin = FVector::ZeroVector;
+	GridTransform.Rotation = FRotator::ZeroRotator;
+	GridTransform.CellSize = FVector(100.0, 100.0, 50.0);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(GridWorldSurfaceSamplingTest), false);
+	QueryParams.bFindInitialOverlaps = true;
+	const FName PawnProfile(TEXT("Pawn"));
+	TArray<FHitResult> Hits;
+
+	FGridWorldBuilder::GatherSurfaceHits(
+		*World,
+		GridTransform,
+		0.0,
+		0.0,
+		200.0,
+		-100.0,
+		50.0,
+		45.0,
+		42.0,
+		PawnProfile,
+		QueryParams,
+		Hits);
+	if (TestEqual(TEXT("A thick raised platform contributes only its top plus the real lower floor"), Hits.Num(), 2))
+	{
+		TestTrue(TEXT("Raised platform top is the first surface"), Hits[0].GetComponent() == RaisedPlatform);
+		TestTrue(TEXT("Real lower floor remains discoverable"), Hits[1].GetComponent() == PlatformLowerFloor);
+	}
+
+	FGridWorldBuilder::GatherSurfaceHits(
+		*World,
+		GridTransform,
+		300.0,
+		0.0,
+		200.0,
+		-100.0,
+		50.0,
+		45.0,
+		42.0,
+		PawnProfile,
+		QueryParams,
+		Hits);
+	if (TestEqual(TEXT("An inclined solid contributes only its walkable face plus the real lower floor"), Hits.Num(), 2))
+	{
+		TestTrue(TEXT("Inclined top is the first surface"), Hits[0].GetComponent() == InclinedPlatform);
+		TestTrue(TEXT("Floor below the incline remains discoverable"), Hits[1].GetComponent() == InclinedLowerFloor);
+	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridMoveToCellApiTest, "GridWorld.Navigation.MoveToCellApi", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 {
@@ -305,6 +556,8 @@ bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 
 	const UFunction* AsyncFactory = UGridMoveToCellTask::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UGridMoveToCellTask, MoveToGridCell));
 	TestNotNull(TEXT("Blueprint async Move To Grid Cell factory is reflected"), AsyncFactory);
+	const UFunction* ExactFactory = UGridMoveToCellTask::StaticClass()->FindFunctionByName(GET_FUNCTION_NAME_CHECKED(UGridMoveToCellTask, MoveToGridExactPath));
+	TestNotNull(TEXT("Blueprint exact Grid path factory is reflected"), ExactFactory);
 #if WITH_METADATA
 	if (AsyncFactory != nullptr)
 	{
@@ -313,6 +566,10 @@ bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Blueprint factory exposes alternative search radius"), FindFProperty<FProperty>(AsyncFactory, TEXT("MaxAlternativeSearchRadius")));
 		TestNotNull(TEXT("Blueprint factory exposes goal availability timeout"), FindFProperty<FProperty>(AsyncFactory, TEXT("GoalAvailabilityTimeout")));
 		TestNotNull(TEXT("Blueprint factory exposes wait warning interval"), FindFProperty<FProperty>(AsyncFactory, TEXT("GoalWaitWarningInterval")));
+	}
+	if (ExactFactory != nullptr)
+	{
+		TestNotNull(TEXT("Exact Grid path factory exposes goal contention policy"), FindFProperty<FProperty>(ExactFactory, TEXT("GoalContentionPolicy")));
 	}
 	const FProperty* BTGoalContentionProperty = FindFProperty<FProperty>(
 		UBTTask_MoveToGridCell::StaticClass(),
@@ -422,8 +679,32 @@ bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Stationary agent threshold defaults to five centimeters per second"), DefaultGridFilter->StationaryAgentSpeedThreshold, 5.0f);
 	TestEqual(TEXT("Dynamic agent repath delay defaults to 0.1 seconds"), DefaultGridFilter->DynamicAgentRepathDelay, 0.1f);
 	TestTrue(TEXT("GridWorld controllers auto-register Pawn occupancy by default"), GetDefault<AGridWorldAIController>()->bAutoRegisterPawnOccupancy);
+	TestTrue(TEXT("GridWorld path followers auto-register Pawn occupancy for every controller type"), GetDefault<UGridWorldPathFollowingComponent>()->bAutoRegisterPawnOccupancy);
+	TestEqual(
+		TEXT("Grid navigation data rebuilds runtime geometry dynamically"),
+		GetDefault<AGridNavigationData>()->GetRuntimeGenerationMode(),
+		ERuntimeGenerationType::Dynamic);
+	TestNotEqual(
+		TEXT("Reject Occupied is a distinct opt-in goal policy"),
+		EGridGoalContentionPolicy::RejectOccupied,
+		EGridGoalContentionPolicy::Ignore);
+	TestNotEqual(
+		TEXT("Stop Before Occupied remains distinct from rejection"),
+		EGridGoalContentionPolicy::StopBeforeOccupied,
+		EGridGoalContentionPolicy::RejectOccupied);
+	TestEqual(
+		TEXT("Generic path preview stops before occupied goals by default"),
+		GetDefault<UGridPathPreviewComponent>()->GoalContentionPolicy,
+		EGridGoalContentionPolicy::StopBeforeOccupied);
+	TestTrue(
+		TEXT("Path preview exposes a dedicated Goal Occupied failure"),
+		StaticEnum<EGridPathPreviewFailureReason>()->IsValidEnumValue(
+			static_cast<int64>(EGridPathPreviewFailureReason::GoalOccupied)));
 	const UBTTask_MoveToGridCell* DefaultGridMoveTask = GetDefault<UBTTask_MoveToGridCell>();
-	TestEqual(TEXT("Goal contention defaults to opt-in"), DefaultGridMoveTask->GoalContentionPolicy, EGridGoalContentionPolicy::Ignore);
+	TestEqual(
+		TEXT("Grid move tasks stop before occupied goals by default"),
+		DefaultGridMoveTask->GoalContentionPolicy,
+		EGridGoalContentionPolicy::StopBeforeOccupied);
 	TestEqual(TEXT("Alternative search defaults to three graph cells"), DefaultGridMoveTask->MaxAlternativeSearchRadius, 3);
 	TestEqual(TEXT("Additional goal separation defaults to five centimeters"), DefaultGridMoveTask->AdditionalGoalSeparation, 5.0f);
 	TestTrue(TEXT("Contention-enabled tasks auto-register Pawn occupancy by default"), DefaultGridMoveTask->bAutoRegisterPawnOccupancy);
@@ -437,6 +718,315 @@ bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 			TEXT("Sample controller uses the GridWorld native controller"),
 			SampleController->ParentClass.Get() == AGridWorldAIController::StaticClass());
 	}
+	UClass* BalancedFilterClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/GridWorldSystem/AI/BP_GridQueryFilter_Balanced.BP_GridQueryFilter_Balanced_C"));
+	if (TestNotNull(TEXT("Balanced GridWorld filter class loads"), BalancedFilterClass))
+	{
+		const UGridNavigationQueryFilter* BalancedFilter =
+			Cast<UGridNavigationQueryFilter>(BalancedFilterClass->GetDefaultObject());
+		if (TestNotNull(TEXT("Balanced GridWorld filter CDO"), BalancedFilter))
+		{
+			TestEqual(
+				TEXT("Balanced filter leaves ordinary occupancy to Reserved Corridor"),
+				BalancedFilter->OccupancyPolicy,
+				EGridOccupancyPolicy::Ignore);
+			TestEqual(
+				TEXT("Balanced filter coordinates live agents with Reserved Corridor"),
+				BalancedFilter->DynamicAgentPolicy,
+				EGridDynamicAgentPolicy::ReservedCorridor);
+		}
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridStopBeforeOccupiedPathTest,
+	"GridWorld.Navigation.GoalContention.StopBeforeOccupiedPathPrefix",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridStopBeforeOccupiedPathTest::RunTest(const FString& Parameters)
+{
+	const FGuid GridId = FGuid::NewGuid();
+	TArray<FGridCellId> FullPath;
+	for (int32 X = 0; X < 4; ++X)
+	{
+		FGridCellId& Cell = FullPath.AddDefaulted_GetRef();
+		Cell.GridId = GridId;
+		Cell.Coord = FGridCellCoord(X, 0, 0);
+	}
+
+	TArray<FGridCellId> AdjustedPath;
+	FGridCellId EffectiveGoal;
+	TestTrue(
+		TEXT("A complete path exposes the cell immediately before its occupied goal"),
+		UE::GridWorld::Private::BuildStopBeforeOccupiedCells(
+			FullPath,
+			FullPath.Last(),
+			AdjustedPath,
+			EffectiveGoal));
+	TestEqual(TEXT("Only the requested occupied final cell is removed"), AdjustedPath.Num(), FullPath.Num() - 1);
+	TestEqual(TEXT("The effective goal is the immediate predecessor"), EffectiveGoal, FullPath[FullPath.Num() - 2]);
+	for (int32 Index = 0; Index < AdjustedPath.Num(); ++Index)
+	{
+		TestEqual(TEXT("The original route prefix remains unchanged"), AdjustedPath[Index], FullPath[Index]);
+	}
+
+	TArray<FGridCellId> InvalidAdjustedPath;
+	FGridCellId InvalidEffectiveGoal;
+	TestFalse(
+		TEXT("A path not ending at the requested goal cannot be shortened ambiguously"),
+		UE::GridWorld::Private::BuildStopBeforeOccupiedCells(
+			MakeArrayView(FullPath.GetData(), FullPath.Num() - 1),
+			FullPath.Last(),
+			InvalidAdjustedPath,
+			InvalidEffectiveGoal));
+	TestTrue(TEXT("A rejected adjustment leaves no stale cells"), InvalidAdjustedPath.IsEmpty());
+	TestFalse(TEXT("A rejected adjustment leaves no stale effective goal"), InvalidEffectiveGoal.IsValid());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridRejectOccupiedGoalClaimTest,
+	"GridWorld.Navigation.GoalContention.RejectOccupiedAtomicClaim",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridRejectOccupiedGoalClaimTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Game,
+		false,
+		MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridRejectOccupiedGoalClaim")));
+	if (!TestNotNull(TEXT("Transient goal-claim world"), World))
+	{
+		return false;
+	}
+	AGridNavigationData* NavData = World->SpawnActor<AGridNavigationData>();
+	APawn* FirstPawn = World->SpawnActor<APawn>();
+	APawn* SecondPawn = World->SpawnActor<APawn>();
+	if (!TestNotNull(TEXT("Goal-claim navigation data"), NavData)
+		|| !TestNotNull(TEXT("First claimant Pawn"), FirstPawn)
+		|| !TestNotNull(TEXT("Second claimant Pawn"), SecondPawn))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	const FGuid GridId = FGuid::NewGuid();
+	const FGuid FirstOwnerId = FGuid::NewGuid();
+	const FGuid SecondOwnerId = FGuid::NewGuid();
+	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> Snapshot =
+		MakeShared<FGridWorldSnapshot, ESPMode::ThreadSafe>();
+	Snapshot->GridId = GridId;
+	Snapshot->Revisions.Topology = 1;
+	Snapshot->Revisions.Occupancy = 1;
+	FGridRegionData& Region = Snapshot->Regions.Add(GridId);
+	Region.GridId = GridId;
+	Region.GridTransform.CellSize = FVector(100.0, 100.0, 200.0);
+	FGridCellData& GoalCell = Snapshot->Cells.AddDefaulted_GetRef();
+	GoalCell.Id.GridId = GridId;
+	GoalCell.Id.Coord = FGridCellCoord(0, 0, 0);
+	GoalCell.WorldCenter = FVector::ZeroVector;
+	GoalCell.bWalkable = true;
+	GoalCell.OccupancyOwners.Add(FirstOwnerId);
+	FString PublishError;
+	if (!TestTrue(TEXT("Owner-occupied goal snapshot publishes"), NavData->PublishSnapshot(Snapshot, &PublishError)))
+	{
+		AddError(PublishError);
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	UObject* FirstClaimant = NewObject<UGridNavigationQueryFilter>();
+	UObject* ReplacementClaimant = NewObject<UGridNavigationQueryFilter>();
+	UObject* SecondClaimant = NewObject<UGridNavigationQueryFilter>();
+	FGridTrafficGoalClaimRequest FirstRequest;
+	FirstRequest.OwnerId = FirstOwnerId;
+	FirstRequest.Claimant = FirstClaimant;
+	FirstRequest.Pawn = FirstPawn;
+	FirstRequest.GoalCell = {GoalCell.Id, GoalCell.WorldCenter};
+	FirstRequest.AgentRadius = 42.0f;
+	FirstRequest.AgentHeight = 192.0f;
+	FirstRequest.AdditionalSeparation = 5.0f;
+	TestTrue(TEXT("A Pawn ignores its own OccupancyOwners entry"), NavData->CanClaimTrafficGoal(FirstRequest));
+	TestTrue(TEXT("The first exact goal claim is acquired atomically"), NavData->TryClaimTrafficGoal(FirstRequest));
+
+	FGridTrafficGoalClaimRequest SecondRequest = FirstRequest;
+	SecondRequest.OwnerId = SecondOwnerId;
+	SecondRequest.Claimant = SecondClaimant;
+	SecondRequest.Pawn = SecondPawn;
+	TestFalse(TEXT("A simultaneous second owner cannot acquire the claimed goal"), NavData->TryClaimTrafficGoal(SecondRequest));
+
+	FGridTrafficGoalClaimRequest ReplacementRequest = FirstRequest;
+	ReplacementRequest.Claimant = ReplacementClaimant;
+	TestTrue(TEXT("A replacement request from the same owner can take over its claim"), NavData->TryClaimTrafficGoal(ReplacementRequest));
+	NavData->ReleaseTrafficGoalClaims(ReplacementClaimant);
+
+	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> OccupiedByOther =
+		MakeShared<FGridWorldSnapshot, ESPMode::ThreadSafe>(*Snapshot);
+	OccupiedByOther->Revisions.Occupancy = 2;
+	OccupiedByOther->Cells[0].OccupancyOwners.Reset();
+	OccupiedByOther->Cells[0].OccupancyOwners.Add(SecondOwnerId);
+	if (TestTrue(TEXT("Other-owner occupancy snapshot publishes"), NavData->PublishSnapshot(OccupiedByOther, &PublishError)))
+	{
+		TestFalse(TEXT("OccupancyOwners rejects the final cell before a traffic claim is created"), NavData->CanClaimTrafficGoal(FirstRequest));
+		TestFalse(TEXT("Atomic claim also rejects a goal occupied by another Pawn"), NavData->TryClaimTrafficGoal(FirstRequest));
+	}
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridPlayerOccupancyIdentityAndParkingTest,
+	"GridWorld.Navigation.Occupancy.PlayerIdentityAndLogicalCell",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridPlayerOccupancyIdentityAndParkingTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Game,
+		false,
+		MakeUniqueObjectName(
+			GetTransientPackage(),
+			UWorld::StaticClass(),
+			TEXT("GridPlayerOccupancyIdentityAndParking")));
+	if (!TestNotNull(TEXT("Transient player-occupancy world"), World))
+	{
+		return false;
+	}
+
+	AGridNavigationData* NavData = World->SpawnActor<AGridNavigationData>();
+	APlayerController* Controller = World->SpawnActor<APlayerController>();
+	ACharacter* Character = World->SpawnActor<ACharacter>();
+	if (!TestNotNull(TEXT("Player-occupancy navigation data"), NavData)
+		|| !TestNotNull(TEXT("Player-occupancy controller"), Controller)
+		|| !TestNotNull(TEXT("Player-occupancy character"), Character))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	const FGuid GridId = FGuid::NewGuid();
+	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> Snapshot =
+		MakeShared<FGridWorldSnapshot, ESPMode::ThreadSafe>();
+	Snapshot->GridId = GridId;
+	Snapshot->Revisions.Topology = 1;
+	Snapshot->GridTransform.CellSize = FVector(100.0, 100.0, 200.0);
+	FGridRegionData& Region = Snapshot->Regions.Add(GridId);
+	Region.GridId = GridId;
+	Region.GridTransform = Snapshot->GridTransform;
+	for (int32 CellX = 0; CellX < 2; ++CellX)
+	{
+		FGridCellData& Cell = Snapshot->Cells.AddDefaulted_GetRef();
+		Cell.Id.GridId = GridId;
+		Cell.Id.Coord = FGridCellCoord(CellX, 0, 0);
+		Cell.WorldCenter = FVector(CellX * 100.0, 0.0, 0.0);
+		Cell.bWalkable = true;
+		if (CellX > 0)
+		{
+			Cell.Neighbors.Add(CellX - 1);
+			Snapshot->Cells[CellX - 1].Neighbors.Add(CellX);
+		}
+	}
+	FString PublishError;
+	if (!TestTrue(TEXT("Player-occupancy topology publishes"), NavData->PublishSnapshot(Snapshot, &PublishError)))
+	{
+		AddError(PublishError);
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	// Keep the Pawn logically in cell zero while placing its root far enough from the
+	// floor-center sample that the old physical-box-only composition missed the cell.
+	Character->SetActorLocation(FVector(49.0, 49.0, 98.0));
+	UGridWorldPathFollowingComponent* PathFollowing =
+		NewObject<UGridWorldPathFollowingComponent>(Controller);
+	Controller->AddInstanceComponent(PathFollowing);
+	PathFollowing->RegisterComponent();
+	Controller->Possess(Character);
+
+	UGridNavigationOccupancyComponent* Occupancy =
+		UGridNavigationOccupancyComponent::FindActiveAgentOccupancy(*Character);
+	if (!TestNotNull(TEXT("Player path follower registers occupancy"), Occupancy))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	TestTrue(TEXT("Player occupancy has a stable owner identity"), Occupancy->OccupantId.IsValid());
+	TestFalse(
+		TEXT("Off-center Pawn footprint does not physically contain the floor-cell center"),
+		Occupancy->AffectsPoint(Snapshot->Cells[0].WorldCenter));
+
+	const FGridWorldSnapshotPtr OccupiedSnapshot = NavData->GetSnapshot();
+	const FGridCellData* PlayerCell = OccupiedSnapshot.IsValid()
+		? OccupiedSnapshot->FindCell(Snapshot->Cells[0].Id)
+		: nullptr;
+	if (TestNotNull(TEXT("Player logical cell remains published"), PlayerCell))
+	{
+		TestTrue(
+			TEXT("Player logical cell contains its occupancy owner"),
+			PlayerCell->OccupancyOwners.Contains(Occupancy->OccupantId));
+	}
+
+	UClass* BalancedFilterClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/GridWorldSystem/AI/BP_GridQueryFilter_Balanced.BP_GridQueryFilter_Balanced_C"));
+	if (!TestNotNull(TEXT("Balanced filter class loads for PlayerController query"), BalancedFilterClass))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	const FSharedConstNavQueryFilter QueryFilter = UNavigationQueryFilter::GetQueryFilter(
+		*NavData,
+		Controller,
+		BalancedFilterClass);
+	const FGridNavigationQueryFilterImpl* GridFilter = QueryFilter.IsValid()
+		? static_cast<const FGridNavigationQueryFilterImpl*>(QueryFilter->GetImplementation())
+		: nullptr;
+	if (TestNotNull(TEXT("PlayerController receives GridWorld query filter state"), GridFilter))
+	{
+		TestEqual(
+			TEXT("Generic PlayerController query ignores its own Pawn occupancy"),
+			GridFilter->GetIgnoredOccupancyOwnerId(),
+			Occupancy->OccupantId);
+	}
+
+	FGridTrafficGoalClaimRequest ParkingRequest;
+	ParkingRequest.OwnerId = Occupancy->OccupantId;
+	ParkingRequest.Claimant = Controller;
+	ParkingRequest.Pawn = Character;
+	ParkingRequest.GoalCell = {Snapshot->Cells[0].Id, Snapshot->Cells[0].WorldCenter};
+	ParkingRequest.AgentRadius = 42.0f;
+	ParkingRequest.AgentHeight = 192.0f;
+	ParkingRequest.AdditionalSeparation = 5.0f;
+	NavData->CommitTrafficParking(ParkingRequest);
+
+	TArray<FGridCellId> ExactCells{Snapshot->Cells[0].Id, Snapshot->Cells[1].Id};
+	FGridInjectedPath InjectedPath;
+	const FGridInjectedPathValidationResult ExactResult = NavData->CreateExactInjectedPath(
+		Controller,
+		Character->GetNavAgentPropertiesRef(),
+		BalancedFilterClass,
+		Character->GetNavAgentLocation(),
+		ExactCells,
+		ExactCells.Last(),
+		true,
+		false,
+		EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+		FGuid::NewGuid(),
+		InjectedPath);
+	TestTrue(
+		TEXT("Player exact path ignores its own parking record after a completed move"),
+		ExactResult.bIsValid);
+	if (!ExactResult.bIsValid)
+	{
+		AddError(FString::Printf(
+			TEXT("Player exact path unexpectedly rejected its own parking: %s"),
+			*ExactResult.DiagnosticMessage));
+	}
+
+	World->DestroyWorld(false);
 	return true;
 }
 
@@ -1111,7 +1701,7 @@ bool FGridDirectVelocityTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridSerializationMigrationTest, "GridWorld.Navigation.SerializationV5", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridSerializationMigrationTest, "GridWorld.Navigation.SerializationV7", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 {
 	FGridWorldSnapshot SourceSnapshot;
@@ -1129,31 +1719,31 @@ bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 	SourceCell.FloorNormal = FVector3f(FVector(-0.5, 0.0, FMath::Sqrt(0.75)).GetSafeNormal());
 	SourceCell.bHasAuthoredWorldCenter = true;
 
-	TArray<uint8> Version5Bytes;
+	TArray<uint8> Version7Bytes;
 	{
-		FMemoryWriter Writer(Version5Bytes);
-		UE::GridWorld::Serialization::SerializeSnapshot(Writer, SourceSnapshot, 5);
+		FMemoryWriter Writer(Version7Bytes);
+		UE::GridWorld::Serialization::SerializeSnapshot(Writer, SourceSnapshot, 7);
 	}
 	FGridWorldSnapshot ReloadedSnapshot;
 	{
-		FMemoryReader Reader(Version5Bytes);
-		UE::GridWorld::Serialization::SerializeSnapshot(Reader, ReloadedSnapshot, 5);
+		FMemoryReader Reader(Version7Bytes);
+		UE::GridWorld::Serialization::SerializeSnapshot(Reader, ReloadedSnapshot, 7);
 	}
 	const FGridRegionData* ReloadedRegion = ReloadedSnapshot.FindRegion(SourceSnapshot.GridId);
-	if (TestNotNull(TEXT("Version 5 region loads"), ReloadedRegion))
+	if (TestNotNull(TEXT("Version 7 region loads"), ReloadedRegion))
 	{
-		TestEqual(TEXT("Version 5 preserves precise path style"), ReloadedRegion->PathFollowingStyle, EGridPathFollowingStyle::CellByCell);
-		TestEqual(TEXT("Version 5 preserves Direct Velocity"), ReloadedRegion->PathDriveMode, EGridPathDriveMode::DirectVelocity);
-		TestTrue(TEXT("Version 5 preserves accelerated final approach"), ReloadedRegion->bUseAcceleratedFinalApproach);
+		TestEqual(TEXT("Version 7 preserves precise path style"), ReloadedRegion->PathFollowingStyle, EGridPathFollowingStyle::CellByCell);
+		TestEqual(TEXT("Version 7 preserves Direct Velocity"), ReloadedRegion->PathDriveMode, EGridPathDriveMode::DirectVelocity);
+		TestTrue(TEXT("Version 7 preserves accelerated final approach"), ReloadedRegion->bUseAcceleratedFinalApproach);
 	}
-	if (TestEqual(TEXT("Version 5 preserves cells"), ReloadedSnapshot.Cells.Num(), 1))
+	if (TestEqual(TEXT("Version 7 preserves cells"), ReloadedSnapshot.Cells.Num(), 1))
 	{
 		TestTrue(
-			TEXT("Version 5 preserves floor normal"),
+			TEXT("Version 7 preserves floor normal"),
 			FVector(ReloadedSnapshot.Cells[0].FloorNormal).Equals(FVector(SourceCell.FloorNormal), UE_KINDA_SMALL_NUMBER));
 	}
 
-	for (int32 LegacyVersion = 2; LegacyVersion <= 4; ++LegacyVersion)
+	for (int32 LegacyVersion = 2; LegacyVersion <= 6; ++LegacyVersion)
 	{
 		TArray<uint8> LegacyBytes;
 		{
@@ -1171,8 +1761,8 @@ bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 		TestTrue(*FString::Printf(TEXT("Version %d is recognized for safe consumption"), LegacyVersion), UE::GridWorld::Serialization::CanConsumeVersion(LegacyVersion));
 		TestFalse(*FString::Printf(TEXT("Version %d cannot be published without rebuild"), LegacyVersion), UE::GridWorld::Serialization::CanPublishVersion(LegacyVersion));
 	}
-	TestTrue(TEXT("Version 5 may be published"), UE::GridWorld::Serialization::CanPublishVersion(5));
-	TestFalse(TEXT("Unknown future version cannot be consumed"), UE::GridWorld::Serialization::CanConsumeVersion(6));
+	TestTrue(TEXT("Version 7 may be published"), UE::GridWorld::Serialization::CanPublishVersion(7));
+	TestFalse(TEXT("Unknown future version cannot be consumed"), UE::GridWorld::Serialization::CanConsumeVersion(8));
 	return true;
 }
 

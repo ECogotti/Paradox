@@ -18,7 +18,7 @@ public:
 
 	/** Optional arbitration applied when several agents select the same destination cell. */
 	UPROPERTY(EditAnywhere, Category = "Grid World|Goal Contention")
-	EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::Ignore;
+	EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied;
 
 	/** Maximum ordinary-adjacency distance searched for a separated alternative goal. */
 	UPROPERTY(EditAnywhere, Category = "Grid World|Goal Contention", meta = (ClampMin = "1", UIMin = "1", EditCondition = "GoalContentionPolicy != EGridGoalContentionPolicy::Ignore", EditConditionHides))

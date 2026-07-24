@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Tactical Pause",
+	"Description": "Authoritative per-world pause and playback-speed control with a designer-owned Common UI interface.",
+	"Category": "Gameplay",
+	"CreatedBy": "Paradox",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Plugins": [
+		{
+			"Name": "CommonUI",
+			"Enabled": true
+		}
+	],
+	"Modules": [
+		{
+			"Name": "TacticalPause",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

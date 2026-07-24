@@ -4,6 +4,7 @@
 
 #include "NavigationData.h"
 #include "GridWorldTypes.h"
+#include "Navigation/GridPathInjectionTypes.h"
 
 class AGridNavigationData;
 
@@ -169,6 +170,17 @@ struct GRIDWORLD_API FGridNavigationPath : public FNavigationPath
 	int64 TrafficReservationRevision = 0;
 	/** True when no route avoided every occupied intermediate cell and the safe waiting corridor was retained. */
 	bool bUsedDynamicAgentFallback = false;
+	/** Generic source of the latest materialization of this path. */
+	EGridNavigationPathOrigin Origin = EGridNavigationPathOrigin::Computed;
+	/** Identity of this materialization; refreshed after successful repath. */
+	FGuid PathInstanceId;
+	/** Previous materialization when Origin is Recalculated. */
+	FGuid ParentPathInstanceId;
+	/** Preview correlation retained when this path was committed from prediction. */
+	FGuid SourcePreviewId;
+	/** Additional exact-path behavior layered over the normal invalidation pipeline. */
+	EGridInjectedPathInvalidationPolicy InjectedInvalidationPolicy =
+		EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
 
 	static const FNavPathType Type;
 

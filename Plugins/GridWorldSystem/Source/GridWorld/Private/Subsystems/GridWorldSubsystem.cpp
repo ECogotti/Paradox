@@ -8,6 +8,7 @@
 #include "Navigation/GridNavigationData.h"
 #include "Navigation/GridNavigationPath.h"
 #include "Navigation/GridNavigationQueryFilter.h"
+#include "GameFramework/Controller.h"
 
 AGridNavigationData* UGridWorldSubsystem::GetNavigationData() const
 {
@@ -228,4 +229,60 @@ FGridReachabilityResult UGridWorldSubsystem::FindReachableCells(const FVector& O
 	Output.Revisions = Snapshot->Revisions;
 	NavData->SetDebugReachability(Output.WorldPoints);
 	return Output;
+}
+
+FGridInjectedPathValidationResult UGridWorldSubsystem::CreateExactInjectedPath(
+	AController* Controller,
+	const TArray<FGridCellId>& Cells,
+	const FGridCellId& OriginalGoalCell,
+	TSubclassOf<UNavigationQueryFilter> FilterClass,
+	bool bAllowPartialPath,
+	bool bIsPartial,
+	EGridInjectedPathInvalidationPolicy InvalidationPolicy,
+	FGridInjectedPath& OutInjectedPath) const
+{
+	AGridNavigationData* NavData = GetNavigationData();
+	if (NavData == nullptr || !IsValid(Controller) || Controller->GetWorld() != GetWorld())
+	{
+		OutInjectedPath = FGridInjectedPath();
+		FGridInjectedPathValidationResult Result;
+		Result.FailureReason = NavData == nullptr
+			? EGridInjectedPathFailureReason::InvalidNavigationData
+			: EGridInjectedPathFailureReason::InvalidPath;
+		Result.DiagnosticMessage = TEXT("Exact path creation requires valid GridWorld Navigation Data and a Controller in this World.");
+		return Result;
+	}
+	return NavData->CreateExactInjectedPath(
+		Controller,
+		Controller->GetNavAgentPropertiesRef(),
+		FilterClass,
+		Controller->GetNavAgentLocation(),
+		Cells,
+		OriginalGoalCell,
+		bAllowPartialPath,
+		bIsPartial,
+		InvalidationPolicy,
+		FGuid(),
+		OutInjectedPath);
+}
+
+FGridInjectedPathValidationResult UGridWorldSubsystem::ValidateInjectedPath(
+	AController* Controller,
+	const FGridInjectedPath& InjectedPath) const
+{
+	AGridNavigationData* NavData = GetNavigationData();
+	if (NavData == nullptr || !IsValid(Controller) || Controller->GetWorld() != GetWorld())
+	{
+		FGridInjectedPathValidationResult Result;
+		Result.FailureReason = NavData == nullptr
+			? EGridInjectedPathFailureReason::InvalidNavigationData
+			: EGridInjectedPathFailureReason::InvalidPath;
+		Result.DiagnosticMessage = TEXT("Injected path validation requires valid GridWorld Navigation Data and a Controller in this World.");
+		return Result;
+	}
+	return NavData->ValidateInjectedPath(
+		InjectedPath,
+		Controller,
+		Controller->GetNavAgentPropertiesRef(),
+		Controller->GetNavAgentLocation());
 }

@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "AITypes.h"
 #include "GridWorldTypes.h"
+#include "Navigation/GridPathInjectionTypes.h"
 #include "Tasks/AITask_MoveTo.h"
 #include "GridMoveToCellTask.generated.h"
 
@@ -65,12 +66,34 @@ public:
 		EAIOptionFlag::Type RequireNavigableEndLocation = EAIOptionFlag::Default,
 		TSubclassOf<UNavigationQueryFilter> FilterClass = nullptr,
 		bool bAllowStrafe = false,
-		EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::Ignore,
+		EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied,
 		int32 MaxAlternativeSearchRadius = 3,
 		float AdditionalGoalSeparation = 5.0f,
 		bool bAutoRegisterPawnOccupancy = true,
 		float GoalAvailabilityTimeout = 5.0f,
 		float GoalWaitWarningInterval = 1.0f);
+
+	/**
+	 * Follows the ordered GridWorld cells exported by path prediction without running a second A* query.
+	 * The payload is revalidated at activation. Its invalidation policy controls whether a stale payload
+	 * fails or is recalculated toward OriginalGoalCell through the normal GridWorld query pipeline.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "AI|Tasks", meta = (
+		AdvancedDisplay = "AcceptanceRadius,StopOnOverlap,bLockAILogic,RequireNavigableEndLocation,bAllowStrafe,GoalContentionPolicy,AdditionalGoalSeparation,bAutoRegisterPawnOccupancy",
+		DefaultToSelf = "Controller",
+		BlueprintInternalUseOnly = "TRUE",
+		DisplayName = "Move Along Exact Grid Path"))
+	static UGridMoveToCellTask* MoveToGridExactPath(
+		AAIController* Controller,
+		const FGridInjectedPath& InjectedPath,
+		float AcceptanceRadius = -1.0f,
+		EAIOptionFlag::Type StopOnOverlap = EAIOptionFlag::Default,
+		bool bLockAILogic = true,
+		EAIOptionFlag::Type RequireNavigableEndLocation = EAIOptionFlag::Default,
+		bool bAllowStrafe = false,
+		EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied,
+		float AdditionalGoalSeparation = 5.0f,
+		bool bAutoRegisterPawnOccupancy = true);
 
 	/** Configures this task from an existing native MoveTo request. The task retains no ownership of SourceGoalActor. */
 	void SetUpGridMove(
@@ -78,6 +101,12 @@ public:
 		const FAIMoveRequest& InMoveRequest,
 		AActor* SourceGoalActor = nullptr,
 		bool bTrackSourceGoalActor = true);
+
+	/** Configures exact-cell execution from a previously validated prediction payload. */
+	void SetUpExactGridMove(
+		AAIController* Controller,
+		const FGridInjectedPath& InInjectedPath,
+		const FAIMoveRequest& InMoveRequest);
 
 	/** Applies optional destination arbitration without changing the query filter's traversal policy. */
 	void SetGoalContentionSettings(
@@ -93,8 +122,18 @@ public:
 	/** @return World center matching GetProjectedGoalCell. */
 	const FVector& GetProjectedGoalLocation() const { return ProjectedGoalLocation; }
 
+	/**
+	 * Public lifecycle forwarding for systems that own this task through a higher-level action.
+	 *
+	 * UGameplayTask intentionally keeps Pause/Resume protected. These narrow wrappers preserve that
+	 * contract while allowing an external owner to pause only this GridWorld move symmetrically.
+	 */
+	void PauseGridMove();
+	void ResumeGridMove();
+
 protected:
 	virtual void PerformMove() override;
+	virtual void OnPathEvent(FNavigationPath* InPath, ENavPathEvent::Type Event) override;
 	virtual void OnRequestFinished(FAIRequestID RequestID, const FPathFollowingResult& Result) override;
 	virtual void ResetObservers() override;
 	virtual void ResetTimers() override;
@@ -103,6 +142,10 @@ protected:
 private:
 	/** Unprojected options copied from the native caller and reused across target-cell changes. */
 	FAIMoveRequest SourceMoveRequest;
+	/** Selects ordinary destination projection or exact path materialization. */
+	EGridMovePathSource MovePathSource = EGridMovePathSource::Destination;
+	/** Blueprint-safe exact payload retained for activation and invalidation policy. */
+	FGridInjectedPath InjectedPath;
 	/** Optional Actor whose cell is observed without Tick. */
 	TWeakObjectPtr<AActor> SourceGoalActor;
 	/** Acquired vector goal used when no Actor is supplied. */
@@ -132,7 +175,7 @@ private:
 	/** Candidate cells rejected during repeated second/third blocker redirects. */
 	TSet<FGridCellId> RejectedGoalCells;
 	/** Selected destination arbitration policy. */
-	EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::Ignore;
+	EGridGoalContentionPolicy GoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied;
 	/** Maximum candidate graph distance. */
 	int32 MaxAlternativeSearchRadius = 3;
 	/** Extra destination clearance in centimetres. */
@@ -161,6 +204,23 @@ private:
 	bool bWaitingForGoalAvailability = false;
 	/** Distinguishes an alternative-goal wait from initial desired-goal waiting. */
 	bool bWaitingForAlternativeGoal = false;
+	/** Starts an already validated engine path through the native path-following lifecycle. */
+	void PerformExactMove();
+	/** Starts a precomputed path with the same observer and immediate-finish lifecycle as exact injection. */
+	void StartMaterializedMove(
+		UPathFollowingComponent& PathFollowing,
+		const FNavPathSharedPtr& MaterializedPath);
+	/** Replaces a complete path's occupied final cell with its immediately preceding cell. */
+	bool BuildStopBeforeOccupiedPath(
+		AGridNavigationData& NavigationData,
+		const FGridCellId& RequestedCell,
+		const FPathFindingResult& FullPath,
+		FPathFindingResult& OutAdjustedPath,
+		FGridCellId& OutEffectiveCell,
+		FVector& OutEffectiveLocation,
+		FString& OutError) const;
+	/** Uses the original goal and normal GridWorld pathfinding after an allowed stale-path recovery. */
+	void RecalculateInjectedPathToOriginalGoal(const FVector& GoalLocation);
 
 	/** Resolves Actor/vector input and contention to a usable center. @return False with optional OutError on failure. */
 	bool ResolveGridGoal(FGridCellId& OutCellId, FVector& OutCellCenter, FString* OutError = nullptr) const;
@@ -178,6 +238,8 @@ private:
 	bool ResolveCurrentPawnCell(FGridCellId& OutCellId, FVector& OutCellCenter) const;
 	/** Populates a traffic goal request using current occupancy geometry. */
 	bool BuildGoalClaimRequest(const FGridCellId& CellId, FGridTrafficGoalClaimRequest& OutRequest) const;
+	/** Claims exactly CellId or fails immediately; no alternative or availability wait is started. */
+	bool TryClaimExactGoal(const FGridCellId& CellId);
 	/** Converts the reached claim into Pawn-lifetime parking protection. */
 	void CommitCurrentGoalAsParking();
 	/** Completes successfully without issuing another MoveTo when the Pawn already occupies the best cell. */

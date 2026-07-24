@@ -17,9 +17,10 @@ AGridNavigationBoundsVolume::AGridNavigationBoundsVolume(const FObjectInitialize
 FGridTransform AGridNavigationBoundsVolume::GetGridTransform() const
 {
 	FGridTransform Result;
-	Result.Origin = GetActorLocation();
 	Result.Rotation = GetActorRotation();
 	Result.CellSize = FVector(HorizontalCellSize.X, HorizontalCellSize.Y, LayerHeight);
+	const FVector LocalCellCenterOffset(Result.CellSize.X * 0.5, Result.CellSize.Y * 0.5, 0.0);
+	Result.Origin = -Result.Rotation.RotateVector(LocalCellCenterOffset);
 	return Result;
 }
 
@@ -31,15 +32,23 @@ FBox AGridNavigationBoundsVolume::GetLocalGridBounds() const
 		return FBox(ForceInit);
 	}
 	const FBox UnscaledBounds = LocalBrushComponent->CalcBounds(FTransform::Identity).GetBox();
-	return UnscaledBounds.IsValid
-		? UnscaledBounds.TransformBy(FScaleMatrix(GetActorScale3D()))
-		: FBox(ForceInit);
+	if (!UnscaledBounds.IsValid)
+	{
+		return FBox(ForceInit);
+	}
+
+	const FBox ScaledActorLocalBounds = UnscaledBounds.TransformBy(FScaleMatrix(GetActorScale3D()));
+	const FVector ActorLocationInGrid = GetGridTransform().WorldToLocal(GetActorLocation());
+	return FBox(
+		ScaledActorLocalBounds.Min + ActorLocationInGrid,
+		ScaledActorLocalBounds.Max + ActorLocationInGrid);
 }
 
 FBox AGridNavigationBoundsVolume::GetGridWorldBounds() const
 {
+	const FGridTransform GridTransform = GetGridTransform();
 	const FBox LocalBounds = GetLocalGridBounds();
-	const FTransform GridFrame(GetActorQuat(), GetActorLocation(), FVector::OneVector);
+	const FTransform GridFrame(GridTransform.Rotation, GridTransform.Origin, FVector::OneVector);
 	return LocalBounds.IsValid ? LocalBounds.TransformBy(GridFrame.ToMatrixWithScale()) : FBox(ForceInit);
 }
 

@@ -24,6 +24,7 @@
 # Compiler intermediates and debug symbols
 # Binaries folders are intentionally tracked: DLLs, executables, .target and
 # .modules receipts let non-programmers open the project without compiling it.
+/Binaries/Win64/Paradox.exe
 *.pdb
 *.ipdb
 *.iobj

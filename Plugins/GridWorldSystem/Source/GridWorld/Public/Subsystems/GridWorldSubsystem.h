@@ -5,9 +5,11 @@
 #include "CoreMinimal.h"
 #include "Subsystems/WorldSubsystem.h"
 #include "GridWorldTypes.h"
+#include "Navigation/GridPathInjectionTypes.h"
 #include "GridWorldSubsystem.generated.h"
 
 class AGridNavigationData;
+class AController;
 class UNavigationQueryFilter;
 
 /** Broadcast after a topology or runtime overlay publication. ChangeSet identifies the affected cells and revisions. */
@@ -46,6 +48,24 @@ public:
 		double MaxWorldDistance,
 		int32 MaxCells = 4096,
 		TSubclassOf<UNavigationQueryFilter> FilterClass = nullptr) const;
+
+	/** Validates and stamps an exact cell sequence for later movement through the same Controller. */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Path Injection")
+	FGridInjectedPathValidationResult CreateExactInjectedPath(
+		AController* Controller,
+		const TArray<FGridCellId>& Cells,
+		const FGridCellId& OriginalGoalCell,
+		TSubclassOf<UNavigationQueryFilter> FilterClass,
+		bool bAllowPartialPath,
+		bool bIsPartial,
+		EGridInjectedPathInvalidationPolicy InvalidationPolicy,
+		FGridInjectedPath& OutInjectedPath) const;
+
+	/** Revalidates an existing injected path against the Controller's current cell and query context. */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Path Injection")
+	FGridInjectedPathValidationResult ValidateInjectedPath(
+		AController* Controller,
+		const FGridInjectedPath& InjectedPath) const;
 };
 	/** @return Borrowed authoritative Grid nav data for this World, or nullptr when unavailable. */
 	/** Projects WorldLocation within Extent. @return Cell query result with an explicit failure status. */

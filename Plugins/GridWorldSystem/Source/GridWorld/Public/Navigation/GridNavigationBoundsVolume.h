@@ -92,11 +92,11 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Debug")
 	bool bEnableDebug = false;
 
-	/** @return Logical coordinate frame derived from Actor translation/yaw and authored cell dimensions. */
+	/** @return World-anchored logical frame whose cell (0,0,0) is centered at world origin; Actor rotation still defines orientation. */
 	FGridTransform GetGridTransform() const;
-	/** @return Axis-aligned box in the Actor's unscaled local space. */
+	/** @return Axis-aligned bounds expressed in the world-anchored grid frame. */
 	FBox GetLocalGridBounds() const;
-	/** @return World-space AABB enclosing the scaled and yaw-rotated volume. */
+	/** @return World-space AABB enclosing the scaled and rotated volume. */
 	FBox GetGridWorldBounds() const;
 	/** Validates scale, rotation, box shape, dimensions, and identity. @param OutError Receives a designer-facing reason. */
 	bool ValidateGridBounds(FString& OutError) const;

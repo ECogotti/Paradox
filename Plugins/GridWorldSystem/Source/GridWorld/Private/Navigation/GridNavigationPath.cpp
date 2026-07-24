@@ -34,6 +34,11 @@ void FGridNavigationPath::ResetForRepath()
 	IgnoredOccupancyOwnerId.Invalidate();
 	TrafficReservationRevision = 0;
 	bUsedDynamicAgentFallback = false;
+	Origin = EGridNavigationPathOrigin::Computed;
+	PathInstanceId.Invalidate();
+	ParentPathInstanceId.Invalidate();
+	SourcePreviewId.Invalidate();
+	InjectedInvalidationPolicy = EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
 }
 
 FVector::FReal FGridNavigationPath::GetCostFromIndex(int32 PathPointIndex) const

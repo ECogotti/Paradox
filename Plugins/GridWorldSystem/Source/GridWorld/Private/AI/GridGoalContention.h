@@ -32,4 +32,14 @@ namespace UE::GridWorld::Private
 		float AgentRadius,
 		float AgentHeight,
 		float AdditionalSeparation);
+
+	/**
+	 * Copies a complete requested path without its occupied final cell.
+	 * @return False when the sequence cannot prove an immediate predecessor for RequestedGoalCell.
+	 */
+	bool BuildStopBeforeOccupiedCells(
+		TConstArrayView<FGridCellId> FullPath,
+		const FGridCellId& RequestedGoalCell,
+		TArray<FGridCellId>& OutAdjustedPath,
+		FGridCellId& OutEffectiveGoalCell);
 }

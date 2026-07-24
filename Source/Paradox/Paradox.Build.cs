@@ -11,28 +11,27 @@ public class Paradox : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core",
 			"CoreUObject",
+			"DeveloperSettings",
 			"Engine",
 			"InputCore",
 			"EnhancedInput",
-			"AIModule",
-			"NavigationSystem",
-			"StateTreeModule",
-			"GameplayStateTreeModule",
-			"Niagara",
-			"UMG",
-			"Slate"
+			"GameplayActions",
+			"GameplayActionsGridWorld",
+			"GameplayTags",
+			"GridWorld",
+			"IntentReplay",
+			"LineOfSight",
+			"ProceduralMeshComponent",
+			"EntityRelations",
+			"WorldState",
+			"TacticalPause",
+			"Niagara"
 		});
 
-		PrivateDependencyModuleNames.AddRange(new string[] { });
-
-		PublicIncludePaths.AddRange(new string[] {
-			"Paradox",
-			"Paradox/Variant_Strategy",
-			"Paradox/Variant_Strategy/UI",
-			"Paradox/Variant_TwinStick",
-			"Paradox/Variant_TwinStick/AI",
-			"Paradox/Variant_TwinStick/Gameplay",
-			"Paradox/Variant_TwinStick/UI"
+		PrivateDependencyModuleNames.AddRange(new string[] {
+			"Slate",
+			"SlateCore",
+			"UMG"
 		});
 
 		// Uncomment if you are using Slate UI

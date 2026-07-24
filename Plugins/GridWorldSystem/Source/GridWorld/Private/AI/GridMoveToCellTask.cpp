@@ -12,6 +12,7 @@
 #include "GameFramework/Pawn.h"
 #include "GridWorldModule.h"
 #include "Navigation/GridNavigationData.h"
+#include "Navigation/GridNavigationPath.h"
 #include "Navigation/GridNavigationQueryFilter.h"
 #include "Navigation/GridTrafficReservation.h"
 #include "Navigation/GridWorldSnapshot.h"
@@ -126,6 +127,51 @@ UGridMoveToCellTask* UGridMoveToCellTask::MoveToGridCell(
 	return Task;
 }
 
+UGridMoveToCellTask* UGridMoveToCellTask::MoveToGridExactPath(
+	AAIController* Controller,
+	const FGridInjectedPath& InInjectedPath,
+	float AcceptanceRadius,
+	EAIOptionFlag::Type StopOnOverlap,
+	bool bLockAILogic,
+	EAIOptionFlag::Type RequireNavigableEndLocation,
+	bool bAllowStrafe,
+	EGridGoalContentionPolicy InGoalContentionPolicy,
+	float InAdditionalGoalSeparation,
+	bool bInAutoRegisterPawnOccupancy)
+{
+	UGridMoveToCellTask* Task = Controller
+		? UAITask::NewAITask<UGridMoveToCellTask>(*Controller, EAITaskPriority::High)
+		: nullptr;
+	if (Task == nullptr)
+	{
+		return nullptr;
+	}
+
+	FAIMoveRequest Request(FVector::ZeroVector);
+	Request.SetAcceptanceRadius(AcceptanceRadius);
+	Request.SetReachTestIncludesAgentRadius(FAISystem::PickAIOption(StopOnOverlap, Request.IsReachTestIncludingAgentRadius()));
+	Request.SetReachTestIncludesGoalRadius(FAISystem::PickAIOption(StopOnOverlap, Request.IsReachTestIncludingGoalRadius()));
+	Request.SetAllowPartialPath(InInjectedPath.bAllowPartialPath);
+	Request.SetUsePathfinding(true);
+	Request.SetRequireNavigableEndLocation(FAISystem::PickAIOption(
+		RequireNavigableEndLocation,
+		Request.IsNavigableEndLocationRequired()));
+	Request.SetProjectGoalLocation(false);
+	Request.SetNavigationFilter(InInjectedPath.FilterClass);
+	Request.SetCanStrafe(bAllowStrafe);
+	Task->SetUpExactGridMove(Controller, InInjectedPath, Request);
+	Task->SetGoalContentionSettings(
+		InGoalContentionPolicy,
+		3,
+		InAdditionalGoalSeparation,
+		bInAutoRegisterPawnOccupancy);
+	if (bLockAILogic)
+	{
+		Task->RequestAILogicLocking();
+	}
+	return Task;
+}
+
 void UGridMoveToCellTask::SetUpGridMove(
 	AAIController* Controller,
 	const FAIMoveRequest& InMoveRequest,
@@ -134,6 +180,8 @@ void UGridMoveToCellTask::SetUpGridMove(
 {
 	UnbindTrackedGoal();
 	ResetContentionState();
+	MovePathSource = EGridMovePathSource::Destination;
+	InjectedPath = FGridInjectedPath();
 	SourceMoveRequest = InMoveRequest;
 	SourceGoalActor = InSourceGoalActor != nullptr ? InSourceGoalActor : InMoveRequest.GetGoalActor();
 	bHasSourceGoalActor = InSourceGoalActor != nullptr || InMoveRequest.IsMoveToActorRequest();
@@ -141,6 +189,23 @@ void UGridMoveToCellTask::SetUpGridMove(
 	SourceGoalLocation = SourceGoalActor.IsValid()
 		? UE::GridWorld::Private::ResolveActorMoveGoal(*SourceGoalActor.Get(), Controller)
 		: InMoveRequest.GetGoalLocation();
+	SetUp(Controller, InMoveRequest);
+}
+
+void UGridMoveToCellTask::SetUpExactGridMove(
+	AAIController* Controller,
+	const FGridInjectedPath& InInjectedPath,
+	const FAIMoveRequest& InMoveRequest)
+{
+	UnbindTrackedGoal();
+	ResetContentionState();
+	MovePathSource = EGridMovePathSource::ExactInjectedPath;
+	InjectedPath = InInjectedPath;
+	SourceMoveRequest = InMoveRequest;
+	SourceGoalActor.Reset();
+	bHasSourceGoalActor = false;
+	bTrackSourceGoalActor = false;
+	SourceGoalLocation = InMoveRequest.GetGoalLocation();
 	SetUp(Controller, InMoveRequest);
 }
 
@@ -158,6 +223,22 @@ void UGridMoveToCellTask::SetGoalContentionSettings(
 	bAutoRegisterPawnOccupancy = bInAutoRegisterPawnOccupancy;
 	GoalAvailabilityTimeout = FMath::Max(0.1f, InGoalAvailabilityTimeout);
 	GoalWaitWarningInterval = FMath::Clamp(InGoalWaitWarningInterval, 0.1f, GoalAvailabilityTimeout);
+}
+
+void UGridMoveToCellTask::PauseGridMove()
+{
+	if (IsActive())
+	{
+		Pause();
+	}
+}
+
+void UGridMoveToCellTask::ResumeGridMove()
+{
+	if (IsPaused())
+	{
+		Resume();
+	}
 }
 
 bool UGridMoveToCellTask::ResolveGridGoal(FGridCellId& OutCellId, FVector& OutCellCenter, FString* OutError) const
@@ -261,59 +342,20 @@ void UGridMoveToCellTask::EnsurePawnOccupancy()
 		PawnOccupancyComponent.Reset();
 		return;
 	}
-	if (UGridNavigationOccupancyComponent* Existing = PawnOccupancyComponent.Get();
-		Existing != nullptr && Existing->GetOwner() == Pawn && Existing->IsRegistered() && Existing->IsActive())
-	{
-		return;
-	}
-
-	TInlineComponentArray<UGridNavigationOccupancyComponent*> OccupancyComponents(Pawn);
-	for (UGridNavigationOccupancyComponent* Component : OccupancyComponents)
-	{
-		if (IsValid(Component) && Component->IsRegistered() && Component->IsActive() && !Component->bIsReservation)
-		{
-			PawnOccupancyComponent = Component;
-			return;
-		}
-	}
-	if (!bAutoRegisterPawnOccupancy)
-	{
-		PawnOccupancyComponent.Reset();
-		return;
-	}
-
-	UGridNavigationOccupancyComponent* Component = NewObject<UGridNavigationOccupancyComponent>(
-		Pawn,
-		UGridNavigationOccupancyComponent::StaticClass(),
-		NAME_None,
-		RF_Transient);
-	if (Component == nullptr)
+	const FNavAgentProperties& AgentProperties = OwnerController->GetNavAgentPropertiesRef();
+	const float AgentRadius = AgentProperties.AgentRadius > 0.0f ? AgentProperties.AgentRadius : 42.0f;
+	const float AgentHeight = AgentProperties.AgentHeight > 0.0f ? AgentProperties.AgentHeight : 192.0f;
+	UGridNavigationOccupancyComponent* Component =
+		UGridNavigationOccupancyComponent::FindOrAddAgentOccupancy(
+			*Pawn,
+			AgentRadius,
+			AgentHeight,
+			bAutoRegisterPawnOccupancy);
+	if (Component == nullptr && bAutoRegisterPawnOccupancy)
 	{
 		GRIDWORLD_LOG_WARNING(
 			"Move To Grid Cell could not create occupancy tracking for pawn '%s'.",
 			*GetNameSafe(Pawn));
-		return;
-	}
-
-	const FNavAgentProperties& AgentProperties = OwnerController->GetNavAgentPropertiesRef();
-	const float AgentRadius = AgentProperties.AgentRadius > 0.0f ? AgentProperties.AgentRadius : 42.0f;
-	const float AgentHalfHeight = AgentProperties.AgentHeight > 0.0f ? AgentProperties.AgentHeight * 0.5f : 96.0f;
-	Component->BoxExtent = FVector(AgentRadius, AgentRadius, AgentHalfHeight);
-	// This transient component publishes identity for contention only. It must not silently
-	// change the traversal policy or make an agent block its own A* start cell.
-	Component->bBlocksWhenConsidered = false;
-	Component->AdditionalCost = 0;
-	if (USceneComponent* RootComponent = Pawn->GetRootComponent())
-	{
-		Component->SetupAttachment(RootComponent);
-	}
-	Pawn->AddInstanceComponent(Component);
-	Component->OnComponentCreated();
-	Component->RegisterComponent();
-	if (!Component->IsActive())
-	{
-		Component->Activate(true);
-		Component->RefreshOccupancy();
 	}
 	PawnOccupancyComponent = Component;
 }
@@ -390,6 +432,23 @@ bool UGridMoveToCellTask::BuildGoalClaimRequest(
 	OutRequest.AgentRadius = AgentProperties.AgentRadius > 0.0f ? AgentProperties.AgentRadius : 42.0f;
 	OutRequest.AgentHeight = AgentProperties.AgentHeight > 0.0f ? AgentProperties.AgentHeight : 192.0f;
 	OutRequest.AdditionalSeparation = AdditionalGoalSeparation;
+	return true;
+}
+
+bool UGridMoveToCellTask::TryClaimExactGoal(const FGridCellId& CellId)
+{
+	AGridNavigationData* GridNavigationData = ResolveNavigationData();
+	FGridTrafficGoalClaimRequest ClaimRequest;
+	if (GridNavigationData == nullptr
+		|| !BuildGoalClaimRequest(CellId, ClaimRequest)
+		|| !GridNavigationData->TryClaimTrafficGoal(ClaimRequest))
+	{
+		return false;
+	}
+
+	ContentionNavigationData = GridNavigationData;
+	ClaimedGoalCell = CellId;
+	bHasGoalClaim = true;
 	return true;
 }
 
@@ -732,6 +791,12 @@ void UGridMoveToCellTask::HandleTrafficReservationRetry()
 
 void UGridMoveToCellTask::PerformMove()
 {
+	if (MovePathSource == EGridMovePathSource::ExactInjectedPath)
+	{
+		PerformExactMove();
+		return;
+	}
+
 	if (GoalContentionPolicy != EGridGoalContentionPolicy::Ignore)
 	{
 		EnsurePawnOccupancy();
@@ -755,6 +820,126 @@ void UGridMoveToCellTask::PerformMove()
 		ResetContentionState();
 	}
 	RequestedGoalCell = DesiredGoalCell;
+	const bool bUsesAtomicExactGoal =
+		GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied
+		|| GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied;
+	if (bUsesAtomicExactGoal
+		&& !bHasGoalClaim
+		&& !TryClaimExactGoal(DesiredGoalCell))
+	{
+		if (GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied)
+		{
+			AGridNavigationData* GridNavigationData = ResolveNavigationData();
+			UPathFollowingComponent* PathFollowing = IsValid(OwnerController)
+				? OwnerController->GetPathFollowingComponent()
+				: nullptr;
+			UNavigationSystemV1* NavigationSystem = IsValid(OwnerController)
+				? FNavigationSystem::GetCurrent<UNavigationSystemV1>(OwnerController->GetWorld())
+				: nullptr;
+			const FSharedConstNavQueryFilter QueryFilter =
+				GridNavigationData != nullptr && IsValid(OwnerController)
+					? UNavigationQueryFilter::GetQueryFilter(
+						*GridNavigationData,
+						OwnerController,
+						SourceMoveRequest.GetNavigationFilter())
+					: FSharedConstNavQueryFilter();
+			if (GridNavigationData == nullptr
+				|| PathFollowing == nullptr
+				|| NavigationSystem == nullptr
+				|| !QueryFilter.IsValid())
+			{
+				FinishMoveTask(EPathFollowingResult::Invalid);
+				return;
+			}
+
+			FPathFindingQuery Query(
+				OwnerController,
+				*GridNavigationData,
+				OwnerController->GetNavAgentLocation(),
+				GoalCellCenter,
+				QueryFilter,
+				nullptr,
+				TNumericLimits<FVector::FReal>::Max(),
+				SourceMoveRequest.IsNavigableEndLocationRequired());
+			Query.SetAllowPartialPaths(SourceMoveRequest.IsUsingPartialPaths());
+			Query.SetNavAgentProperties(OwnerController->GetNavAgentPropertiesRef());
+			PathFollowing->OnPathfindingQuery(Query);
+			const FPathFindingResult FullPath = NavigationSystem->FindPathSync(
+				OwnerController->GetNavAgentPropertiesRef(),
+				Query);
+
+			FPathFindingResult AdjustedPath;
+			FGridCellId EffectiveGoalCell;
+			FVector EffectiveGoalLocation = FVector::ZeroVector;
+			if (!BuildStopBeforeOccupiedPath(
+				*GridNavigationData,
+				DesiredGoalCell,
+				FullPath,
+				AdjustedPath,
+				EffectiveGoalCell,
+				EffectiveGoalLocation,
+				Error))
+			{
+				GRIDWORLD_LOG_INFO(
+					"Move To Grid Cell could not stop before occupied destination (%d,%d,%d) for controller '%s': %s",
+					DesiredGoalCell.Coord.X,
+					DesiredGoalCell.Coord.Y,
+					DesiredGoalCell.Coord.Layer,
+					*GetNameSafe(OwnerController),
+					*Error);
+				FinishMoveTask(EPathFollowingResult::Blocked);
+				return;
+			}
+			if (!TryClaimExactGoal(EffectiveGoalCell))
+			{
+				GRIDWORLD_LOG_INFO(
+					"Move To Grid Cell could not claim the preceding cell (%d,%d,%d) for controller '%s'.",
+					EffectiveGoalCell.Coord.X,
+					EffectiveGoalCell.Coord.Y,
+					EffectiveGoalCell.Coord.Layer,
+					*GetNameSafe(OwnerController));
+				FinishMoveTask(EPathFollowingResult::Blocked);
+				return;
+			}
+
+			ProjectedGoalCell = EffectiveGoalCell;
+			ProjectedGoalLocation = EffectiveGoalLocation;
+			MoveRequest = FAIMoveRequest(EffectiveGoalLocation);
+			MoveRequest
+				.SetNavigationFilter(SourceMoveRequest.GetNavigationFilter())
+				.SetUsePathfinding(true)
+				.SetAllowPartialPath(false)
+				.SetRequireNavigableEndLocation(SourceMoveRequest.IsNavigableEndLocationRequired())
+				.SetApplyCostLimitFromHeuristic(
+					SourceMoveRequest.IsApplyingCostLimitFromHeuristic(),
+					SourceMoveRequest.GetCostLimitFactor(),
+					SourceMoveRequest.GetMinimumCostLimit())
+				.SetProjectGoalLocation(false)
+				.SetCanStrafe(SourceMoveRequest.CanStrafe())
+				.SetReachTestIncludesAgentRadius(SourceMoveRequest.IsReachTestIncludingAgentRadius())
+				.SetReachTestIncludesGoalRadius(SourceMoveRequest.IsReachTestIncludingGoalRadius())
+				.SetAcceptanceRadius(SourceMoveRequest.GetAcceptanceRadius())
+				.SetUserData(SourceMoveRequest.GetUserData())
+				.SetUserFlags(SourceMoveRequest.GetUserFlags())
+				.SetStartFromPreviousPath(SourceMoveRequest.ShouldStartFromPreviousPath());
+			StartMaterializedMove(*PathFollowing, AdjustedPath.Path);
+			MoveRequest = SourceMoveRequest;
+			if (!IsFinished())
+			{
+				BindTrackedGoal();
+			}
+			return;
+		}
+
+		GRIDWORLD_LOG_INFO(
+			"Move To Grid Cell rejected occupied destination (%d,%d,%d) for controller '%s'.",
+			DesiredGoalCell.Coord.X,
+			DesiredGoalCell.Coord.Y,
+			DesiredGoalCell.Coord.Layer,
+			*GetNameSafe(OwnerController));
+		FinishMoveTask(EPathFollowingResult::Blocked);
+		return;
+	}
 	FGridCellId CurrentPawnCell;
 	FVector CurrentPawnCellCenter = FVector::ZeroVector;
 	if (ResolveCurrentPawnCell(CurrentPawnCell, CurrentPawnCellCenter) && CurrentPawnCell == DesiredGoalCell)
@@ -837,6 +1022,407 @@ void UGridMoveToCellTask::PerformMove()
 	}
 }
 
+void UGridMoveToCellTask::PerformExactMove()
+{
+	AGridNavigationData* GridNavigationData = ResolveNavigationData();
+	UPathFollowingComponent* PathFollowing = IsValid(OwnerController)
+		? OwnerController->GetPathFollowingComponent()
+		: nullptr;
+	FVector GoalLocation = FVector::ZeroVector;
+	if (GridNavigationData == nullptr
+		|| PathFollowing == nullptr
+		|| !InjectedPath.IsSet()
+		|| !ResolveCellCenter(InjectedPath.OriginalGoalCell, GoalLocation))
+	{
+		GRIDWORLD_LOG_WARNING(
+			"Move Along Exact Grid Path failed for controller '%s': invalid nav data, path follower, payload, or original goal.",
+			*GetNameSafe(OwnerController));
+		FinishMoveTask(EPathFollowingResult::Invalid);
+		return;
+	}
+
+	ProjectedGoalCell = InjectedPath.OriginalGoalCell;
+	ProjectedGoalLocation = GoalLocation;
+	RequestedGoalCell = InjectedPath.RequestedGoalCell.IsValid()
+		? InjectedPath.RequestedGoalCell
+		: ProjectedGoalCell;
+	MoveRequest = FAIMoveRequest(GoalLocation);
+	MoveRequest
+		.SetNavigationFilter(InjectedPath.FilterClass)
+		.SetUsePathfinding(true)
+		.SetAllowPartialPath(InjectedPath.bAllowPartialPath)
+		.SetRequireNavigableEndLocation(SourceMoveRequest.IsNavigableEndLocationRequired())
+		.SetApplyCostLimitFromHeuristic(
+			SourceMoveRequest.IsApplyingCostLimitFromHeuristic(),
+			SourceMoveRequest.GetCostLimitFactor(),
+			SourceMoveRequest.GetMinimumCostLimit())
+		.SetProjectGoalLocation(false)
+		.SetCanStrafe(SourceMoveRequest.CanStrafe())
+		.SetReachTestIncludesAgentRadius(SourceMoveRequest.IsReachTestIncludingAgentRadius())
+		.SetReachTestIncludesGoalRadius(SourceMoveRequest.IsReachTestIncludingGoalRadius())
+		.SetAcceptanceRadius(SourceMoveRequest.GetAcceptanceRadius())
+		.SetUserData(SourceMoveRequest.GetUserData())
+		.SetUserFlags(SourceMoveRequest.GetUserFlags());
+
+	const FGridInjectedPathValidationResult Validation = GridNavigationData->ValidateInjectedPath(
+		InjectedPath,
+		OwnerController,
+		OwnerController->GetNavAgentPropertiesRef(),
+		OwnerController->GetNavAgentLocation());
+	if (!Validation.bIsValid)
+	{
+		if (InjectedPath.InvalidationPolicy == EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal)
+		{
+			if (GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied)
+			{
+				EnsurePawnOccupancy();
+				if (!bHasGoalClaim && !TryClaimExactGoal(ProjectedGoalCell))
+				{
+					GRIDWORLD_LOG_INFO(
+						"Move Along Exact Grid Path rejected occupied destination (%d,%d,%d) for controller '%s'.",
+						ProjectedGoalCell.Coord.X,
+						ProjectedGoalCell.Coord.Y,
+						ProjectedGoalCell.Coord.Layer,
+						*GetNameSafe(OwnerController));
+					FinishMoveTask(EPathFollowingResult::Blocked);
+					return;
+				}
+			}
+			GRIDWORLD_LOG_INFO(
+				"Exact GridWorld path '%s' became stale for controller '%s'; recalculating to its original goal. Reason: %s",
+				*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
+				*GetNameSafe(OwnerController),
+				*Validation.DiagnosticMessage);
+			RecalculateInjectedPathToOriginalGoal(GoalLocation);
+			return;
+		}
+		GRIDWORLD_LOG_WARNING(
+			"Move Along Exact Grid Path rejected stale payload '%s' for controller '%s': %s",
+			*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
+			*GetNameSafe(OwnerController),
+			*Validation.DiagnosticMessage);
+		FinishMoveTask(EPathFollowingResult::Invalid);
+		return;
+	}
+
+	FPathFindingResult Materialized = GridNavigationData->MaterializeInjectedPath(
+		InjectedPath,
+		OwnerController,
+		OwnerController->GetNavAgentPropertiesRef(),
+		OwnerController->GetNavAgentLocation());
+	if (!Materialized.IsSuccessful() || !Materialized.Path.IsValid())
+	{
+		FinishMoveTask(EPathFollowingResult::Invalid);
+		return;
+	}
+
+	// Validate and materialize against exactly the revisions captured by the preview before
+	// taking the destination claim. The claim itself advances the traffic revision and would
+	// otherwise make a Reserved Corridor payload reject its own atomic commit as stale.
+	const bool bUsesAtomicExactGoal =
+		GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied
+		|| GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied;
+	if (bUsesAtomicExactGoal)
+	{
+		EnsurePawnOccupancy();
+		if (!bHasGoalClaim && !TryClaimExactGoal(ProjectedGoalCell))
+		{
+			const bool bPathWasAlreadyAdjusted = RequestedGoalCell != ProjectedGoalCell;
+			if (GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied
+				&& !bPathWasAlreadyAdjusted)
+			{
+				FPathFindingResult AdjustedPath;
+				FGridCellId EffectiveGoalCell;
+				FVector EffectiveGoalLocation = FVector::ZeroVector;
+				FString Error;
+				if (BuildStopBeforeOccupiedPath(
+						*GridNavigationData,
+						RequestedGoalCell,
+						Materialized,
+						AdjustedPath,
+						EffectiveGoalCell,
+						EffectiveGoalLocation,
+						Error)
+					&& TryClaimExactGoal(EffectiveGoalCell))
+				{
+					Materialized = MoveTemp(AdjustedPath);
+					ProjectedGoalCell = EffectiveGoalCell;
+					ProjectedGoalLocation = EffectiveGoalLocation;
+					MoveRequest.UpdateGoalLocation(EffectiveGoalLocation);
+					MoveRequest.SetAllowPartialPath(false);
+				}
+				else
+				{
+					GRIDWORLD_LOG_INFO(
+						"Move Along Exact Grid Path could not stop before occupied destination (%d,%d,%d) for controller '%s': %s",
+						RequestedGoalCell.Coord.X,
+						RequestedGoalCell.Coord.Y,
+						RequestedGoalCell.Coord.Layer,
+						*GetNameSafe(OwnerController),
+						*Error);
+					FinishMoveTask(EPathFollowingResult::Blocked);
+					return;
+				}
+			}
+			else
+			{
+			GRIDWORLD_LOG_INFO(
+				"Move Along Exact Grid Path rejected occupied destination (%d,%d,%d) for controller '%s'.",
+				ProjectedGoalCell.Coord.X,
+				ProjectedGoalCell.Coord.Y,
+				ProjectedGoalCell.Coord.Layer,
+				*GetNameSafe(OwnerController));
+			FinishMoveTask(EPathFollowingResult::Blocked);
+			return;
+			}
+		}
+	}
+
+	StartMaterializedMove(*PathFollowing, Materialized.Path);
+}
+
+void UGridMoveToCellTask::StartMaterializedMove(
+	UPathFollowingComponent& PathFollowing,
+	const FNavPathSharedPtr& MaterializedPath)
+{
+	ResetObservers();
+	ResetTimers();
+	if (PathFollowing.HasReached(MoveRequest))
+	{
+		MoveRequestID = PathFollowing.RequestMoveWithImmediateFinish(EPathFollowingResult::Success);
+		OnRequestFinished(
+			MoveRequestID,
+			FPathFollowingResult(EPathFollowingResult::Success, FPathFollowingResultFlags::AlreadyAtGoal));
+		return;
+	}
+
+	MoveRequestID = OwnerController->RequestMove(MoveRequest, MaterializedPath);
+	if (!MoveRequestID.IsValid())
+	{
+		FinishMoveTask(EPathFollowingResult::Invalid);
+		return;
+	}
+	OwnerController->bAllowStrafe = MoveRequest.CanStrafe();
+	PathFinishDelegateHandle = PathFollowing.OnRequestFinished.AddUObject(
+		this,
+		&UGridMoveToCellTask::OnRequestFinished);
+	SetObservedPath(MaterializedPath);
+}
+
+bool UGridMoveToCellTask::BuildStopBeforeOccupiedPath(
+	AGridNavigationData& NavigationData,
+	const FGridCellId& RequestedCell,
+	const FPathFindingResult& FullPath,
+	FPathFindingResult& OutAdjustedPath,
+	FGridCellId& OutEffectiveCell,
+	FVector& OutEffectiveLocation,
+	FString& OutError) const
+{
+	OutAdjustedPath = FPathFindingResult(ENavigationQueryResult::Error);
+	const FGridNavigationPath* GridPath = FullPath.Path.IsValid()
+		? FullPath.Path->CastPath<FGridNavigationPath>()
+		: nullptr;
+	if (GridPath == nullptr
+		|| GridPath->IsPartial()
+		|| GridPath->CellPath.Num() < 2
+		|| GridPath->CellPath.Last() != RequestedCell)
+	{
+		OutError =
+			TEXT("A complete GridWorld path ending at the requested occupied cell is required.");
+		return false;
+	}
+
+	TArray<FGridCellId> AdjustedCells;
+	if (!UE::GridWorld::Private::BuildStopBeforeOccupiedCells(
+		GridPath->CellPath,
+		RequestedCell,
+		AdjustedCells,
+		OutEffectiveCell))
+	{
+		OutError =
+			TEXT("The complete GridWorld path has no immediate predecessor for the occupied destination.");
+		return false;
+	}
+	const FGridWorldSnapshotPtr Snapshot = NavigationData.GetSnapshot();
+	const FGridCellData* EffectiveGoal = Snapshot.IsValid()
+		? Snapshot->FindCell(OutEffectiveCell)
+		: nullptr;
+	if (EffectiveGoal == nullptr || !EffectiveGoal->bWalkable)
+	{
+		OutError =
+			TEXT("The cell immediately before the occupied destination no longer exists or is blocked.");
+		return false;
+	}
+	OutEffectiveLocation = EffectiveGoal->WorldCenter;
+
+	const TSubclassOf<UNavigationQueryFilter> FilterClass =
+		MovePathSource == EGridMovePathSource::ExactInjectedPath
+			? InjectedPath.FilterClass
+			: SourceMoveRequest.GetNavigationFilter();
+	const EGridInjectedPathInvalidationPolicy InvalidationPolicy =
+		MovePathSource == EGridMovePathSource::ExactInjectedPath
+			? InjectedPath.InvalidationPolicy
+			: EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
+	const FGuid SourcePreviewId =
+		MovePathSource == EGridMovePathSource::ExactInjectedPath
+			? InjectedPath.SourcePreviewId
+			: FGuid();
+	FGridInjectedPath AdjustedPayload;
+	const FGridInjectedPathValidationResult Creation = NavigationData.CreateExactInjectedPath(
+		OwnerController,
+		OwnerController->GetNavAgentPropertiesRef(),
+		FilterClass,
+		OwnerController->GetNavAgentLocation(),
+		AdjustedCells,
+		OutEffectiveCell,
+		false,
+		false,
+		InvalidationPolicy,
+		SourcePreviewId,
+		AdjustedPayload);
+	if (!Creation.bIsValid)
+	{
+		OutError = Creation.DiagnosticMessage;
+		return false;
+	}
+	AdjustedPayload.RequestedGoalCell = RequestedCell;
+	OutAdjustedPath = NavigationData.MaterializeInjectedPath(
+		AdjustedPayload,
+		OwnerController,
+		OwnerController->GetNavAgentPropertiesRef(),
+		OwnerController->GetNavAgentLocation());
+	if (!OutAdjustedPath.IsSuccessful() || !OutAdjustedPath.Path.IsValid())
+	{
+		OutError = TEXT("The adjusted GridWorld path could not be materialized.");
+		return false;
+	}
+	return true;
+}
+
+void UGridMoveToCellTask::RecalculateInjectedPathToOriginalGoal(const FVector& GoalLocation)
+{
+	MoveRequest.UpdateGoalLocation(GoalLocation);
+	if (GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied)
+	{
+		EnsurePawnOccupancy();
+		if (!bHasGoalClaim && TryClaimExactGoal(ProjectedGoalCell))
+		{
+			Super::PerformMove();
+			if (FGridNavigationPath* GridPath = Path.IsValid() ? Path->CastPath<FGridNavigationPath>() : nullptr)
+			{
+				GridPath->Origin = EGridNavigationPathOrigin::Recalculated;
+				GridPath->ParentPathInstanceId = InjectedPath.PathInstanceId;
+				GridPath->SourcePreviewId = InjectedPath.SourcePreviewId;
+				GridPath->InjectedInvalidationPolicy = InjectedPath.InvalidationPolicy;
+			}
+			return;
+		}
+
+		AGridNavigationData* GridNavigationData = ResolveNavigationData();
+		UPathFollowingComponent* PathFollowing = IsValid(OwnerController)
+			? OwnerController->GetPathFollowingComponent()
+			: nullptr;
+		UNavigationSystemV1* NavigationSystem = IsValid(OwnerController)
+			? FNavigationSystem::GetCurrent<UNavigationSystemV1>(OwnerController->GetWorld())
+			: nullptr;
+		const FSharedConstNavQueryFilter QueryFilter =
+			GridNavigationData != nullptr && IsValid(OwnerController)
+				? UNavigationQueryFilter::GetQueryFilter(
+					*GridNavigationData,
+					OwnerController,
+					InjectedPath.FilterClass)
+				: FSharedConstNavQueryFilter();
+		if (GridNavigationData == nullptr
+			|| PathFollowing == nullptr
+			|| NavigationSystem == nullptr
+			|| !QueryFilter.IsValid())
+		{
+			FinishMoveTask(EPathFollowingResult::Invalid);
+			return;
+		}
+
+		FPathFindingQuery Query(
+			OwnerController,
+			*GridNavigationData,
+			OwnerController->GetNavAgentLocation(),
+			GoalLocation,
+			QueryFilter,
+			nullptr,
+			TNumericLimits<FVector::FReal>::Max(),
+			MoveRequest.IsNavigableEndLocationRequired());
+		Query.SetAllowPartialPaths(MoveRequest.IsUsingPartialPaths());
+		Query.SetNavAgentProperties(OwnerController->GetNavAgentPropertiesRef());
+		PathFollowing->OnPathfindingQuery(Query);
+		const FPathFindingResult FullPath = NavigationSystem->FindPathSync(
+			OwnerController->GetNavAgentPropertiesRef(),
+			Query);
+
+		FPathFindingResult AdjustedPath;
+		FGridCellId EffectiveGoalCell;
+		FVector EffectiveGoalLocation = FVector::ZeroVector;
+		FString Error;
+		if (!BuildStopBeforeOccupiedPath(
+				*GridNavigationData,
+				ProjectedGoalCell,
+				FullPath,
+				AdjustedPath,
+				EffectiveGoalCell,
+				EffectiveGoalLocation,
+				Error)
+			|| !TryClaimExactGoal(EffectiveGoalCell))
+		{
+			GRIDWORLD_LOG_INFO(
+				"Recalculated exact path could not stop before occupied destination (%d,%d,%d) for controller '%s': %s",
+				ProjectedGoalCell.Coord.X,
+				ProjectedGoalCell.Coord.Y,
+				ProjectedGoalCell.Coord.Layer,
+				*GetNameSafe(OwnerController),
+				*Error);
+			FinishMoveTask(EPathFollowingResult::Blocked);
+			return;
+		}
+
+		ProjectedGoalCell = EffectiveGoalCell;
+		ProjectedGoalLocation = EffectiveGoalLocation;
+		MoveRequest.UpdateGoalLocation(EffectiveGoalLocation);
+		MoveRequest.SetAllowPartialPath(false);
+		if (FGridNavigationPath* GridPath = AdjustedPath.Path->CastPath<FGridNavigationPath>())
+		{
+			GridPath->Origin = EGridNavigationPathOrigin::Recalculated;
+			GridPath->ParentPathInstanceId = InjectedPath.PathInstanceId;
+			GridPath->SourcePreviewId = InjectedPath.SourcePreviewId;
+			GridPath->InjectedInvalidationPolicy = InjectedPath.InvalidationPolicy;
+		}
+		StartMaterializedMove(*PathFollowing, AdjustedPath.Path);
+		return;
+	}
+
+	Super::PerformMove();
+	if (FGridNavigationPath* GridPath = Path.IsValid() ? Path->CastPath<FGridNavigationPath>() : nullptr)
+	{
+		GridPath->Origin = EGridNavigationPathOrigin::Recalculated;
+		GridPath->ParentPathInstanceId = InjectedPath.PathInstanceId;
+		GridPath->SourcePreviewId = InjectedPath.SourcePreviewId;
+		GridPath->InjectedInvalidationPolicy = InjectedPath.InvalidationPolicy;
+	}
+}
+
+void UGridMoveToCellTask::OnPathEvent(FNavigationPath* InPath, ENavPathEvent::Type Event)
+{
+	if (MovePathSource == EGridMovePathSource::ExactInjectedPath
+		&& InjectedPath.InvalidationPolicy == EGridInjectedPathInvalidationPolicy::FailOnInvalidation
+		&& Event == ENavPathEvent::Invalidated)
+	{
+		GRIDWORLD_LOG_WARNING(
+			"Exact GridWorld path '%s' was invalidated while followed by controller '%s'; strict policy aborts the move.",
+			*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
+			*GetNameSafe(OwnerController));
+		FinishMoveTask(EPathFollowingResult::Aborted);
+		return;
+	}
+	Super::OnPathEvent(InPath, Event);
+}
+
 void UGridMoveToCellTask::OnRequestFinished(FAIRequestID RequestID, const FPathFollowingResult& Result)
 {
 	if (RequestID != MoveRequestID)
@@ -863,6 +1449,13 @@ void UGridMoveToCellTask::OnRequestFinished(FAIRequestID RequestID, const FPathF
 	const bool bMayBeGoalContention = bReachedFullDestination || bBlockedNearDestination;
 	if (bMayBeGoalContention && IsProjectedGoalContested())
 	{
+		if (GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied
+			|| GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied)
+		{
+			ReleaseGoalClaim();
+			FinishMoveTask(EPathFollowingResult::Blocked);
+			return;
+		}
 		MoveRequestID = FAIRequestID::InvalidRequest;
 		ResetObservers();
 		if (StartContentionRedirect())

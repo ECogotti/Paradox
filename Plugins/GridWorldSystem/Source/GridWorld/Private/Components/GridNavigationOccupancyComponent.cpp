@@ -3,7 +3,9 @@
 #include "Components/GridNavigationOccupancyComponent.h"
 
 #include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
 #include "Navigation/GridNavigationData.h"
+#include "NavigationSystem.h"
 
 namespace UE::GridWorld::Private
 {
@@ -53,6 +55,51 @@ UGridNavigationOccupancyComponent* UGridNavigationOccupancyComponent::FindActive
 		}
 	}
 	return nullptr;
+}
+
+UGridNavigationOccupancyComponent* UGridNavigationOccupancyComponent::FindOrAddAgentOccupancy(
+	APawn& Pawn,
+	const float AgentRadius,
+	const float AgentHeight,
+	const bool bAutoCreate)
+{
+	if (UGridNavigationOccupancyComponent* Existing = FindActiveAgentOccupancy(Pawn))
+	{
+		return Existing;
+	}
+	if (!bAutoCreate)
+	{
+		return nullptr;
+	}
+
+	UGridNavigationOccupancyComponent* Component = NewObject<UGridNavigationOccupancyComponent>(
+		&Pawn,
+		UGridNavigationOccupancyComponent::StaticClass(),
+		NAME_None,
+		RF_Transient);
+	if (Component == nullptr)
+	{
+		return nullptr;
+	}
+
+	const float SafeRadius = AgentRadius > 0.0f ? AgentRadius : 42.0f;
+	const float SafeHeight = AgentHeight > 0.0f ? AgentHeight : 192.0f;
+	Component->BoxExtent = FVector(SafeRadius, SafeRadius, SafeHeight * 0.5f);
+	Component->bBlocksWhenConsidered = false;
+	Component->AdditionalCost = 0;
+	if (USceneComponent* RootComponent = Pawn.GetRootComponent())
+	{
+		Component->SetupAttachment(RootComponent);
+	}
+	Pawn.AddInstanceComponent(Component);
+	Component->OnComponentCreated();
+	Component->RegisterComponent();
+	if (!Component->IsActive())
+	{
+		Component->Activate(true);
+		Component->RefreshOccupancy();
+	}
+	return Component;
 }
 
 UGridNavigationOccupancyComponent* UGridNavigationOccupancyComponent::FindOccupantById(
@@ -172,6 +219,10 @@ bool UGridNavigationOccupancyComponent::UpdateCachedOccupiedCells()
 	TSet<FGridCellId> NewOccupiedCells;
 	if (IsActive() && IsRegistered())
 	{
+		const APawn* PawnOwner = !bIsReservation ? Cast<APawn>(GetOwner()) : nullptr;
+		const FVector PawnNavLocation = PawnOwner != nullptr
+			? PawnOwner->GetNavAgentLocation()
+			: FNavigationSystem::InvalidLocation;
 		if (UWorld* World = GetWorld())
 		{
 			for (TActorIterator<AGridNavigationData> It(World); It; ++It)
@@ -181,12 +232,38 @@ bool UGridNavigationOccupancyComponent::UpdateCachedOccupiedCells()
 				{
 					continue;
 				}
+				const FVector QueryExtent = It->GetDefaultQueryExtent().GetAbs();
+				const FGridCellData* ClosestPawnCell = nullptr;
+				double ClosestPawnCellDistanceSquared = TNumericLimits<double>::Max();
 				for (const FGridCellData& Cell : Snapshot->Cells)
 				{
 					if (AffectsPoint(Cell.WorldCenter))
 					{
 						NewOccupiedCells.Add(Cell.Id);
 					}
+					if (PawnOwner != nullptr
+						&& FNavigationSystem::IsValidLocation(PawnNavLocation)
+						&& Cell.bWalkable)
+					{
+						const FVector Delta = Cell.WorldCenter - PawnNavLocation;
+						const double DistanceSquared = Delta.SizeSquared();
+						if (FMath::Abs(Delta.X) <= QueryExtent.X + UE_KINDA_SMALL_NUMBER
+							&& FMath::Abs(Delta.Y) <= QueryExtent.Y + UE_KINDA_SMALL_NUMBER
+							&& FMath::Abs(Delta.Z) <= QueryExtent.Z + UE_KINDA_SMALL_NUMBER
+							&& DistanceSquared < ClosestPawnCellDistanceSquared)
+						{
+							ClosestPawnCell = &Cell;
+							ClosestPawnCellDistanceSquared = DistanceSquared;
+						}
+					}
+				}
+				if (ClosestPawnCell != nullptr)
+				{
+					// A Character's navigation location is its feet position. Guarantee that its
+					// containing logical cell is published even when floor-distance maintenance,
+					// an off-center placement, or a cell boundary keeps the floor center just
+					// outside the component's physical box.
+					NewOccupiedCells.Add(ClosestPawnCell->Id);
 				}
 			}
 		}
@@ -200,6 +277,13 @@ bool UGridNavigationOccupancyComponent::UpdateCachedOccupiedCells()
 	}
 	CachedOccupiedCells = MoveTemp(NewOccupiedCells);
 	return true;
+}
+
+bool UGridNavigationOccupancyComponent::AffectsCell(
+	const FGridCellId& CellId,
+	const FVector& WorldCenter) const
+{
+	return CachedOccupiedCells.Contains(CellId) || AffectsPoint(WorldCenter);
 }
 
 void UGridNavigationOccupancyComponent::NotifyNavigationData() const

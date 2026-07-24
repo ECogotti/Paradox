@@ -4,6 +4,7 @@
 
 #include "GridWorldTypes.h"
 #include "Navigation/PathFollowingComponent.h"
+#include "Presentation/GridPathPresentationTypes.h"
 
 #include "GridWorldPathFollowingComponent.generated.h"
 
@@ -15,6 +16,34 @@ class UCharacterMovementComponent;
 class UGridNavigationOccupancyComponent;
 class AGridNavigationData;
 
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(
+	FOnGridFollowedPathChanged,
+	EGridPathFollowingPresentationChange,
+	Change,
+	const TArray<FGridCellId>&,
+	Cells,
+	const FGridRevisionSet&,
+	SourceRevisions);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnGridFollowedPathProgressChanged,
+	int32,
+	CurrentCellIndex,
+	FGridCellId,
+	CurrentCell);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FOnGridFollowedPathInvalidated,
+	EGridPathPresentationInvalidationReason,
+	Reason);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
+	FOnGridFollowedPathPresentationFinished,
+	TEnumAsByte<EPathFollowingResult::Type>,
+	Result,
+	int32,
+	ResultFlags);
+
 /**
  * Path following component that optionally enforces GridWorld cell-center waypoints.
  * Standard GridWorld paths retain the native UPathFollowingComponent behavior.
@@ -25,6 +54,60 @@ class GRIDWORLD_API UGridWorldPathFollowingComponent : public UPathFollowingComp
 	GENERATED_BODY()
 
 public:
+	/**
+	 * Publishes the controlled Pawn as non-blocking occupancy for owner-aware traffic coordination.
+	 * Enabled for AI and player controllers; ordinary A* occupancy remains controlled by the query filter.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Dynamic Agents")
+	bool bAutoRegisterPawnOccupancy = true;
+
+	/** Master opt-in for local presentation of this follower's authoritative GridWorld path. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation")
+	bool bPresentActivePath = false;
+
+	/** Sends the active path to the cell-overlay backend when presentation is enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation", meta = (EditCondition = "bPresentActivePath"))
+	bool bPresentActivePathAsCellOverlay = true;
+
+	/** Sends the active path to the independent strict-line backend when presentation is enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation", meta = (EditCondition = "bPresentActivePath"))
+	bool bPresentActivePathAsLine = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation")
+	EGridPathProgressPresentationMode ActivePathPresentationMode =
+		EGridPathProgressPresentationMode::TraversedAndRemaining;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation")
+	int32 ActivePathPresentationPriority = 0;
+
+	/** Emitted for the first path and for accepted replacement/recalculation updates. */
+	UPROPERTY(BlueprintAssignable, Category = "Grid World|Presentation")
+	FOnGridFollowedPathChanged OnGridPathChanged;
+
+	/** Emitted only when the nearest logical cell index changes. */
+	UPROPERTY(BlueprintAssignable, Category = "Grid World|Presentation")
+	FOnGridFollowedPathProgressChanged OnGridPathProgressChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Grid World|Presentation")
+	FOnGridFollowedPathInvalidated OnGridPathInvalidated;
+
+	UPROPERTY(BlueprintAssignable, Category = "Grid World|Presentation")
+	FOnGridFollowedPathPresentationFinished OnGridPathPresentationFinished;
+
+	/** Enables/disables the opt-in active session immediately, including during an active move. */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Presentation")
+	void SetActivePathPresentationEnabled(bool bEnabled);
+
+	/** Changes active-session mode and overlap priority without replacing the movement path. */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Presentation")
+	void SetActivePathPresentationSettings(
+		EGridPathProgressPresentationMode ProgressMode,
+		int32 Priority);
+
+	/** Selects cell overlay, strict line, both, or neither for the current/future active session. */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Presentation")
+	void SetActivePathPresentationRenderers(bool bCellOverlay, bool bLine);
+
 	virtual void Cleanup() override;
 	virtual void OnPathFinished(const FPathFollowingResult& Result) override;
 	virtual void OnPathUpdated() override;
@@ -44,6 +127,7 @@ protected:
 
 private:
 	friend class AGridWorldAIController;
+	friend class FGridPathFollowerPresentationTest;
 
 	/** Internal one-way center-plane classification for the active waypoint. */
 	enum class ECenterGateResult : uint8
@@ -55,6 +139,20 @@ private:
 
 	/** @return Borrowed active path when it is an FGridNavigationPath, otherwise nullptr. */
 	const FGridNavigationPath* GetGridPath() const;
+	/** Binds an additional non-authoritative observer without replacing Unreal's path observer. */
+	void BindPresentationPathObserver(const FNavPathSharedPtr& InPath);
+	/** Removes only this component's presentation observer. */
+	void UnbindPresentationPathObserver();
+	/** Converts native invalidation/repath failure into presentation state and Blueprint events. */
+	void HandlePresentationPathEvent(FNavigationPath* InPath, ENavPathEvent::Type Event);
+	/** Creates or updates the opt-in active session and emits the path-change event. */
+	void SynchronizePathPresentation(EGridPathFollowingPresentationChange Change, bool bBroadcastChange);
+	/** Publishes a new logical index only when it differs from the previous value. */
+	void UpdatePathPresentationProgress();
+	/** Releases the active session and optionally clears all event/progress correlation state. */
+	void ReleasePathPresentation(bool bResetCorrelationState);
+	/** @return Current logical cell index or zero while a newly accepted segment is not initialized. */
+	int32 ResolvePresentationCellPathIndex(const FGridNavigationPath& GridPath) const;
 	/** @return Borrowed following metadata for PathPointIndex, or nullptr. */
 	const FGridPathPointFollowingData* GetFollowingData(int32 PathPointIndex) const;
 	/** Classifies the swept movement from the previous feet position through the active one-way gate. */
@@ -160,6 +258,16 @@ private:
 	FGridCellId LastRepathBlockingCellId;
 	/** Most recently crossed logical cell in GridPath.CellPath. */
 	int32 TrafficCurrentCellPathIndex = INDEX_NONE;
+	/** Opaque active presentation session owned by the world subsystem. */
+	FGridPathPresentationHandle ActivePathPresentationHandle;
+	/** Native path observed only for invalidation/repath-failure presentation events. */
+	FNavPathWeakPtr PresentationObservedPath;
+	FDelegateHandle PresentationPathObserverHandle;
+	/** Last logical index emitted to presentation/listeners. */
+	int32 PresentationCurrentCellPathIndex = INDEX_NONE;
+	/** Previous accepted snapshot used to classify replacement versus recalculation. */
+	TArray<FGridCellId> LastPresentedPathCells;
+	FGridRevisionSet LastPresentedPathRevisions;
 	/** Rate limits the warning that Standard following is best effort for Reserved Corridor. */
 	bool bWarnedStandardTrafficFollowing = false;
 };

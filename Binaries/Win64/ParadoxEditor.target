@@ -36,6 +36,62 @@
 			"Type": "RequiredResource"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/ActionSystem/Binaries/Win64/UnrealEditor-GameplayActions.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ActionSystem/Binaries/Win64/UnrealEditor-GameplayActions.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ActionSystem/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/EntityRelations/Binaries/Win64/UnrealEditor-EntityRelations.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/EntityRelations/Binaries/Win64/UnrealEditor-EntityRelations.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/EntityRelations/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/Binaries/Win64/UnrealEditor-GameplayActionsAI.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/Binaries/Win64/UnrealEditor-GameplayActionsAI.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/Binaries/Win64/UnrealEditor-GameplayActionsAIEditor.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/Binaries/Win64/UnrealEditor-GameplayActionsAIEditor.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsGridWorld/Binaries/Win64/UnrealEditor-GameplayActionsGridWorld.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsGridWorld/Binaries/Win64/UnrealEditor-GameplayActionsGridWorld.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsGridWorld/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/GridWorldSystem/Binaries/Win64/UnrealEditor-GridWorld.dll",
 			"Type": "DynamicLibrary"
 		},
@@ -56,6 +112,30 @@
 			"Type": "RequiredResource"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/IntentReplay/Binaries/Win64/UnrealEditor-IntentReplay.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/IntentReplay/Binaries/Win64/UnrealEditor-IntentReplay.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/IntentReplay/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/LineOfSight/Binaries/Win64/UnrealEditor-LineOfSight.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/LineOfSight/Binaries/Win64/UnrealEditor-LineOfSight.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/LineOfSight/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/PuzzleSystem/Binaries/Win64/UnrealEditor-PuzzleSystem.dll",
 			"Type": "DynamicLibrary"
 		},
@@ -65,6 +145,38 @@
 		},
 		{
 			"Path": "$(ProjectDir)/Plugins/PuzzleSystem/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/TacticalPause/Binaries/Win64/UnrealEditor-TacticalPause.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/TacticalPause/Binaries/Win64/UnrealEditor-TacticalPause.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/TacticalPause/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/Binaries/Win64/UnrealEditor-WorldState.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/Binaries/Win64/UnrealEditor-WorldState.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/Binaries/Win64/UnrealEditor-WorldStateEditor.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/Binaries/Win64/UnrealEditor-WorldStateEditor.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/Binaries/Win64/UnrealEditor.modules",
 			"Type": "RequiredResource"
 		},
 		{
@@ -7744,6 +7856,34 @@
 			"Type": "RequiredResource"
 		},
 		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonInput.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonInput.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonUI.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonUI.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonUIEditor.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor-CommonUIEditor.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
 			"Path": "$(EngineDir)/Plugins/Runtime/ComputeFramework/Binaries/Win64/UnrealEditor-ComputeDataInterface.dll",
 			"Type": "DynamicLibrary"
 		},
@@ -8690,11 +8830,43 @@
 			"Type": "UFS"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/ActionSystem/GameplayActions.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/EntityRelations/EntityRelations.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/GameplayActionsAI.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/GameplayActionsGridWorld/GameplayActionsGridWorld.uplugin",
+			"Type": "UFS"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/GridWorldSystem/GridWorldSystem.uplugin",
 			"Type": "UFS"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/IntentReplay/IntentReplay.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/LineOfSight/LineOfSight.uplugin",
+			"Type": "UFS"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/PuzzleSystem/PuzzleSystem.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/TacticalPause/TacticalPause.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/WorldStateSystem/WorldStateSystem.uplugin",
 			"Type": "UFS"
 		},
 		{
@@ -33414,6 +33586,10 @@
 			"Type": "UFS"
 		},
 		{
+			"Path": "$(EngineDir)/Plugins/Runtime/CommonUI/CommonUI.uplugin",
+			"Type": "UFS"
+		},
+		{
 			"Path": "$(EngineDir)/Plugins/Runtime/ComputeFramework/ComputeFramework.uplugin",
 			"Type": "UFS"
 		},
@@ -33626,6 +33802,7 @@
 		"CmdLinkServer",
 		"CodeLiteSourceCodeAccess",
 		"ColorGrading",
+		"CommonUI",
 		"CompositeCore",
 		"ComputeFramework",
 		"ConcertMain",
@@ -33661,6 +33838,7 @@
 		"EngineAssetDefinitions",
 		"EngineCameras",
 		"EnhancedInput",
+		"EntityRelations",
 		"EnvironmentQueryEditor",
 		"ExampleDeviceProfileSelector",
 		"Fab",
@@ -33670,6 +33848,9 @@
 		"FullBodyIK",
 		"GLTFExporter",
 		"GPUReshape",
+		"GameplayActions",
+		"GameplayActionsAI",
+		"GameplayActionsGridWorld",
 		"GameplayCameras",
 		"GameplayInsights",
 		"GameplayStateTree",
@@ -33693,6 +33874,7 @@
 		"IOSDeviceProfileSelector",
 		"ImgMedia",
 		"InputDebugging",
+		"IntentReplay",
 		"Interchange",
 		"InterchangeAssets",
 		"InterchangeAxfAssets",
@@ -33705,6 +33887,7 @@
 		"LevelSequenceEditor",
 		"LevelSequenceNavigatorBridge",
 		"LightMixer",
+		"LineOfSight",
 		"LinuxDeviceProfileSelector",
 		"LocalizableMessage",
 		"LocationServicesBPLibrary",
@@ -33791,6 +33974,7 @@
 		"StylusInput",
 		"SubversionSourceControl",
 		"Synthesis",
+		"TacticalPause",
 		"Takes",
 		"TcpMessaging",
 		"TemplateSequence",
@@ -33817,6 +34001,7 @@
 		"WmfMedia",
 		"WorldMetrics",
 		"WorldPartitionHLODUtilities",
+		"WorldStateSystem",
 		"XCodeSourceCodeAccess",
 		"XGEController",
 		"XInputDevice"

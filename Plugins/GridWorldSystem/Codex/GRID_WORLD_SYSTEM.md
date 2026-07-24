@@ -632,6 +632,8 @@ Use local grid coordinates for cell indexing and convert through `FGridTransform
 
 Do not derive stable cell identity from raw world-space floating-point locations.
 
+For the current world-anchored implementation, bounds translation changes coverage only: logical cell `(0,0,0)` is centered at world origin, while the bounds Actor rotation still defines the grid orientation. Moving a volume must therefore select different absolute coordinates instead of translating the lattice with the Actor.
+
 ---
 
 # 8. Generation pipeline
@@ -681,7 +683,11 @@ The geometry sampler should evaluate at least:
 
 Gather UObject and physics-scene information on the correct thread. Convert it into pure data before off-thread processing.
 
+UE 5.8 collision traces can return a zero-distance `FHitResult` with `bStartPenetrating` when a successive vertical floor trace restarts inside a thick or inclined solid, even when the query does not request initial overlaps. Such a hit is not a floor candidate and must never be quantized into a layer. Continue the trace below it so genuine vertically separated floors, including floors owned by the same component, remain discoverable.
+
 Do not permanently commit to per-cell traces if profiling shows they are too expensive. Keep the geometry source behind `FGridGeometrySampler` so a later implementation can consume navigation-octree or cached geometry without rewriting pathfinding and storage.
+
+UE 5.8 treats low obstacles separately from full-height clearance: Recast applies `walkableClimb` through its low-hanging-obstacle filter, and Character Movement attempts an upward step before continuing forward. GridWorld clearance must preserve the complete agent capsule but may test deterministic world-up lifts no higher than the configured `MaxStepHeight` when the floor-tangent pose overlaps. Every legal lifted pose remaining blocked means the candidate is genuinely obstructed.
 
 ## 8.3 Adjacency phase
 
@@ -708,6 +714,19 @@ Build replacement chunks or a complete replacement snapshot, validate them, and 
 Increment revisions only when publication succeeds.
 
 Emit a concise change set describing affected chunks and cells so rendering, observed paths, and consumer systems can react without rescanning the entire grid.
+
+## 8.5 Runtime geometry contract
+
+`AGridNavigationData` uses `ERuntimeGenerationType::Dynamic`. Runtime geometry changes must continue through Unreal's native navigation dirty-area pipeline and the existing `FGridNavDataGenerator`; do not add a parallel asynchronous builder without measured profiling evidence.
+
+A Movable component affects runtime topology only when it:
+
+- can affect navigation;
+- blocks the collision profile sampled by the intersecting Grid bounds;
+- intersects a `GridNavigationBoundsVolume`;
+- belongs to a region with automatic geometry rebuild enabled.
+
+A moving platform is navigable only after the current pose has been sampled and published. GridWorld does not maintain platform-local cells or promise traversal while the platform is moving. Prefer the modifier overlay for authored obstacles that only block or change cost on existing cells.
 
 ---
 
@@ -881,6 +900,23 @@ It may provide:
 - a grid filter profile.
 
 Do not cast to project-specific pawn or controller classes inside the plugin.
+
+## 10.5 Dynamic agent and endpoint ownership contract
+
+Automatic Pawn occupancy is identity publication. `UGridWorldPathFollowingComponent` must make it available to every controlled Pawn, including player Pawns, by reusing or creating a transient non-blocking `UGridNavigationOccupancyComponent`. Do not turn these trackers into hard A* blockers: the shipped Balanced filter uses `OccupancyPolicy = Ignore` and `DynamicAgentPolicy = ReservedCorridor`.
+
+Intermediate corridor ownership and final-destination contention are separate decisions:
+
+- `ReservedCorridor` coordinates the current cell, swept transitions, look-ahead cells and parking;
+- `EGridGoalContentionPolicy::RejectOccupied` rejects the exact requested final cell without redirecting or queueing;
+- `EGridGoalContentionPolicy::StopBeforeOccupied` computes the path to a contested requested goal, removes exactly its final cell, and atomically claims the immediate predecessor;
+- `StopBeforeOccupied` is the native default; `Ignore` remains available as the compatibility behavior.
+
+For either exact-goal policy, acceptance must repeat the check through an atomic Game-Thread claim. `AGridNavigationData` is the single authority and checks both published `FGridCellData::OccupancyOwners` and the immutable traffic snapshot. The requesting Pawn's own owner ID is ignored. Normal queries, exact injected paths, AI tasks and non-AI gameplay-action execution must all use the same operation.
+
+`StopBeforeOccupied` requires a complete ordered path whose last cell is the requested goal. It may remove that cell once and only once. `FGridPathPreviewResult` and `FGridInjectedPath` retain separate requested and effective goal IDs so renderer, prediction and commit cannot disagree or repeatedly shorten a stale path. If the predecessor cannot be claimed, the request fails; the policy never searches for an unrelated neighbor.
+
+Every acquired claim needs symmetric release on failure, abort, replacement, repath to another goal and teardown. Successful non-partial completion converts the claim into Pawn-lifetime parking. Never hide a changed preview-to-commit destination by selecting an unrelated goal under either exact-goal policy.
 
 ---
 

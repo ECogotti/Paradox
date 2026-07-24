@@ -8,6 +8,9 @@
 #include "Interfaces/GridNavigationContributor.h"
 #include "GridNavigationOccupancyComponent.generated.h"
 
+class APawn;
+class FGridOverlayComposer;
+
 /** Runtime occupancy source used by occupancy filters, goal contention, and traffic reservations. */
 UCLASS(ClassGroup = (GridWorld), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class GRIDWORLD_API UGridNavigationOccupancyComponent : public USceneComponent, public IGridNavigationContributor
@@ -45,6 +48,15 @@ public:
 	bool AffectsPoint(const FVector& WorldPoint) const;
 	/** Finds an active, non-reservation occupancy source owned by Actor. @return Borrowed component pointer or nullptr. */
 	static UGridNavigationOccupancyComponent* FindActiveAgentOccupancy(const AActor& Actor);
+	/**
+	 * Resolves or creates the standard non-blocking occupancy identity used by GridWorld-controlled Pawns.
+	 * Existing authored occupancy is preserved unchanged.
+	 */
+	static UGridNavigationOccupancyComponent* FindOrAddAgentOccupancy(
+		APawn& Pawn,
+		float AgentRadius,
+		float AgentHeight,
+		bool bAutoCreate);
 	/** Resolves a live occupancy source by stable ID without scanning every Actor. @return Borrowed component pointer or nullptr. */
 	static UGridNavigationOccupancyComponent* FindOccupantById(const UWorld& World, const FGuid& InOccupantId);
 	UFUNCTION(BlueprintCallable, Category = "Grid World")
@@ -63,6 +75,8 @@ public:
 #endif
 
 private:
+	friend class FGridOverlayComposer;
+
 	/** Binding removed symmetrically during unregistration. */
 	FDelegateHandle TransformUpdatedHandle;
 	/** Previously published cells, used to localize overlay change sets. */
@@ -73,6 +87,8 @@ private:
 	void HandleTransformUpdated(USceneComponent* UpdatedComponent, EUpdateTransformFlags UpdateTransformFlags, ETeleportType Teleport);
 	/** Refreshes CachedOccupiedCells. @return True when the occupied set changed. */
 	bool UpdateCachedOccupiedCells();
+	/** Uses the refreshed logical-cell cache in addition to the authored oriented-box footprint. */
+	bool AffectsCell(const FGridCellId& CellId, const FVector& WorldCenter) const;
 	/** Republishes occupancy to the authoritative Grid nav data. */
 	void NotifyNavigationData() const;
 };

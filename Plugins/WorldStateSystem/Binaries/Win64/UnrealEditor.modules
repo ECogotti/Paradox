@@ -1,0 +1,8 @@
+{
+	"BuildId": "55116800",
+	"Modules": 
+	{
+		"WorldState": "UnrealEditor-WorldState.dll",
+		"WorldStateEditor": "UnrealEditor-WorldStateEditor.dll"
+	}
+}

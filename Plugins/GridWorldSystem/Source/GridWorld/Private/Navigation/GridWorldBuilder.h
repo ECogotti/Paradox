@@ -7,6 +7,8 @@
 
 class AGridNavigationBoundsVolume;
 class UWorld;
+struct FHitResult;
+struct FCollisionQueryParams;
 
 /** Synchronous Game-Thread collision sampler and immutable topology builder. */
 class FGridWorldBuilder
@@ -17,6 +19,40 @@ public:
 		UWorld& World,
 		uint32 TopologyGeneration,
 		TArray<FString>& OutErrors);
+
+	/**
+	 * Tests the complete upright agent capsule at a sampled floor.
+	 * When the base pose is blocked, deterministic lifted poses up to MaxStepHeight distinguish
+	 * low climbable geometry from full-height walls and overhead obstruction.
+	 */
+	static bool HasAgentClearance(
+		UWorld& World,
+		const FVector& FloorLocation,
+		double FloorUpDot,
+		double AgentRadius,
+		double AgentHalfHeight,
+		double MaxStepHeight,
+		FName CollisionProfileName,
+		const FCollisionQueryParams& QueryParams);
+
+	/**
+	 * Collects distinct walkable surface hits in one vertical grid column.
+	 * Floor traces deliberately discard initial overlaps so a trace restarted inside a thick
+	 * solid cannot publish its interior repeatedly as additional navigation layers.
+	 */
+	static void GatherSurfaceHits(
+		UWorld& World,
+		const FGridTransform& GridTransform,
+		double LocalX,
+		double LocalY,
+		double TraceTop,
+		double TraceBottom,
+		double LayerHeight,
+		double MaxSlopeDegrees,
+		double AgentRadius,
+		FName CollisionProfileName,
+		const FCollisionQueryParams& QueryParams,
+		TArray<FHitResult>& OutHits);
 
 private:
 	/** Rejects duplicate IDs, unsupported transforms/shapes, and ambiguous overlaps. */

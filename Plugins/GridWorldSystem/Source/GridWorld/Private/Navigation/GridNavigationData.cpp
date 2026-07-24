@@ -19,6 +19,7 @@
 #include "AIController.h"
 #include "AI/GridWorldPathFollowingComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "EngineUtils.h"
 #include "Navigation/PathFollowingComponent.h"
@@ -27,7 +28,7 @@
 namespace UE::GridWorld::Serialization
 {
 	static constexpr uint32 Magic = 0x47575244; // GWRD
-	static constexpr int32 CurrentVersion = 5;
+	static constexpr int32 CurrentVersion = 7;
 
 	bool CanConsumeVersion(int32 Version)
 	{
@@ -277,16 +278,56 @@ namespace UE::GridWorld::Private
 			|| FVector2D::DotProduct(Incoming, Outgoing) < 1.0f - UE_KINDA_SMALL_NUMBER;
 	}
 
+	bool LessCellId(const FGridCellId& Left, const FGridCellId& Right)
+	{
+		return Left.GridId != Right.GridId ? Left.GridId < Right.GridId : Left.Coord < Right.Coord;
+	}
+
+	FGridChangeSet MakeStructuralChangeSet(
+		const FGridWorldSnapshot* PreviousSnapshot,
+		const FGridWorldSnapshot* NewSnapshot)
+	{
+		FGridChangeSet ChangeSet;
+		ChangeSet.PreviousRevisions = PreviousSnapshot != nullptr ? PreviousSnapshot->Revisions : FGridRevisionSet();
+		ChangeSet.NewRevisions = NewSnapshot != nullptr ? NewSnapshot->Revisions : FGridRevisionSet();
+
+		TSet<FGridCellId> ChangedCellSet;
+		TSet<FGuid> ChangedLinkSet;
+		auto AddSnapshotState = [&ChangedCellSet, &ChangedLinkSet](const FGridWorldSnapshot* Snapshot)
+		{
+			if (Snapshot == nullptr)
+			{
+				return;
+			}
+			for (const FGridCellData& Cell : Snapshot->Cells)
+			{
+				ChangedCellSet.Add(Cell.Id);
+			}
+			for (const FGridLinkData& Link : Snapshot->Links)
+			{
+				ChangedLinkSet.Add(Link.LinkId);
+			}
+		};
+		AddSnapshotState(PreviousSnapshot);
+		AddSnapshotState(NewSnapshot);
+		ChangeSet.ChangedCells = ChangedCellSet.Array();
+		ChangeSet.ChangedCells.Sort(LessCellId);
+		ChangeSet.ChangedLinks = ChangedLinkSet.Array();
+		ChangeSet.ChangedLinks.Sort();
+		return ChangeSet;
+	}
+
 }
 
 AGridNavigationData::AGridNavigationData(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	RuntimeGeneration = ERuntimeGenerationType::DynamicModifiersOnly;
+	RuntimeGeneration = ERuntimeGenerationType::Dynamic;
 	DefaultQueryFilter->SetFilterType<FGridNavigationQueryFilterImpl>();
 
 	if (!HasAnyFlags(RF_ClassDefaultObject))
 	{
+		RuntimeNavigationDataId = FGuid::NewGuid();
 		TrafficReservationManager = MakeShared<FGridTrafficReservationManager>();
 		FindPathImplementation = FindPath;
 		FindHierarchicalPathImplementation = FindPath;
@@ -347,7 +388,7 @@ void AGridNavigationData::Serialize(FArchive& Ar)
 		if (!UE::GridWorld::Serialization::CanPublishVersion(Version))
 		{
 			GRIDWORLD_LOG_ERROR(
-				"Rejected serialized GridWorld data on '%s': version %d has no reliable floor normals and must be rebuilt for version %d.",
+				"Rejected serialized GridWorld data on '%s': version %d is incompatible with the current generation rules and must be rebuilt for version %d.",
 				*GetNameSafe(this),
 				Version,
 				UE::GridWorld::Serialization::CurrentVersion);
@@ -394,16 +435,26 @@ bool AGridNavigationData::PublishSnapshot(TSharedRef<FGridWorldSnapshot, ESPMode
 		return false;
 	}
 
+	const FGridWorldSnapshotPtr PreviousSnapshot = GetSnapshot();
+	const FGridChangeSet ChangeSet = UE::GridWorld::Private::MakeStructuralChangeSet(PreviousSnapshot.Get(), &NewSnapshot.Get());
 	{
 		FWriteScopeLock Lock(SnapshotLock);
 		BaseTopologySnapshot = StaticCastSharedRef<const FGridWorldSnapshot>(NewSnapshot);
 		PublishedSnapshot = BaseTopologySnapshot;
+		LastChangeSet = ChangeSet;
 	}
 	MarkGeneratedDataPackageDirty();
 	GRIDWORLD_LOG_INFO("Published GridWorld snapshot for '%s': %d cells, topology %lld.", *GetNameSafe(this), NewSnapshot->Cells.Num(), NewSnapshot->Revisions.Topology);
 	if (RenderingComp != nullptr)
 	{
 		RenderingComp->MarkRenderStateDirty();
+	}
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridWorldSubsystem* Subsystem = World->GetSubsystem<UGridWorldSubsystem>())
+		{
+			Subsystem->OnGridWorldChanged.Broadcast(ChangeSet);
+		}
 	}
 	return true;
 }
@@ -644,6 +695,8 @@ bool AGridNavigationData::BuildDirtyAreas(const TArray<FNavigationDirtyArea>& Di
 
 void AGridNavigationData::ClearGridWorld()
 {
+	const FGridWorldSnapshotPtr PreviousSnapshot = GetSnapshot();
+	const FGridChangeSet ChangeSet = UE::GridWorld::Private::MakeStructuralChangeSet(PreviousSnapshot.Get(), nullptr);
 	if (TrafficReservationManager.IsValid() && TrafficReservationManager->Reset())
 	{
 		TrafficReservationsChanged.Broadcast();
@@ -652,9 +705,17 @@ void AGridNavigationData::ClearGridWorld()
 		FWriteScopeLock Lock(SnapshotLock);
 		PublishedSnapshot.Reset();
 		BaseTopologySnapshot.Reset();
+		LastChangeSet = ChangeSet;
 	}
 	MarkGeneratedDataPackageDirty();
 	MarkDebugRenderStateDirty();
+	if (UWorld* World = GetWorld())
+	{
+		if (UGridWorldSubsystem* Subsystem = World->GetSubsystem<UGridWorldSubsystem>())
+		{
+			Subsystem->OnGridWorldChanged.Broadcast(ChangeSet);
+		}
+	}
 }
 
 void AGridNavigationData::SetDebugPath(TConstArrayView<FNavPathPoint> PathPoints) const
@@ -1133,14 +1194,46 @@ bool AGridNavigationData::CanClaimTrafficGoal(
 	const FGridTrafficGoalClaimRequest& Request,
 	FGuid* OutBlockingOwnerId) const
 {
-	return IsInGameThread()
-		&& TrafficReservationManager.IsValid()
-		&& TrafficReservationManager->CanClaimGoal(Request, OutBlockingOwnerId);
+	if (OutBlockingOwnerId != nullptr)
+	{
+		OutBlockingOwnerId->Invalidate();
+	}
+
+	if (!IsInGameThread() || !TrafficReservationManager.IsValid())
+	{
+		return false;
+	}
+	const FGridWorldSnapshotPtr CurrentSnapshot = GetSnapshot();
+	const FGridCellData* GoalCell = CurrentSnapshot.IsValid()
+		? CurrentSnapshot->FindCell(Request.GoalCell.CellId)
+		: nullptr;
+	if (GoalCell == nullptr || !GoalCell->bWalkable)
+	{
+		return false;
+	}
+	const FGuid* BlockingOccupant = GoalCell->OccupancyOwners.FindByPredicate(
+		[&Request](const FGuid& OccupantId)
+		{
+			return OccupantId.IsValid() && OccupantId != Request.OwnerId;
+		});
+	if (BlockingOccupant != nullptr)
+	{
+		if (OutBlockingOwnerId != nullptr)
+		{
+			*OutBlockingOwnerId = *BlockingOccupant;
+		}
+		return false;
+	}
+	return TrafficReservationManager->CanClaimGoal(Request, OutBlockingOwnerId);
 }
 
 bool AGridNavigationData::TryClaimTrafficGoal(const FGridTrafficGoalClaimRequest& Request)
 {
 	if (!IsInGameThread() || !TrafficReservationManager.IsValid())
+	{
+		return false;
+	}
+	if (!CanClaimTrafficGoal(Request))
 	{
 		return false;
 	}
@@ -1201,6 +1294,454 @@ FGridTrafficReservationSnapshotPtr AGridNavigationData::GetTrafficReservationSna
 	return TrafficReservationManager.IsValid()
 		? TrafficReservationManager->GetSnapshot()
 		: FGridTrafficReservationSnapshotPtr();
+}
+
+int64 AGridNavigationData::BuildFilterSignature(
+	const FSharedConstNavQueryFilter& QueryFilter,
+	TSubclassOf<UNavigationQueryFilter> FilterClass)
+{
+	if (!QueryFilter.IsValid())
+	{
+		return 0;
+	}
+	uint32 Hash = GetTypeHash(FilterClass.Get());
+	Hash = HashCombineFast(Hash, GetTypeHash(QueryFilter->GetIncludeFlags()));
+	Hash = HashCombineFast(Hash, GetTypeHash(QueryFilter->GetExcludeFlags()));
+	Hash = HashCombineFast(Hash, GetTypeHash(QueryFilter->GetMaxSearchNodes()));
+	if (const FGridNavigationQueryFilterImpl* GridFilter = UE::GridWorld::Private::GetGridFilter(QueryFilter))
+	{
+		Hash = HashCombineFast(Hash, GetTypeHash(static_cast<uint8>(GridFilter->GetMovementMode())));
+		Hash = HashCombineFast(Hash, GetTypeHash(static_cast<uint8>(GridFilter->GetPathOptimizationMode())));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetBalancedTurnPenalty()));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->AllowsCornerCutting()));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->AllowsLinks()));
+		Hash = HashCombineFast(Hash, GetTypeHash(static_cast<uint8>(GridFilter->GetOccupancyPolicy())));
+		Hash = HashCombineFast(Hash, GetTypeHash(static_cast<uint8>(GridFilter->GetDynamicAgentPolicy())));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetTraversalChannel()));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetReservationId()));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetIgnoredOccupancyOwnerId()));
+		Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetAdditionalAgentSeparation()));
+		for (uint8 AreaId = 0; AreaId < FGridNavigationQueryFilterImpl::MaxAreaCount; ++AreaId)
+		{
+			Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetAreaCost(AreaId)));
+			Hash = HashCombineFast(Hash, GetTypeHash(GridFilter->GetEnteringCost(AreaId)));
+		}
+	}
+	return static_cast<int64>(Hash);
+}
+
+FGridAStarQuery AGridNavigationData::BuildAStarQuery(
+	const FNavAgentProperties& AgentProperties,
+	const FPathFindingQuery& Query,
+	int32 StartIndex,
+	int32 GoalIndex) const
+{
+	FGridAStarQuery AStarQuery;
+	AStarQuery.StartCellIndex = StartIndex;
+	AStarQuery.GoalCellIndex = GoalIndex;
+	AStarQuery.bAllowPartialPath = Query.bAllowPartialPaths;
+	AStarQuery.TrafficAgentRadius = AgentProperties.AgentRadius > 0.0f ? AgentProperties.AgentRadius : 42.0f;
+	AStarQuery.TrafficAgentHeight = AgentProperties.AgentHeight > 0.0f ? AgentProperties.AgentHeight : 192.0f;
+	if (Query.QueryFilter.IsValid())
+	{
+		AStarQuery.MaxVisitedNodes = FMath::Min<uint32>(Query.QueryFilter->GetMaxSearchNodes(), MAX_int32);
+		AStarQuery.IncludeFlags = Query.QueryFilter->GetIncludeFlags();
+		AStarQuery.ExcludeFlags = Query.QueryFilter->GetExcludeFlags();
+		if (const FGridNavigationQueryFilterImpl* GridFilter = UE::GridWorld::Private::GetGridFilter(Query.QueryFilter))
+		{
+			AStarQuery.MovementMode = GridFilter->GetMovementMode();
+			AStarQuery.PathOptimizationMode = GridFilter->GetPathOptimizationMode();
+			AStarQuery.BalancedTurnPenaltyCost = FMath::Max<int64>(
+				0,
+				FMath::RoundToInt64(static_cast<double>(GridFilter->GetBalancedTurnPenalty()) * FGridAStar::OrthogonalCost));
+			AStarQuery.bAllowCornerCutting = GridFilter->AllowsCornerCutting();
+			AStarQuery.bAllowLinks = GridFilter->AllowsLinks();
+			AStarQuery.OccupancyPolicy = GridFilter->GetOccupancyPolicy();
+			AStarQuery.DynamicAgentPolicy = GridFilter->GetDynamicAgentPolicy();
+			AStarQuery.IgnoredOccupancyOwnerId = GridFilter->GetIgnoredOccupancyOwnerId();
+			AStarQuery.TrafficAdditionalSeparation = GridFilter->GetAdditionalAgentSeparation();
+			AStarQuery.ReservationId = GridFilter->GetReservationId();
+			AStarQuery.TraversalChannel = GridFilter->GetTraversalChannel();
+			for (uint8 AreaId = 0; AreaId < FGridNavigationQueryFilterImpl::MaxAreaCount; ++AreaId)
+			{
+				const float AreaCost = GridFilter->GetAreaCost(AreaId);
+				AStarQuery.AreaCosts[AreaId] = AreaCost >= BIG_NUMBER * 0.5f
+					? MAX_int32 / 2
+					: FMath::RoundToInt(AreaCost * 1000.0f);
+				AStarQuery.AreaEnteringCosts[AreaId] = FMath::RoundToInt(GridFilter->GetEnteringCost(AreaId) * 1000.0f);
+			}
+		}
+	}
+	if (AStarQuery.DynamicAgentPolicy == EGridDynamicAgentPolicy::ReservedCorridor)
+	{
+		AStarQuery.TrafficReservations = GetTrafficReservationSnapshot();
+	}
+	return AStarQuery;
+}
+
+FGridInjectedPathValidationResult AGridNavigationData::CreateExactInjectedPath(
+	const UObject* Querier,
+	const FNavAgentProperties& AgentProperties,
+	TSubclassOf<UNavigationQueryFilter> FilterClass,
+	const FVector& StartLocation,
+	TConstArrayView<FGridCellId> Cells,
+	const FGridCellId& OriginalGoalCell,
+	bool bAllowPartialPath,
+	bool bIsPartial,
+	EGridInjectedPathInvalidationPolicy InvalidationPolicy,
+	const FGuid& SourcePreviewId,
+	FGridInjectedPath& OutInjectedPath) const
+{
+	OutInjectedPath = FGridInjectedPath();
+	FGridInjectedPathValidationResult Output;
+	const FGridWorldSnapshotPtr Snapshot = GetSnapshot();
+	Output.CurrentRevisions = Snapshot.IsValid() ? Snapshot->Revisions : FGridRevisionSet();
+	if (!Snapshot.IsValid())
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidNavigationData;
+		Output.DiagnosticMessage = TEXT("GridWorld has no published navigation snapshot.");
+		return Output;
+	}
+	if (Querier == nullptr || StartLocation.ContainsNaN() || Cells.IsEmpty() || !OriginalGoalCell.IsValid())
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidPath;
+		Output.DiagnosticMessage = TEXT("Exact path creation requires a querier, finite start, ordered cells, and original goal.");
+		return Output;
+	}
+
+	const int32* GoalIndexPtr = Snapshot->CellIndexById.Find(OriginalGoalCell);
+	if (GoalIndexPtr == nullptr)
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidGoal;
+		Output.InvalidCell = OriginalGoalCell;
+		Output.DiagnosticMessage = TEXT("The original goal cell does not exist in the current topology.");
+		return Output;
+	}
+	TSubclassOf<UNavigationQueryFilter> ResolvedFilterClass = FilterClass;
+	if (ResolvedFilterClass == nullptr)
+	{
+		ResolvedFilterClass = UGridNavigationQueryFilter::StaticClass();
+	}
+	const FSharedConstNavQueryFilter BaseQueryFilter = UNavigationQueryFilter::GetQueryFilter(
+		*this,
+		Querier,
+		ResolvedFilterClass);
+	if (!BaseQueryFilter.IsValid())
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::FilterMismatch;
+		Output.DiagnosticMessage = TEXT("GridWorld could not initialize the requested navigation filter.");
+		return Output;
+	}
+	FPathFindingQuery Query(
+		Querier,
+		*this,
+		StartLocation,
+		Snapshot->Cells[*GoalIndexPtr].WorldCenter,
+		BaseQueryFilter);
+	Query.SetAllowPartialPaths(bAllowPartialPath);
+	Query.SetNavAgentProperties(AgentProperties);
+	if (const AController* Controller = Cast<AController>(Querier))
+	{
+		if (UPathFollowingComponent* PathFollowing = Controller->FindComponentByClass<UPathFollowingComponent>())
+		{
+			PathFollowing->OnPathfindingQuery(Query);
+		}
+	}
+	const FSharedConstNavQueryFilter QueryFilter = Query.QueryFilter;
+	FNavLocation ProjectedStart;
+	if (!ProjectPoint(StartLocation, ProjectedStart, GetDefaultQueryExtent(), QueryFilter, Querier))
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidStart;
+		Output.DiagnosticMessage = TEXT("The current navigation-agent location cannot be projected to GridWorld.");
+		return Output;
+	}
+	const int32 StartIndex = Snapshot->ResolveNodeRef(ProjectedStart.NodeRef);
+	if (!Snapshot->Cells.IsValidIndex(StartIndex) || Snapshot->Cells[StartIndex].Id != Cells[0])
+	{
+		Output.FailureReason = EGridInjectedPathFailureReason::InvalidStart;
+		Output.InvalidCell = Cells[0];
+		Output.DiagnosticMessage = TEXT("The supplied exact path does not start in the querier's current GridWorld cell.");
+		return Output;
+	}
+
+	TArray<int32, TInlineAllocator<64>> CellIndices;
+	CellIndices.Reserve(Cells.Num());
+	for (int32 PathIndex = 0; PathIndex < Cells.Num(); ++PathIndex)
+	{
+		const int32* CellIndexPtr = Snapshot->CellIndexById.Find(Cells[PathIndex]);
+		if (CellIndexPtr == nullptr)
+		{
+			Output.FailureReason = EGridInjectedPathFailureReason::MissingCell;
+			Output.InvalidCell = Cells[PathIndex];
+			Output.DiagnosticMessage = TEXT("An exact-path cell does not exist in the current topology.");
+			return Output;
+		}
+		CellIndices.Add(*CellIndexPtr);
+	}
+
+	const FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, StartIndex, *GoalIndexPtr);
+	const FGridAStarPathValidationResult Validation = FGridAStar().ValidatePath(*Snapshot, AStarQuery, CellIndices, bIsPartial);
+	if (!Validation.IsValid())
+	{
+		Output.FailureReason = Validation.FailureReason;
+		Output.InvalidSegmentIndex = Validation.InvalidSegmentIndex;
+		if (Cells.IsValidIndex(Validation.InvalidCellIndex))
+		{
+			Output.InvalidCell = Cells[Validation.InvalidCellIndex];
+		}
+		Output.DiagnosticMessage = FString::Printf(
+			TEXT("GridWorld rejected the exact path: %s."),
+			*StaticEnum<EGridInjectedPathFailureReason>()->GetNameStringByValue(static_cast<int64>(Validation.FailureReason)));
+		return Output;
+	}
+
+	OutInjectedPath.Cells.Append(Cells.GetData(), Cells.Num());
+	OutInjectedPath.OriginalGoalCell = OriginalGoalCell;
+	OutInjectedPath.RequestedGoalCell = OriginalGoalCell;
+	OutInjectedPath.NavigationDataId = RuntimeNavigationDataId;
+	OutInjectedPath.PathInstanceId = FGuid::NewGuid();
+	OutInjectedPath.SourcePreviewId = SourcePreviewId;
+	OutInjectedPath.AgentProperties = AgentProperties;
+	OutInjectedPath.FilterClass = ResolvedFilterClass;
+	OutInjectedPath.FilterSignature = BuildFilterSignature(QueryFilter, ResolvedFilterClass);
+	OutInjectedPath.Revisions = Snapshot->Revisions;
+	OutInjectedPath.TrafficReservationRevision = AStarQuery.TrafficReservations.IsValid()
+		? AStarQuery.TrafficReservations->Revision
+		: 0;
+	OutInjectedPath.bAllowPartialPath = bAllowPartialPath;
+	OutInjectedPath.bIsPartial = bIsPartial;
+	OutInjectedPath.InvalidationPolicy = InvalidationPolicy;
+	Output.bIsValid = true;
+	Output.FailureReason = EGridInjectedPathFailureReason::None;
+	Output.DiagnosticMessage = TEXT("Exact GridWorld path is valid.");
+	return Output;
+}
+
+FGridInjectedPathValidationResult AGridNavigationData::ValidateInjectedPath(
+	const FGridInjectedPath& InjectedPath,
+	const UObject* Querier,
+	const FNavAgentProperties& AgentProperties,
+	const FVector& StartLocation) const
+{
+	FGridInjectedPathValidationResult Output;
+	const FGridWorldSnapshotPtr Snapshot = GetSnapshot();
+	Output.CurrentRevisions = Snapshot.IsValid() ? Snapshot->Revisions : FGridRevisionSet();
+	auto Fail = [&Output](EGridInjectedPathFailureReason Reason, const TCHAR* Message)
+	{
+		Output.FailureReason = Reason;
+		Output.DiagnosticMessage = Message;
+		return Output;
+	};
+	if (!Snapshot.IsValid())
+	{
+		return Fail(EGridInjectedPathFailureReason::InvalidNavigationData, TEXT("GridWorld has no published navigation snapshot."));
+	}
+	if (!InjectedPath.IsSet() || Querier == nullptr || StartLocation.ContainsNaN())
+	{
+		return Fail(EGridInjectedPathFailureReason::InvalidPath, TEXT("The injected path, querier, or current start is invalid."));
+	}
+	if (InjectedPath.NavigationDataId != RuntimeNavigationDataId)
+	{
+		return Fail(EGridInjectedPathFailureReason::NavigationDataMismatch, TEXT("The injected path belongs to a different GridWorld Navigation Data instance."));
+	}
+	if (!InjectedPath.AgentProperties.IsEquivalent(AgentProperties, 0.1f))
+	{
+		return Fail(EGridInjectedPathFailureReason::AgentMismatch, TEXT("The current navigation agent is incompatible with the injected path."));
+	}
+	if (InjectedPath.Revisions.Topology != Snapshot->Revisions.Topology)
+	{
+		return Fail(EGridInjectedPathFailureReason::StaleTopology, TEXT("GridWorld topology changed after the injected path was created."));
+	}
+	if (InjectedPath.Revisions.Traversal != Snapshot->Revisions.Traversal)
+	{
+		return Fail(EGridInjectedPathFailureReason::StaleTraversalState, TEXT("GridWorld traversal or cost state changed after the injected path was created."));
+	}
+
+	const FSharedConstNavQueryFilter BaseQueryFilter = UNavigationQueryFilter::GetQueryFilter(
+		*this,
+		Querier,
+		InjectedPath.FilterClass);
+	if (!BaseQueryFilter.IsValid())
+	{
+		return Fail(EGridInjectedPathFailureReason::FilterMismatch, TEXT("The current navigation filter could not be initialized."));
+	}
+	const int32* GoalIndexPtr = Snapshot->CellIndexById.Find(InjectedPath.OriginalGoalCell);
+	if (GoalIndexPtr == nullptr)
+	{
+		Output.InvalidCell = InjectedPath.OriginalGoalCell;
+		return Fail(EGridInjectedPathFailureReason::InvalidGoal, TEXT("The injected path's original goal no longer exists."));
+	}
+	FPathFindingQuery Query(
+		Querier,
+		*this,
+		StartLocation,
+		Snapshot->Cells[*GoalIndexPtr].WorldCenter,
+		BaseQueryFilter);
+	Query.SetAllowPartialPaths(InjectedPath.bAllowPartialPath);
+	Query.SetNavAgentProperties(AgentProperties);
+	if (const AController* Controller = Cast<AController>(Querier))
+	{
+		if (UPathFollowingComponent* PathFollowing = Controller->FindComponentByClass<UPathFollowingComponent>())
+		{
+			PathFollowing->OnPathfindingQuery(Query);
+		}
+	}
+	const FSharedConstNavQueryFilter QueryFilter = Query.QueryFilter;
+	if (BuildFilterSignature(QueryFilter, InjectedPath.FilterClass) != InjectedPath.FilterSignature)
+	{
+		return Fail(EGridInjectedPathFailureReason::FilterMismatch, TEXT("The current initialized query filter differs from the injected path filter."));
+	}
+	const FGridNavigationQueryFilterImpl* GridFilter = UE::GridWorld::Private::GetGridFilter(QueryFilter);
+	const bool bUsesOccupancy = GridFilter != nullptr
+		&& (GridFilter->GetOccupancyPolicy() != EGridOccupancyPolicy::Ignore
+			|| GridFilter->GetDynamicAgentPolicy() != EGridDynamicAgentPolicy::Ignore);
+	if (bUsesOccupancy && InjectedPath.Revisions.Occupancy != Snapshot->Revisions.Occupancy)
+	{
+		return Fail(EGridInjectedPathFailureReason::StaleOccupancyState, TEXT("Relevant GridWorld occupancy changed after the injected path was created."));
+	}
+	if (GridFilter != nullptr && GridFilter->GetDynamicAgentPolicy() == EGridDynamicAgentPolicy::ReservedCorridor)
+	{
+		const FGridTrafficReservationSnapshotPtr TrafficSnapshot = GetTrafficReservationSnapshot();
+		const int64 CurrentTrafficRevision = TrafficSnapshot.IsValid() ? TrafficSnapshot->Revision : 0;
+		if (InjectedPath.TrafficReservationRevision != CurrentTrafficRevision)
+		{
+			return Fail(EGridInjectedPathFailureReason::StaleOccupancyState, TEXT("GridWorld traffic reservations changed after the injected path was created."));
+		}
+	}
+
+	FNavLocation ProjectedStart;
+	if (!ProjectPoint(StartLocation, ProjectedStart, GetDefaultQueryExtent(), QueryFilter, Querier))
+	{
+		return Fail(EGridInjectedPathFailureReason::InvalidStart, TEXT("The current navigation-agent location is not on GridWorld."));
+	}
+	const int32 StartIndex = Snapshot->ResolveNodeRef(ProjectedStart.NodeRef);
+	if (!Snapshot->Cells.IsValidIndex(StartIndex) || Snapshot->Cells[StartIndex].Id != InjectedPath.Cells[0])
+	{
+		Output.InvalidCell = InjectedPath.Cells[0];
+		return Fail(EGridInjectedPathFailureReason::InvalidStart, TEXT("The current agent cell no longer matches the injected path start."));
+	}
+	TArray<int32, TInlineAllocator<64>> CellIndices;
+	CellIndices.Reserve(InjectedPath.Cells.Num());
+	for (int32 PathIndex = 0; PathIndex < InjectedPath.Cells.Num(); ++PathIndex)
+	{
+		const int32* CellIndexPtr = Snapshot->CellIndexById.Find(InjectedPath.Cells[PathIndex]);
+		if (CellIndexPtr == nullptr)
+		{
+			Output.InvalidCell = InjectedPath.Cells[PathIndex];
+			return Fail(EGridInjectedPathFailureReason::MissingCell, TEXT("An injected path cell no longer exists."));
+		}
+		CellIndices.Add(*CellIndexPtr);
+	}
+
+	const FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, StartIndex, *GoalIndexPtr);
+	const FGridAStarPathValidationResult Validation = FGridAStar().ValidatePath(
+		*Snapshot,
+		AStarQuery,
+		CellIndices,
+		InjectedPath.bIsPartial);
+	if (!Validation.IsValid())
+	{
+		Output.FailureReason = Validation.FailureReason;
+		Output.InvalidSegmentIndex = Validation.InvalidSegmentIndex;
+		if (InjectedPath.Cells.IsValidIndex(Validation.InvalidCellIndex))
+		{
+			Output.InvalidCell = InjectedPath.Cells[Validation.InvalidCellIndex];
+		}
+		Output.DiagnosticMessage = FString::Printf(
+			TEXT("GridWorld rejected the injected path: %s."),
+			*StaticEnum<EGridInjectedPathFailureReason>()->GetNameStringByValue(static_cast<int64>(Validation.FailureReason)));
+		return Output;
+	}
+
+	Output.bIsValid = true;
+	Output.FailureReason = EGridInjectedPathFailureReason::None;
+	Output.DiagnosticMessage = TEXT("Injected GridWorld path is valid.");
+	return Output;
+}
+
+FPathFindingResult AGridNavigationData::MaterializeInjectedPath(
+	const FGridInjectedPath& InjectedPath,
+	const UObject* Querier,
+	const FNavAgentProperties& AgentProperties,
+	const FVector& StartLocation,
+	FNavPathSharedPtr PathInstanceToFill) const
+{
+	const FGridInjectedPathValidationResult Validation = ValidateInjectedPath(
+		InjectedPath,
+		Querier,
+		AgentProperties,
+		StartLocation);
+	if (!Validation.bIsValid)
+	{
+		GRIDWORLD_LOG_WARNING(
+			"Exact path materialization failed for querier '%s': %s",
+			*GetNameSafe(Querier),
+			*Validation.DiagnosticMessage);
+		return ENavigationQueryResult::Fail;
+	}
+
+	const FGridWorldSnapshotPtr Snapshot = GetSnapshot();
+	const int32* StartIndexPtr = Snapshot.IsValid() ? Snapshot->CellIndexById.Find(InjectedPath.Cells[0]) : nullptr;
+	const int32* GoalIndexPtr = Snapshot.IsValid() ? Snapshot->CellIndexById.Find(InjectedPath.OriginalGoalCell) : nullptr;
+	if (!Snapshot.IsValid() || StartIndexPtr == nullptr || GoalIndexPtr == nullptr)
+	{
+		return ENavigationQueryResult::Fail;
+	}
+	const FSharedConstNavQueryFilter QueryFilter = UNavigationQueryFilter::GetQueryFilter(
+		*this,
+		Querier,
+		InjectedPath.FilterClass);
+	FPathFindingQuery Query(
+		Querier,
+		*this,
+		StartLocation,
+		Snapshot->Cells[*GoalIndexPtr].WorldCenter,
+		QueryFilter,
+		PathInstanceToFill);
+	Query.SetAllowPartialPaths(InjectedPath.bAllowPartialPath);
+	Query.SetNavAgentProperties(AgentProperties);
+	if (const AController* Controller = Cast<AController>(Querier))
+	{
+		if (UPathFollowingComponent* PathFollowing = Controller->FindComponentByClass<UPathFollowingComponent>())
+		{
+			PathFollowing->OnPathfindingQuery(Query);
+		}
+	}
+	FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, *StartIndexPtr, *GoalIndexPtr);
+	TArray<int32, TInlineAllocator<64>> CellIndices;
+	CellIndices.Reserve(InjectedPath.Cells.Num());
+	for (const FGridCellId& CellId : InjectedPath.Cells)
+	{
+		CellIndices.Add(Snapshot->CellIndexById.FindChecked(CellId));
+	}
+	FGridAStarPathValidationResult PathValidation = FGridAStar().ValidatePath(
+		*Snapshot,
+		AStarQuery,
+		CellIndices,
+		InjectedPath.bIsPartial);
+	if (!PathValidation.IsValid())
+	{
+		return ENavigationQueryResult::Fail;
+	}
+	FPathFindingResult Result = MaterializeGridPath(
+		AgentProperties,
+		Query,
+		*Snapshot,
+		AStarQuery,
+		PathValidation.PathResult,
+		AStarQuery.DynamicAgentPolicy,
+		false,
+		EGridNavigationPathOrigin::Injected,
+		InjectedPath.SourcePreviewId,
+		InjectedPath.InvalidationPolicy);
+	if (FGridNavigationPath* GridPath = Result.Path.IsValid()
+		? Result.Path->CastPath<FGridNavigationPath>()
+		: nullptr)
+	{
+		GridPath->PathInstanceId = InjectedPath.PathInstanceId;
+		GridPath->ParentPathInstanceId = FGuid();
+	}
+	return Result;
 }
 
 void AGridNavigationData::InvalidateAffectedPaths(const FGridChangeSet& ChangeSet)
@@ -1268,45 +1809,7 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 	const int32 StartIndex = Snapshot->ResolveNodeRef(ProjectedStart.NodeRef);
 	const int32 GoalIndex = Snapshot->ResolveNodeRef(ProjectedGoal.NodeRef);
 
-	FGridAStarQuery AStarQuery;
-	AStarQuery.StartCellIndex = StartIndex;
-	AStarQuery.GoalCellIndex = GoalIndex;
-	AStarQuery.bAllowPartialPath = Query.bAllowPartialPaths;
-	AStarQuery.TrafficAgentRadius = AgentProperties.AgentRadius > 0.0f ? AgentProperties.AgentRadius : 42.0f;
-	AStarQuery.TrafficAgentHeight = AgentProperties.AgentHeight > 0.0f ? AgentProperties.AgentHeight : 192.0f;
-	if (Query.QueryFilter.IsValid())
-	{
-		AStarQuery.MaxVisitedNodes = FMath::Min<uint32>(Query.QueryFilter->GetMaxSearchNodes(), MAX_int32);
-		AStarQuery.IncludeFlags = Query.QueryFilter->GetIncludeFlags();
-		AStarQuery.ExcludeFlags = Query.QueryFilter->GetExcludeFlags();
-		if (const FGridNavigationQueryFilterImpl* GridFilter = UE::GridWorld::Private::GetGridFilter(Query.QueryFilter))
-		{
-			AStarQuery.MovementMode = GridFilter->GetMovementMode();
-			AStarQuery.PathOptimizationMode = GridFilter->GetPathOptimizationMode();
-			AStarQuery.BalancedTurnPenaltyCost = FMath::Max<int64>(
-				0,
-				FMath::RoundToInt64(static_cast<double>(GridFilter->GetBalancedTurnPenalty()) * FGridAStar::OrthogonalCost));
-			AStarQuery.bAllowCornerCutting = GridFilter->AllowsCornerCutting();
-			AStarQuery.bAllowLinks = GridFilter->AllowsLinks();
-			AStarQuery.OccupancyPolicy = GridFilter->GetOccupancyPolicy();
-			AStarQuery.DynamicAgentPolicy = GridFilter->GetDynamicAgentPolicy();
-			AStarQuery.IgnoredOccupancyOwnerId = GridFilter->GetIgnoredOccupancyOwnerId();
-			AStarQuery.TrafficAdditionalSeparation = GridFilter->GetAdditionalAgentSeparation();
-			AStarQuery.ReservationId = GridFilter->GetReservationId();
-			AStarQuery.TraversalChannel = GridFilter->GetTraversalChannel();
-			for (uint8 AreaId = 0; AreaId < 64; ++AreaId)
-			{
-				const float AreaCost = GridFilter->GetAreaCost(AreaId);
-				AStarQuery.AreaCosts[AreaId] = AreaCost >= BIG_NUMBER * 0.5f ? MAX_int32 / 2 : FMath::RoundToInt(AreaCost * 1000.0f);
-				AStarQuery.AreaEnteringCosts[AreaId] = FMath::RoundToInt(GridFilter->GetEnteringCost(AreaId) * 1000.0f);
-			}
-		}
-	}
-	if (AStarQuery.DynamicAgentPolicy == EGridDynamicAgentPolicy::ReservedCorridor)
-	{
-		AStarQuery.TrafficReservations = Self->GetTrafficReservationSnapshot();
-	}
-
+	FGridAStarQuery AStarQuery = Self->BuildAStarQuery(AgentProperties, Query, StartIndex, GoalIndex);
 	FGridAStar AStar;
 	const EGridDynamicAgentPolicy RequestedDynamicAgentPolicy = AStarQuery.DynamicAgentPolicy;
 	FGridAStarResult SearchResult = AStar.FindPath(*Snapshot, AStarQuery);
@@ -1326,6 +1829,43 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 		return ENavigationQueryResult::Fail;
 	}
 
+	const FGridNavigationPath* ExistingPath = Query.PathInstanceToFill.IsValid()
+		? Query.PathInstanceToFill->CastPath<FGridNavigationPath>()
+		: nullptr;
+	const EGridNavigationPathOrigin Origin = ExistingPath != nullptr
+		? EGridNavigationPathOrigin::Recalculated
+		: EGridNavigationPathOrigin::Computed;
+	const FGuid SourcePreviewId = ExistingPath != nullptr ? ExistingPath->SourcePreviewId : FGuid();
+	const EGridInjectedPathInvalidationPolicy InvalidationPolicy = ExistingPath != nullptr
+		? ExistingPath->InjectedInvalidationPolicy
+		: EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
+	return Self->MaterializeGridPath(
+		AgentProperties,
+		Query,
+		*Snapshot,
+		AStarQuery,
+		SearchResult,
+		RequestedDynamicAgentPolicy,
+		bUsedDynamicAgentFallback,
+		Origin,
+		SourcePreviewId,
+		InvalidationPolicy);
+}
+
+FPathFindingResult AGridNavigationData::MaterializeGridPath(
+	const FNavAgentProperties& AgentProperties,
+	const FPathFindingQuery& Query,
+	const FGridWorldSnapshot& Snapshot,
+	const FGridAStarQuery& AStarQuery,
+	const FGridAStarResult& SearchResult,
+	EGridDynamicAgentPolicy RequestedDynamicAgentPolicy,
+	bool bUsedDynamicAgentFallback,
+	EGridNavigationPathOrigin Origin,
+	const FGuid& SourcePreviewId,
+	EGridInjectedPathInvalidationPolicy InvalidationPolicy) const
+{
+	const int32 StartIndex = AStarQuery.StartCellIndex;
+	const int32 GoalIndex = AStarQuery.GoalCellIndex;
 	FPathFindingResult Result(SearchResult.Status == EGridQueryStatus::Partial
 		? ENavigationQueryResult::Success
 		: ENavigationQueryResult::Success);
@@ -1333,13 +1873,21 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 	FGridNavigationPath* GridPath = SharedPath.IsValid() ? SharedPath->CastPath<FGridNavigationPath>() : nullptr;
 	if (GridPath == nullptr)
 	{
-		SharedPath = Self->CreatePathInstance<FGridNavigationPath>(Query);
+		SharedPath = this->CreatePathInstance<FGridNavigationPath>(Query);
 		GridPath = SharedPath->CastPath<FGridNavigationPath>();
 	}
 	check(GridPath != nullptr);
 	Result.Path = SharedPath;
+	const FGuid PreviousPathInstanceId = GridPath->PathInstanceId;
 	GridPath->ResetForRepath();
-	GridPath->Revisions = Snapshot->Revisions;
+	GridPath->Origin = Origin;
+	GridPath->PathInstanceId = FGuid::NewGuid();
+	GridPath->ParentPathInstanceId = Origin == EGridNavigationPathOrigin::Recalculated
+		? PreviousPathInstanceId
+		: FGuid();
+	GridPath->SourcePreviewId = SourcePreviewId;
+	GridPath->InjectedInvalidationPolicy = InvalidationPolicy;
+	GridPath->Revisions = Snapshot.Revisions;
 	GridPath->OptimizationMode = AStarQuery.PathOptimizationMode;
 	GridPath->TurnCount = SearchResult.TurnCount;
 	GridPath->VisitedNodes = SearchResult.VisitedNodes;
@@ -1364,14 +1912,14 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 	TArray<int32, TInlineAllocator<64>> CellPathPointIndices;
 	CellPathPointIndices.Reserve(SearchResult.CellIndices.Num());
 
-	const FGridRegionData* StartRegion = Snapshot->FindRegion(Snapshot->Cells[StartIndex].Id.GridId);
+	const FGridRegionData* StartRegion = Snapshot.FindRegion(Snapshot.Cells[StartIndex].Id.GridId);
 	const bool bCenterStartCell = StartRegion != nullptr
 		&& StartRegion->PathFollowingStyle != EGridPathFollowingStyle::Standard;
 	if (bCenterStartCell)
 	{
-		GridPath->GetPathPoints().Emplace(Query.StartLocation, ProjectedStart.NodeRef);
+		GridPath->GetPathPoints().Emplace(Query.StartLocation, Snapshot.MakeNodeRef(StartIndex));
 		FGridPathPointFollowingData& StartData = GridPath->PathPointFollowingData.AddDefaulted_GetRef();
-		StartData.CellId = Snapshot->Cells[StartIndex].Id;
+		StartData.CellId = Snapshot.Cells[StartIndex].Id;
 		StartData.GridRotation = StartRegion->GridTransform.Rotation;
 		GridPath->CellPathPointOffset = 1;
 	}
@@ -1379,8 +1927,8 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 	for (int32 PathIndex = 0; PathIndex < SearchResult.CellIndices.Num(); ++PathIndex)
 	{
 		const int32 CellIndex = SearchResult.CellIndices[PathIndex];
-		const FGridCellData& Cell = Snapshot->Cells[CellIndex];
-		const NavNodeRef NodeRef = Snapshot->MakeNodeRef(CellIndex);
+		const FGridCellData& Cell = Snapshot.Cells[CellIndex];
+		const NavNodeRef NodeRef = Snapshot.MakeNodeRef(CellIndex);
 		GridPath->CellPath.Add(Cell.Id);
 		GridPath->NodePath.Add(NodeRef);
 		GridPath->MaximumFloorSlopeDegrees = FMath::Max(
@@ -1392,7 +1940,7 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 		CellPathPointIndices.Add(PointIndex);
 		if (!GridPath->PathPointFollowingData.IsValidIndex(PointIndex))
 		{
-			const FGridRegionData* Region = Snapshot->FindRegion(Cell.Id.GridId);
+			const FGridRegionData* Region = Snapshot.FindRegion(Cell.Id.GridId);
 			FGridPathPointFollowingData& PointData = GridPath->PathPointFollowingData.AddDefaulted_GetRef();
 			PointData.CellId = Cell.Id;
 			PointData.bIsCellCenter = true;
@@ -1415,10 +1963,10 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 		if (PathIndex > 0)
 		{
 			const int32 PreviousCellIndex = SearchResult.CellIndices[PathIndex - 1];
-			const FVector PreviousCenter = Snapshot->Cells[SearchResult.CellIndices[PathIndex - 1]].WorldCenter;
+			const FVector PreviousCenter = Snapshot.Cells[SearchResult.CellIndices[PathIndex - 1]].WorldCenter;
 			GridPath->TotalLength += FVector::Distance(PreviousCenter, Cell.WorldCenter);
 			GridPath->SegmentCosts.Add(static_cast<FVector::FReal>(SearchResult.TotalCost) / FMath::Max(1, SearchResult.CellIndices.Num() - 1) / 1000.0);
-			for (const FGridLinkData& Link : Snapshot->Links)
+			for (const FGridLinkData& Link : Snapshot.Links)
 			{
 				if (Link.bEnabled && ((Link.FromCellIndex == PreviousCellIndex && Link.ToCellIndex == CellIndex)
 					|| (Link.bBidirectional && Link.ToCellIndex == PreviousCellIndex && Link.FromCellIndex == CellIndex)))
@@ -1461,7 +2009,7 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 	GridPath->MarkReady();
 	if (IsInGameThread())
 	{
-		AGridNavigationData* MutableSelf = const_cast<AGridNavigationData*>(Self);
+		AGridNavigationData* MutableSelf = const_cast<AGridNavigationData*>(this);
 		if (const AAIController* Controller = Cast<AAIController>(Query.Owner.Get()))
 		{
 			if (AStarQuery.PathOptimizationMode != EGridPathOptimizationMode::ShortestPath
@@ -1470,11 +2018,11 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 				&& !MutableSelf->SearchLimitWarningControllers.Contains(Controller))
 			{
 				MutableSelf->SearchLimitWarningControllers.Add(const_cast<AAIController*>(Controller));
-				const FGridCellCoord& GoalCoord = Snapshot->Cells[GoalIndex].Id.Coord;
+				const FGridCellCoord& GoalCoord = Snapshot.Cells[GoalIndex].Id.Coord;
 				const int32 PartialEndIndex = SearchResult.CellIndices.IsEmpty()
 					? StartIndex
 					: SearchResult.CellIndices.Last();
-				const FGridCellCoord& PartialEndCoord = Snapshot->Cells[PartialEndIndex].Id.Coord;
+				const FGridCellCoord& PartialEndCoord = Snapshot.Cells[PartialEndIndex].Id.Coord;
 				GRIDWORLD_LOG_WARNING(
 					"Controller '%s' received a partial %s GridWorld path after reaching the Max Search States limit (%d). Goal=(%d,%d,%d), partial end=(%d,%d,%d). Increase Max Search States on the assigned Grid Navigation Query Filter or disable Accept Partial Path.",
 					*GetNameSafe(Controller),
@@ -1520,7 +2068,7 @@ FPathFindingResult AGridNavigationData::FindPath(const FNavAgentProperties& Agen
 		}
 		else
 		{
-			Self->SetDebugPath(GridPath->GetPathPoints());
+			this->SetDebugPath(GridPath->GetPathPoints());
 		}
 	}
 	return Result;

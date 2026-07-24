@@ -1,0 +1,18 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Gameplay Actions",
+	"Description": "Deterministic, data-driven gameplay action scheduling with Blueprint support.",
+	"Category": "Gameplay",
+	"CreatedBy": "Paradox",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "GameplayActions",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	]
+}

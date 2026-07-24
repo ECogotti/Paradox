@@ -112,7 +112,14 @@ enum class EGridGoalContentionPolicy : uint8
 	/** Move first, then repeatedly redirect if the reached goal is occupied. */
 	RedirectOnCompletion UMETA(DisplayName = "Redirect on Completion"),
 	/** Atomically claim a separated goal before movement begins. */
-	ReserveBeforeMove UMETA(DisplayName = "Reserve Before Move")
+	ReserveBeforeMove UMETA(DisplayName = "Reserve Before Move"),
+	/** Atomically reject the request when its exact destination belongs to another agent. */
+	RejectOccupied UMETA(DisplayName = "Reject Occupied"),
+	/**
+	 * Build the route to the requested destination, but when that destination is occupied,
+	 * atomically stop at the immediately preceding cell in that same route.
+	 */
+	StopBeforeOccupied UMETA(DisplayName = "Stop Before Occupied")
 };
 
 /** Stable integer address of a cell inside one grid. */

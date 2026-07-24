@@ -286,7 +286,9 @@ bool FGridTrafficReservationManager::CanClaimGoal(
 	}
 
 	if (const FGoalClaim* ExistingClaim = GoalClaims.Find(Request.GoalCell.CellId);
-		ExistingClaim != nullptr && ExistingClaim->Claimant.Get() != Request.Claimant.Get())
+		ExistingClaim != nullptr
+			&& ExistingClaim->Claimant.Get() != Request.Claimant.Get()
+			&& ExistingClaim->OwnerId != Request.OwnerId)
 	{
 		if (OutBlockingOwnerId != nullptr)
 		{
