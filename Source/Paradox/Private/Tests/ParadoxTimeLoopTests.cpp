@@ -1048,7 +1048,7 @@ bool FParadoxTemporalRelationAssetTest::RunTest(const FString& Parameters)
 	UClass* TimeLoopGameModeClass = LoadClass<AParadoxGameMode>(
 		nullptr,
 		TEXT(
-			"/Game/TopDown/Blueprints/BP_TimeLoopGameMode."
+			"/Game/Logic/BP_TimeLoopGameMode."
 			"BP_TimeLoopGameMode_C"));
 	const AParadoxGameMode* TimeLoopGameModeDefaults =
 		TimeLoopGameModeClass
@@ -1071,7 +1071,7 @@ bool FParadoxTemporalRelationAssetTest::RunTest(const FString& Parameters)
 					.ToString(),
 				FString(
 					TEXT(
-						"/Game/TopDown/Data/DA_ParadoxTimeLoopRelations."
+						"/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations."
 						"DA_ParadoxTimeLoopRelations")));
 		}
 	}
@@ -1079,7 +1079,7 @@ bool FParadoxTemporalRelationAssetTest::RunTest(const FString& Parameters)
 	UEntityRelationPolicySet* PolicySet = LoadObject<UEntityRelationPolicySet>(
 		nullptr,
 		TEXT(
-			"/Game/TopDown/Data/DA_ParadoxTimeLoopRelations."
+			"/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations."
 			"DA_ParadoxTimeLoopRelations"));
 	if (!TestNotNull(TEXT("Time-loop relation Policy Set loads"), PolicySet))
 	{

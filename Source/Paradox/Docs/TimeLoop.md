@@ -196,7 +196,7 @@ Overlap state is deduplicated per Observer Actor/Target Actor while retaining th
 overlapping target primitives. Collision rebuilds or multiple target components therefore do not
 produce duplicate candidates for one authorized session.
 
-`/Game/TopDown/Data/DA_ParadoxTimeLoopRelations` is the per-world
+`/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations` is the per-world
 `UEntityRelationPolicySet`. Its `UParadoxTemporalOrderingPolicy` evaluates the
 `VisualPerception` domain and is deliberately non-cacheable:
 
@@ -326,7 +326,7 @@ second World State participant in `BP_CloneCharacter`.
   visualization, not the plugin's trace-derived events. Temporal authority requires actual
   procedural-mesh overlap during `ActiveRun`.
 - `RelationQueryFailed`: verify that
-  `/Game/TopDown/Data/DA_ParadoxTimeLoopRelations` loads, validates, contains
+  `/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations` loads, validates, contains
   `UParadoxTemporalOrderingPolicy`, and both actors have registered
   `UEntityIdentityComponent` instances.
 - Repeated physical primitives for one target should raise the deduplicated component count, not

@@ -42,7 +42,7 @@ UParadoxTimeLoopComponent::UParadoxTimeLoopComponent()
 	CloneControllerClass = AParadoxCloneController::StaticClass();
 	TemporalRelationPolicySet = TSoftObjectPtr<UEntityRelationPolicySet>(
 		FSoftObjectPath(
-			TEXT("/Game/TopDown/Data/DA_ParadoxTimeLoopRelations.DA_ParadoxTimeLoopRelations")));
+			TEXT("/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations.DA_ParadoxTimeLoopRelations")));
 }
 
 FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
