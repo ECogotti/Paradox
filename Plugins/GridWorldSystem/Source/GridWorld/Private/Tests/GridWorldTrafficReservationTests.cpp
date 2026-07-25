@@ -297,6 +297,12 @@ bool FGridTrafficRegistryTest::RunTest(const FString& Parameters)
 	bool bClaimStateChanged = false;
 	TestTrue(TEXT("A separated goal can be claimed atomically"), Manager.TryClaimGoal(FirstClaim, bClaimStateChanged));
 	TestTrue(TEXT("First goal claim publishes a state change"), bClaimStateChanged);
+	TestFalse(
+		TEXT("A different request object owned by the same Pawn does not contest its goal"),
+		Manager.IsGoalClaimedByOther(Cell1.CellId, SecondPawn, FirstOwner));
+	TestTrue(
+		TEXT("A different traffic owner still sees the claimed goal as contested"),
+		Manager.IsGoalClaimedByOther(Cell1.CellId, SecondPawn, SecondOwner));
 
 	FGridTrafficGoalClaimRequest AdjacentClaim = FirstClaim;
 	AdjacentClaim.OwnerId = SecondOwner;

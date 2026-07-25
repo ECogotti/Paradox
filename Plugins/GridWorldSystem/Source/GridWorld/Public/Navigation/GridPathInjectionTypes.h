@@ -106,6 +106,14 @@ struct GRIDWORLD_API FGridInjectedPath
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Injection")
 	int64 TrafficReservationRevision = 0;
 
+	/**
+	 * Allows authoritative validation to ignore only transient conflicts with dynamic agents.
+	 * Static topology, traversal, filter, link, and ordinary occupancy rules remain enforced.
+	 * The materialized path still retains its configured dynamic-agent policy.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Injection")
+	bool bAllowDynamicAgentConflictsDuringValidation = false;
+
 	/** Whether later recalculation may return a partial path. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Injection")
 	bool bAllowPartialPath = true;

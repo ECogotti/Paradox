@@ -790,6 +790,15 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 	{
 		Cells.Add(Cell.Id);
 	}
+	UClass* BalancedFilterClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/GridWorldSystem/AI/BP_GridQueryFilter_Balanced.BP_GridQueryFilter_Balanced_C"));
+	if (!TestNotNull(
+		TEXT("Balanced GridWorld filter loads for clone replay"),
+		BalancedFilterClass))
+	{
+		return false;
+	}
 
 	FGridInjectedPath RecordedPath;
 	const FGridInjectedPathValidationResult SourceStamp =
@@ -797,7 +806,7 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			SourceController,
 			Cells,
 			Cells.Last(),
-			UGridNavigationQueryFilter::StaticClass(),
+			BalancedFilterClass,
 			false,
 			false,
 			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
@@ -840,6 +849,13 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 
 	UParadoxCloneReplayExecutionStrategy* Strategy =
 		NewObject<UParadoxCloneReplayExecutionStrategy>(TestWorld.World);
+	TestTrue(
+		TEXT("Clone replay goal-contention override is enabled by default"),
+		Strategy->bOverrideGoalContentionPolicy);
+	TestEqual(
+		TEXT("Clone replay defaults to redirecting at an occupied destination"),
+		Strategy->GoalContentionPolicyOverride,
+		EGridGoalContentionPolicy::RedirectOnCompletion);
 	UGameplayActionComponent* ActionComponent =
 		RecipientCharacter->GetGameplayActionComponent();
 	TestEqual(
@@ -884,6 +900,9 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 	if (TestNotNull(TEXT("Runtime clone request contains an exact path"), RuntimePath))
 	{
 		TestTrue(
+			TEXT("Default clone replay stamps dynamic-agent tolerance before movement begins"),
+			RuntimePath->bAllowDynamicAgentConflictsDuringValidation);
+		TestTrue(
 			TEXT("Runtime path validates for the recipient clone"),
 			GridWorld->ValidateInjectedPath(
 				RecipientController,
@@ -897,6 +916,13 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			RuntimePath->Cells,
 			RecordedPath.Cells);
 	}
+	TestEqual(
+		TEXT("Clone replay overrides goal contention in the runtime request"),
+		AcceptedEvent->GetParameters()
+			.GetValueEnum<EGridGoalContentionPolicy>(
+				GridMoveToCellActionParameters::GoalContentionPolicy)
+			.GetValue(),
+		EGridGoalContentionPolicy::RedirectOnCompletion);
 
 	const TValueOrError<FStructView, EPropertyBagResult> OriginalRequestPathValue =
 		Creation.Request.GetParameters().GetValueStruct(
@@ -918,6 +944,129 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			TEXT("Clone submission preserves the source filter signature"),
 			OriginalRequestPath->FilterSignature,
 			RecordedPath.FilterSignature);
+	}
+	TestEqual(
+		TEXT("Clone submission does not mutate the source goal-contention policy"),
+		Creation.Request.GetParameters()
+			.GetValueEnum<EGridGoalContentionPolicy>(
+				GridMoveToCellActionParameters::GoalContentionPolicy)
+			.GetValue(),
+		EGridGoalContentionPolicy::Ignore);
+
+	Strategy->bOverrideGoalContentionPolicy = false;
+	const FGameplayActionSubmissionResult PreservedSubmission =
+		Strategy->SubmitPreparedRequest(ActionComponent, Creation.Request);
+	if (!TestTrue(
+		TEXT("Clone movement is accepted when the override is disabled"),
+		PreservedSubmission.IsAccepted()))
+	{
+		AddError(PreservedSubmission.DiagnosticMessage);
+		return false;
+	}
+	const FGameplayActionEvent* PreservedAcceptedEvent =
+		EventObserver->ObservedEvents.FindByPredicate(
+			[&PreservedSubmission](const FGameplayActionEvent& Event)
+			{
+				return Event.Handle == PreservedSubmission.Handle
+					&& Event.EventType == EGameplayActionEventType::Accepted;
+			});
+	if (TestNotNull(
+		TEXT("Disabled override still emits an accepted snapshot"),
+		PreservedAcceptedEvent))
+	{
+		TestEqual(
+			TEXT("Disabled override preserves the recorded goal-contention policy"),
+			PreservedAcceptedEvent->GetParameters()
+				.GetValueEnum<EGridGoalContentionPolicy>(
+					GridMoveToCellActionParameters::GoalContentionPolicy)
+				.GetValue(),
+			EGridGoalContentionPolicy::Ignore);
+	}
+
+	FGridTrafficGoalClaimRequest BlockingGoalClaim;
+	BlockingGoalClaim.OwnerId = FGuid::NewGuid();
+	BlockingGoalClaim.Claimant = SourceCharacter;
+	BlockingGoalClaim.Pawn = SourceCharacter;
+	BlockingGoalClaim.GoalCell =
+		{Cells.Last(), Snapshot->Cells.Last().WorldCenter};
+	BlockingGoalClaim.AgentRadius = 42.0f;
+	BlockingGoalClaim.AgentHeight = 192.0f;
+	BlockingGoalClaim.AdditionalSeparation = 5.0f;
+	if (!TestTrue(
+		TEXT("Another replay agent claims the recorded destination"),
+		NavigationData->TryClaimTrafficGoal(BlockingGoalClaim)))
+	{
+		return false;
+	}
+
+	FGridInjectedPath StrictConflictingPath;
+	const FGridInjectedPathValidationResult StrictConflict =
+		GridWorld->CreateExactInjectedPath(
+			RecipientController,
+			Cells,
+			Cells.Last(),
+			BalancedFilterClass,
+			false,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			StrictConflictingPath);
+	TestFalse(
+		TEXT("Normal exact re-stamp still rejects another agent's claim"),
+		StrictConflict.bIsValid);
+	TestEqual(
+		TEXT("Normal re-stamp exposes the transient block"),
+		StrictConflict.FailureReason,
+		EGridInjectedPathFailureReason::BlockedCell);
+
+	Strategy->bOverrideGoalContentionPolicy = true;
+	const FGameplayActionSubmissionResult ConflictingSubmission =
+		Strategy->SubmitPreparedRequest(ActionComponent, Creation.Request);
+	if (!TestTrue(
+		TEXT("Clone replay accepts the exact recorded cells across a transient agent conflict"),
+		ConflictingSubmission.IsAccepted()))
+	{
+		AddError(ConflictingSubmission.DiagnosticMessage);
+		return false;
+	}
+	const FGameplayActionEvent* ConflictingAcceptedEvent =
+		EventObserver->ObservedEvents.FindByPredicate(
+			[&ConflictingSubmission](const FGameplayActionEvent& Event)
+			{
+				return Event.Handle == ConflictingSubmission.Handle
+					&& Event.EventType == EGameplayActionEventType::Accepted;
+			});
+	if (TestNotNull(
+		TEXT("Dynamic-conflict replay emits an accepted snapshot"),
+		ConflictingAcceptedEvent))
+	{
+		const TValueOrError<FStructView, EPropertyBagResult>
+			ConflictingRuntimePathValue =
+				ConflictingAcceptedEvent->GetParameters().GetValueStruct(
+					GridMoveToCellActionParameters::InjectedPath,
+					FGridInjectedPath::StaticStruct());
+		const FGridInjectedPath* ConflictingRuntimePath =
+			ConflictingRuntimePathValue.HasValue()
+				? ConflictingRuntimePathValue.GetValue()
+					.GetPtr<FGridInjectedPath>()
+				: nullptr;
+		if (TestNotNull(
+			TEXT("Dynamic-conflict replay keeps an exact injected path"),
+			ConflictingRuntimePath))
+		{
+			TestEqual(
+				TEXT("Dynamic-conflict replay preserves every recorded cell"),
+				ConflictingRuntimePath->Cells,
+				RecordedPath.Cells);
+			TestTrue(
+				TEXT("Clone runtime path records dynamic-agent validation tolerance"),
+				ConflictingRuntimePath
+					->bAllowDynamicAgentConflictsDuringValidation);
+			TestTrue(
+				TEXT("Clone runtime path remains valid while the claim exists"),
+				GridWorld->ValidateInjectedPath(
+					RecipientController,
+					*ConflictingRuntimePath).bIsValid);
+		}
 	}
 	return true;
 }

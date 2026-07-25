@@ -367,6 +367,22 @@ struct GRIDWORLD_API FGridChangeSet
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
 	TArray<FGridCellId> ChangedCells;
 
+	/** Cells whose walkability, traversal cost, area, flags, or channels changed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
+	TArray<FGridCellId> ChangedTraversalCells;
+
+	/** Cells whose blocking occupancy or reservation-owner state changed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
+	TArray<FGridCellId> ChangedBlockingOccupancyCells;
+
+	/** Cells whose occupancy traversal cost changed. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
+	TArray<FGridCellId> ChangedOccupancyCostCells;
+
+	/** Cells whose runtime occupancy identities changed without necessarily changing traversal. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
+	TArray<FGridCellId> ChangedOccupancyOwnerCells;
+
 	/** Links whose enabled or cost state changed. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World")
 	TArray<FGuid> ChangedLinks;

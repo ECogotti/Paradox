@@ -6,6 +6,8 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameplayActionTags.h"
+#include "Navigation/GridNavigationData.h"
+#include "Paradox.h"
 #include "ParadoxCloneReplayExecutionStrategyPrivate.h"
 #include "Subsystems/GridWorldSubsystem.h"
 #include "UObject/UnrealType.h"
@@ -36,6 +38,24 @@ namespace UE::Paradox::CloneReplay::Private
 			Property,
 			Property
 				? Property->ContainerPtrToValuePtr<void>(&Overrides)
+				: nullptr);
+	}
+
+	EGameplayActionParameterAccessResult SetGoalContentionPolicy(
+		FGameplayActionRequest& Request,
+		const UParadoxCloneReplayExecutionStrategy& Strategy)
+	{
+		const FProperty* Property = FindFProperty<FProperty>(
+			UParadoxCloneReplayExecutionStrategy::StaticClass(),
+			GET_MEMBER_NAME_CHECKED(
+				UParadoxCloneReplayExecutionStrategy,
+				GoalContentionPolicyOverride));
+		return UGameplayActionBlueprintLibrary::SetRequestParameterFromProperty(
+			Request,
+			GridMoveToCellActionParameters::GoalContentionPolicy,
+			Property,
+			Property
+				? Property->ContainerPtrToValuePtr<void>(&Strategy)
 				: nullptr);
 	}
 }
@@ -100,8 +120,36 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 	}
 
 	FParadoxCloneReplayGridMoveOverrides Overrides;
-	const FGridInjectedPathValidationResult RestampResult =
-		GridWorld->CreateExactInjectedPath(
+	const bool bPreserveExactPathAcrossDynamicAgents =
+		bOverrideGoalContentionPolicy
+		&& GoalContentionPolicyOverride
+			== EGridGoalContentionPolicy::RedirectOnCompletion;
+	FGridInjectedPathValidationResult RestampResult;
+	if (bPreserveExactPathAcrossDynamicAgents)
+	{
+		AGridNavigationData* NavigationData = GridWorld->GetNavigationData();
+		if (NavigationData == nullptr)
+		{
+			return UE::Paradox::CloneReplay::Private::RejectRequest(
+				TEXT("Clone replay cannot re-stamp an exact GridWorld path without active navigation data."));
+		}
+		RestampResult = NavigationData->CreateExactInjectedPath(
+			CloneController,
+			CloneController->GetNavAgentPropertiesRef(),
+			RecordedPath->FilterClass,
+			CloneController->GetNavAgentLocation(),
+			RecordedPath->Cells,
+			RecordedPath->OriginalGoalCell,
+			RecordedPath->bAllowPartialPath,
+			RecordedPath->bIsPartial,
+			RecordedPath->InvalidationPolicy,
+			RecordedPath->SourcePreviewId,
+			Overrides.InjectedPath,
+			true);
+	}
+	else
+	{
+		RestampResult = GridWorld->CreateExactInjectedPath(
 			CloneController,
 			RecordedPath->Cells,
 			RecordedPath->OriginalGoalCell,
@@ -110,6 +158,7 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 			RecordedPath->bIsPartial,
 			RecordedPath->InvalidationPolicy,
 			Overrides.InjectedPath);
+	}
 	if (!RestampResult.bIsValid)
 	{
 		return UE::Paradox::CloneReplay::Private::RejectRequest(
@@ -125,11 +174,19 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 
 	FGameplayActionRequest AdaptedRequest = Request;
 	if (UE::Paradox::CloneReplay::Private::SetInjectedPath(
-			AdaptedRequest,
-			Overrides) != EGameplayActionParameterAccessResult::Success)
+		AdaptedRequest,
+		Overrides) != EGameplayActionParameterAccessResult::Success)
 	{
 		return UE::Paradox::CloneReplay::Private::RejectRequest(
 			TEXT("Clone replay could not write the re-stamped GridWorld path into its runtime request copy."));
+	}
+	if (bOverrideGoalContentionPolicy
+		&& UE::Paradox::CloneReplay::Private::SetGoalContentionPolicy(
+			AdaptedRequest,
+			*this) != EGameplayActionParameterAccessResult::Success)
+	{
+		return UE::Paradox::CloneReplay::Private::RejectRequest(
+			TEXT("Clone replay could not override the GridWorld goal-contention policy in its runtime request copy."));
 	}
 
 	return Super::SubmitPreparedRequest(ActionComponent, AdaptedRequest);

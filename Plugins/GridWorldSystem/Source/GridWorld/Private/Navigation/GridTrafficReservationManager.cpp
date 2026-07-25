@@ -345,11 +345,14 @@ bool FGridTrafficReservationManager::TryClaimGoal(
 
 bool FGridTrafficReservationManager::IsGoalClaimedByOther(
 	const FGridCellId& CellId,
-	const UObject* Claimant) const
+	const UObject* Claimant,
+	const FGuid& OwnerId) const
 {
 	check(IsInGameThread());
 	const FGoalClaim* Claim = GoalClaims.Find(CellId);
-	return Claim != nullptr && Claim->Claimant.Get() != Claimant;
+	return Claim != nullptr
+		&& Claim->Claimant.Get() != Claimant
+		&& (!OwnerId.IsValid() || Claim->OwnerId != OwnerId);
 }
 
 bool FGridTrafficReservationManager::ReleaseGoalClaims(const UObject* Claimant)

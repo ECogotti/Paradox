@@ -181,6 +181,12 @@ struct GRIDWORLD_API FGridNavigationPath : public FNavigationPath
 	/** Additional exact-path behavior layered over the normal invalidation pipeline. */
 	EGridInjectedPathInvalidationPolicy InjectedInvalidationPolicy =
 		EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
+	/**
+	 * Keeps a replay exact path stable across transient live-agent conflicts.
+	 * Reserved Corridor still yields, and a persistent final-cell conflict is reported
+	 * as Blocked from the predecessor so the owning goal-contention policy can redirect.
+	 */
+	bool bAllowDynamicAgentConflictsDuringValidation = false;
 
 	static const FNavPathType Type;
 

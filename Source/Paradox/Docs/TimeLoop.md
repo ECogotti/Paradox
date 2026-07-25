@@ -160,6 +160,24 @@ immediately before submission. The consolidated `UIntentReplayTrack` is never mo
 traversal, start-cell, and destination-contention validation still run normally against the current
 world.
 
+The native clone strategy enables `bOverrideGoalContentionPolicy` by default and applies
+`RedirectOnCompletion` only to the runtime request copy. This lets a clone preserve the recorded
+route while `ReservedCorridor` coordinates moving agents, then claim a nearby free destination if
+the recorded final cell is occupied. A Blueprint subclass can disable the override to preserve the
+recorded player policy, or select another `EGridGoalContentionPolicy`; neither option mutates the
+immutable replay track.
+
+When that default override is active, the strategy stamps the replay `ExactInjectedPath` with
+transient dynamic-conflict tolerance from the beginning. This is necessary even when the route is
+free at submission time: later occupancy publications from moving clones must not invalidate the
+recorded sequence and force repeated recalculation. The strategy does not replace the request with
+destination pathfinding and does not remove or reorder recorded cells. Static navigation
+validation remains strict, while the materialized path keeps `ReservedCorridor`: the clone
+therefore follows the original sequence and waits at temporary intermediate conflicts instead of
+repathing away from it. If the final cell is still reserved when the clone reaches its predecessor,
+the follower hands the conflict to `RedirectOnCompletion`; if the other clone has moved away first,
+the original destination completes normally.
+
 The loop also owns each temporal avatar's GridWorld presence. Deactivating the player or destroying
 a runtime clone releases its traffic corridor/parking record and disables its non-reservation
 occupancy. Player activation teleports first and then republishes occupancy at the selected Chrono

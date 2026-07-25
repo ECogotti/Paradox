@@ -168,6 +168,19 @@ namespace UE::GridWorld::Private
 		return Filter.IsValid() ? static_cast<const FGridNavigationQueryFilterImpl*>(Filter->GetImplementation()) : nullptr;
 	}
 
+	FGridAStarQuery MakeInjectedPathValidationQuery(
+		const FGridAStarQuery& Query,
+		bool bAllowDynamicAgentConflictsDuringValidation)
+	{
+		FGridAStarQuery ValidationQuery = Query;
+		if (bAllowDynamicAgentConflictsDuringValidation)
+		{
+			ValidationQuery.DynamicAgentPolicy = EGridDynamicAgentPolicy::Ignore;
+			ValidationQuery.TrafficReservations.Reset();
+		}
+		return ValidationQuery;
+	}
+
 	bool PassesFilter(const FGridCellData& Cell, const FSharedConstNavQueryFilter& Filter)
 	{
 		if (!Cell.bWalkable)
@@ -312,6 +325,10 @@ namespace UE::GridWorld::Private
 		AddSnapshotState(NewSnapshot);
 		ChangeSet.ChangedCells = ChangedCellSet.Array();
 		ChangeSet.ChangedCells.Sort(LessCellId);
+		ChangeSet.ChangedTraversalCells = ChangeSet.ChangedCells;
+		ChangeSet.ChangedBlockingOccupancyCells = ChangeSet.ChangedCells;
+		ChangeSet.ChangedOccupancyCostCells = ChangeSet.ChangedCells;
+		ChangeSet.ChangedOccupancyOwnerCells = ChangeSet.ChangedCells;
 		ChangeSet.ChangedLinks = ChangedLinkSet.Array();
 		ChangeSet.ChangedLinks.Sort();
 		return ChangeSet;
@@ -1249,11 +1266,12 @@ bool AGridNavigationData::TryClaimTrafficGoal(const FGridTrafficGoalClaimRequest
 
 bool AGridNavigationData::IsTrafficGoalClaimedByOther(
 	const FGridCellId& CellId,
-	const UObject* Claimant) const
+	const UObject* Claimant,
+	const FGuid& OwnerId) const
 {
 	return IsInGameThread()
 		&& TrafficReservationManager.IsValid()
-		&& TrafficReservationManager->IsGoalClaimedByOther(CellId, Claimant);
+		&& TrafficReservationManager->IsGoalClaimedByOther(CellId, Claimant, OwnerId);
 }
 
 void AGridNavigationData::ReleaseTrafficGoalClaims(const UObject* Claimant)
@@ -1390,7 +1408,8 @@ FGridInjectedPathValidationResult AGridNavigationData::CreateExactInjectedPath(
 	bool bIsPartial,
 	EGridInjectedPathInvalidationPolicy InvalidationPolicy,
 	const FGuid& SourcePreviewId,
-	FGridInjectedPath& OutInjectedPath) const
+	FGridInjectedPath& OutInjectedPath,
+	bool bAllowDynamicAgentConflictsDuringValidation) const
 {
 	OutInjectedPath = FGridInjectedPath();
 	FGridInjectedPathValidationResult Output;
@@ -1480,7 +1499,15 @@ FGridInjectedPathValidationResult AGridNavigationData::CreateExactInjectedPath(
 	}
 
 	const FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, StartIndex, *GoalIndexPtr);
-	const FGridAStarPathValidationResult Validation = FGridAStar().ValidatePath(*Snapshot, AStarQuery, CellIndices, bIsPartial);
+	const FGridAStarQuery ValidationQuery =
+		UE::GridWorld::Private::MakeInjectedPathValidationQuery(
+			AStarQuery,
+			bAllowDynamicAgentConflictsDuringValidation);
+	const FGridAStarPathValidationResult Validation = FGridAStar().ValidatePath(
+		*Snapshot,
+		ValidationQuery,
+		CellIndices,
+		bIsPartial);
 	if (!Validation.IsValid())
 	{
 		Output.FailureReason = Validation.FailureReason;
@@ -1508,6 +1535,8 @@ FGridInjectedPathValidationResult AGridNavigationData::CreateExactInjectedPath(
 	OutInjectedPath.TrafficReservationRevision = AStarQuery.TrafficReservations.IsValid()
 		? AStarQuery.TrafficReservations->Revision
 		: 0;
+	OutInjectedPath.bAllowDynamicAgentConflictsDuringValidation =
+		bAllowDynamicAgentConflictsDuringValidation;
 	OutInjectedPath.bAllowPartialPath = bAllowPartialPath;
 	OutInjectedPath.bIsPartial = bIsPartial;
 	OutInjectedPath.InvalidationPolicy = InvalidationPolicy;
@@ -1592,14 +1621,19 @@ FGridInjectedPathValidationResult AGridNavigationData::ValidateInjectedPath(
 		return Fail(EGridInjectedPathFailureReason::FilterMismatch, TEXT("The current initialized query filter differs from the injected path filter."));
 	}
 	const FGridNavigationQueryFilterImpl* GridFilter = UE::GridWorld::Private::GetGridFilter(QueryFilter);
-	const bool bUsesOccupancy = GridFilter != nullptr
-		&& (GridFilter->GetOccupancyPolicy() != EGridOccupancyPolicy::Ignore
-			|| GridFilter->GetDynamicAgentPolicy() != EGridDynamicAgentPolicy::Ignore);
+	const bool bUsesBlockingOccupancy = GridFilter != nullptr
+		&& GridFilter->GetOccupancyPolicy() != EGridOccupancyPolicy::Ignore;
+	const bool bUsesDynamicAgents = GridFilter != nullptr
+		&& GridFilter->GetDynamicAgentPolicy() != EGridDynamicAgentPolicy::Ignore;
+	const bool bUsesOccupancy = !InjectedPath.bAllowDynamicAgentConflictsDuringValidation
+		&& (bUsesBlockingOccupancy || bUsesDynamicAgents);
 	if (bUsesOccupancy && InjectedPath.Revisions.Occupancy != Snapshot->Revisions.Occupancy)
 	{
 		return Fail(EGridInjectedPathFailureReason::StaleOccupancyState, TEXT("Relevant GridWorld occupancy changed after the injected path was created."));
 	}
-	if (GridFilter != nullptr && GridFilter->GetDynamicAgentPolicy() == EGridDynamicAgentPolicy::ReservedCorridor)
+	if (!InjectedPath.bAllowDynamicAgentConflictsDuringValidation
+		&& GridFilter != nullptr
+		&& GridFilter->GetDynamicAgentPolicy() == EGridDynamicAgentPolicy::ReservedCorridor)
 	{
 		const FGridTrafficReservationSnapshotPtr TrafficSnapshot = GetTrafficReservationSnapshot();
 		const int64 CurrentTrafficRevision = TrafficSnapshot.IsValid() ? TrafficSnapshot->Revision : 0;
@@ -1634,9 +1668,13 @@ FGridInjectedPathValidationResult AGridNavigationData::ValidateInjectedPath(
 	}
 
 	const FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, StartIndex, *GoalIndexPtr);
+	const FGridAStarQuery ValidationQuery =
+		UE::GridWorld::Private::MakeInjectedPathValidationQuery(
+			AStarQuery,
+			InjectedPath.bAllowDynamicAgentConflictsDuringValidation);
 	const FGridAStarPathValidationResult Validation = FGridAStar().ValidatePath(
 		*Snapshot,
-		AStarQuery,
+		ValidationQuery,
 		CellIndices,
 		InjectedPath.bIsPartial);
 	if (!Validation.IsValid())
@@ -1708,6 +1746,10 @@ FPathFindingResult AGridNavigationData::MaterializeInjectedPath(
 		}
 	}
 	FGridAStarQuery AStarQuery = BuildAStarQuery(AgentProperties, Query, *StartIndexPtr, *GoalIndexPtr);
+	const FGridAStarQuery ValidationQuery =
+		UE::GridWorld::Private::MakeInjectedPathValidationQuery(
+			AStarQuery,
+			InjectedPath.bAllowDynamicAgentConflictsDuringValidation);
 	TArray<int32, TInlineAllocator<64>> CellIndices;
 	CellIndices.Reserve(InjectedPath.Cells.Num());
 	for (const FGridCellId& CellId : InjectedPath.Cells)
@@ -1716,7 +1758,7 @@ FPathFindingResult AGridNavigationData::MaterializeInjectedPath(
 	}
 	FGridAStarPathValidationResult PathValidation = FGridAStar().ValidatePath(
 		*Snapshot,
-		AStarQuery,
+		ValidationQuery,
 		CellIndices,
 		InjectedPath.bIsPartial);
 	if (!PathValidation.IsValid())
@@ -1740,6 +1782,8 @@ FPathFindingResult AGridNavigationData::MaterializeInjectedPath(
 	{
 		GridPath->PathInstanceId = InjectedPath.PathInstanceId;
 		GridPath->ParentPathInstanceId = FGuid();
+		GridPath->bAllowDynamicAgentConflictsDuringValidation =
+			InjectedPath.bAllowDynamicAgentConflictsDuringValidation;
 	}
 	return Result;
 }
@@ -1750,7 +1794,9 @@ void AGridNavigationData::InvalidateAffectedPaths(const FGridChangeSet& ChangeSe
 	{
 		return;
 	}
-	TSet<FGridCellId> ChangedCells(ChangeSet.ChangedCells);
+	TSet<FGridCellId> ChangedTraversalCells(ChangeSet.ChangedTraversalCells);
+	TSet<FGridCellId> ChangedBlockingOccupancyCells(ChangeSet.ChangedBlockingOccupancyCells);
+	TSet<FGridCellId> ChangedOccupancyCostCells(ChangeSet.ChangedOccupancyCostCells);
 	TSet<FGuid> ChangedLinks(ChangeSet.ChangedLinks);
 	const bool bTraversalChanged = ChangeSet.PreviousRevisions.Traversal != ChangeSet.NewRevisions.Traversal;
 	const bool bOccupancyChanged = ChangeSet.PreviousRevisions.Occupancy != ChangeSet.NewRevisions.Occupancy;
@@ -1768,17 +1814,33 @@ void AGridNavigationData::InvalidateAffectedPaths(const FGridChangeSet& ChangeSe
 		{
 			continue;
 		}
-		const bool bCellChanged = GridPath->CellPath.ContainsByPredicate([&ChangedCells](const FGridCellId& CellId)
-		{
-			return ChangedCells.Contains(CellId);
-		});
+		const bool bTraversalCellChanged = GridPath->CellPath.ContainsByPredicate(
+			[&ChangedTraversalCells](const FGridCellId& CellId)
+			{
+				return ChangedTraversalCells.Contains(CellId);
+			});
+		const bool bBlockingOccupancyCellChanged = GridPath->CellPath.ContainsByPredicate(
+			[&ChangedBlockingOccupancyCells](const FGridCellId& CellId)
+			{
+				return ChangedBlockingOccupancyCells.Contains(CellId);
+			});
+		const bool bOccupancyCostCellChanged = GridPath->CellPath.ContainsByPredicate(
+			[&ChangedOccupancyCostCells](const FGridCellId& CellId)
+			{
+				return ChangedOccupancyCostCells.Contains(CellId);
+			});
+		const bool bRelevantOccupancyChange = bOccupancyChanged
+			&& ((GridPath->OccupancyPolicy == EGridOccupancyPolicy::Block
+					&& bBlockingOccupancyCellChanged)
+				|| (GridPath->OccupancyPolicy == EGridOccupancyPolicy::AddCost
+					&& bOccupancyCostCellChanged));
 		const bool bLinkChanged = GridPath->TraversedLinks.ContainsByPredicate([&ChangedLinks](const FGuid& LinkId)
 		{
 			return ChangedLinks.Contains(LinkId);
 		});
-		const bool bRelevantCellChange = bCellChanged
-			&& (bTraversalChanged || (bOccupancyChanged && GridPath->OccupancyPolicy != EGridOccupancyPolicy::Ignore));
-		if (bRelevantCellChange || bLinkChanged)
+		if ((bTraversalChanged && bTraversalCellChanged)
+			|| bRelevantOccupancyChange
+			|| bLinkChanged)
 		{
 			GridPath->Invalidate();
 		}

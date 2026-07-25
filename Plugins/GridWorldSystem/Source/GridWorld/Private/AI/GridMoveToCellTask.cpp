@@ -588,7 +588,15 @@ bool UGridMoveToCellTask::IsProjectedGoalContested() const
 	}
 	UWorld& World = *OwnerController->GetWorld();
 	AGridNavigationData* GridNavigationData = ResolveNavigationData();
-	if (GridNavigationData != nullptr && GridNavigationData->IsTrafficGoalClaimedByOther(ProjectedGoalCell, this))
+	const APawn* Pawn = OwnerController->GetPawn();
+	const UGridNavigationOccupancyComponent* OwnOccupancy = PawnOccupancyComponent.Get();
+	if (OwnOccupancy == nullptr && IsValid(Pawn))
+	{
+		OwnOccupancy = UGridNavigationOccupancyComponent::FindActiveAgentOccupancy(*Pawn);
+	}
+	const FGuid OwnOccupantId = OwnOccupancy != nullptr ? OwnOccupancy->OccupantId : FGuid();
+	if (GridNavigationData != nullptr
+		&& GridNavigationData->IsTrafficGoalClaimedByOther(ProjectedGoalCell, this, OwnOccupantId))
 	{
 		return true;
 	}
@@ -600,7 +608,6 @@ bool UGridMoveToCellTask::IsProjectedGoalContested() const
 		return false;
 	}
 
-	const FGuid OwnOccupantId = PawnOccupancyComponent.IsValid() ? PawnOccupancyComponent->OccupantId : FGuid();
 	FGuid WinningOccupantId;
 	double WinningDistanceSquared = TNumericLimits<double>::Max();
 	for (TActorIterator<AActor> It(&World); It; ++It)
@@ -1024,6 +1031,11 @@ void UGridMoveToCellTask::PerformMove()
 
 void UGridMoveToCellTask::PerformExactMove()
 {
+	if (GoalContentionPolicy != EGridGoalContentionPolicy::Ignore)
+	{
+		EnsurePawnOccupancy();
+	}
+
 	AGridNavigationData* GridNavigationData = ResolveNavigationData();
 	UPathFollowingComponent* PathFollowing = IsValid(OwnerController)
 		? OwnerController->GetPathFollowingComponent()
@@ -1302,6 +1314,12 @@ bool UGridMoveToCellTask::BuildStopBeforeOccupiedPath(
 void UGridMoveToCellTask::RecalculateInjectedPathToOriginalGoal(const FVector& GoalLocation)
 {
 	MoveRequest.UpdateGoalLocation(GoalLocation);
+	// Exact validation owns the initial hand-off only. Once a relevant runtime change
+	// requires a repath, subsequent invalidations must use normal destination semantics
+	// from the Pawn's current cell instead of revalidating the recorded first cell.
+	MovePathSource = EGridMovePathSource::Destination;
+	SourceMoveRequest = MoveRequest;
+	SourceGoalLocation = GoalLocation;
 	if (GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied)
 	{
 		EnsurePawnOccupancy();
@@ -1446,7 +1464,18 @@ void UGridMoveToCellTask::OnRequestFinished(FAIRequestID RequestID, const FPathF
 	const bool bBlockedNearDestination = Result.Code == EPathFollowingResult::Blocked
 		&& FVector::Dist2D(OwnerController->GetNavAgentLocation(), ProjectedGoalLocation)
 			<= AgentRadius * 2.0f + AdditionalGoalSeparation + UE_KINDA_SMALL_NUMBER;
-	const bool bMayBeGoalContention = bReachedFullDestination || bBlockedNearDestination;
+	FGridCellId CurrentPawnCell;
+	FVector CurrentPawnCellCenter = FVector::ZeroVector;
+	const bool bBlockedAtExactGoalPredecessor =
+		Result.Code == EPathFollowingResult::Blocked
+		&& MovePathSource == EGridMovePathSource::ExactInjectedPath
+		&& InjectedPath.bAllowDynamicAgentConflictsDuringValidation
+		&& InjectedPath.Cells.Num() >= 2
+		&& ProjectedGoalCell == InjectedPath.Cells.Last()
+		&& ResolveCurrentPawnCell(CurrentPawnCell, CurrentPawnCellCenter)
+		&& CurrentPawnCell == InjectedPath.Cells[InjectedPath.Cells.Num() - 2];
+	const bool bMayBeGoalContention =
+		bReachedFullDestination || bBlockedNearDestination || bBlockedAtExactGoalPredecessor;
 	if (bMayBeGoalContention && IsProjectedGoalContested())
 	{
 		if (GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied

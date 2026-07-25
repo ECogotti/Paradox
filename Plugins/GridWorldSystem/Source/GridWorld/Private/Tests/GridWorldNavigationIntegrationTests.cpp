@@ -1026,6 +1026,114 @@ bool FGridPlayerOccupancyIdentityAndParkingTest::RunTest(const FString& Paramete
 			*ExactResult.DiagnosticMessage));
 	}
 
+	ACharacter* BlockingCharacter = World->SpawnActor<ACharacter>();
+	if (!TestNotNull(TEXT("Dynamic blocker Pawn exists"), BlockingCharacter))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+	FGridTrafficGoalClaimRequest BlockingGoalClaim;
+	BlockingGoalClaim.OwnerId = FGuid::NewGuid();
+	BlockingGoalClaim.Claimant = BlockingCharacter;
+	BlockingGoalClaim.Pawn = BlockingCharacter;
+	BlockingGoalClaim.GoalCell =
+		{Snapshot->Cells[1].Id, Snapshot->Cells[1].WorldCenter};
+	BlockingGoalClaim.AgentRadius = 42.0f;
+	BlockingGoalClaim.AgentHeight = 192.0f;
+	BlockingGoalClaim.AdditionalSeparation = 5.0f;
+	if (!TestTrue(
+		TEXT("Another agent claims the exact path destination"),
+		NavData->TryClaimTrafficGoal(BlockingGoalClaim)))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	FGridInjectedPath StrictConflictingPath;
+	const FGridInjectedPathValidationResult StrictConflict =
+		NavData->CreateExactInjectedPath(
+			Controller,
+			Character->GetNavAgentPropertiesRef(),
+			BalancedFilterClass,
+			Character->GetNavAgentLocation(),
+			ExactCells,
+			ExactCells.Last(),
+			true,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			FGuid::NewGuid(),
+			StrictConflictingPath);
+	TestFalse(
+		TEXT("Strict exact validation rejects another agent's reservation"),
+		StrictConflict.bIsValid);
+	TestEqual(
+		TEXT("Strict dynamic conflict is reported as a blocked cell"),
+		StrictConflict.FailureReason,
+		EGridInjectedPathFailureReason::BlockedCell);
+
+	FGridInjectedPath ReplayPath;
+	const FGridInjectedPathValidationResult ReplayCreation =
+		NavData->CreateExactInjectedPath(
+			Controller,
+			Character->GetNavAgentPropertiesRef(),
+			BalancedFilterClass,
+			Character->GetNavAgentLocation(),
+			ExactCells,
+			ExactCells.Last(),
+			true,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			FGuid::NewGuid(),
+			ReplayPath,
+			true);
+	if (!TestTrue(
+		TEXT("Replay exact validation can preserve cells across a transient agent conflict"),
+		ReplayCreation.bIsValid))
+	{
+		AddError(ReplayCreation.DiagnosticMessage);
+		World->DestroyWorld(false);
+		return false;
+	}
+	TestTrue(
+		TEXT("Replay tolerance is stamped into the authoritative payload"),
+		ReplayPath.bAllowDynamicAgentConflictsDuringValidation);
+	TestTrue(
+		TEXT("Replay payload revalidates while the dynamic claim remains active"),
+		NavData->ValidateInjectedPath(
+			ReplayPath,
+			Controller,
+			Character->GetNavAgentPropertiesRef(),
+			Character->GetNavAgentLocation()).bIsValid);
+	const FPathFindingResult ReplayMaterialized =
+		NavData->MaterializeInjectedPath(
+			ReplayPath,
+			Controller,
+			Character->GetNavAgentPropertiesRef(),
+			Character->GetNavAgentLocation());
+	TestTrue(
+		TEXT("Replay payload materializes despite the current dynamic claim"),
+		ReplayMaterialized.IsSuccessful());
+	const FGridNavigationPath* ReplayNavigationPath =
+		ReplayMaterialized.Path.IsValid()
+			? ReplayMaterialized.Path->CastPath<FGridNavigationPath>()
+			: nullptr;
+	if (TestNotNull(
+		TEXT("Replay materialization produces a GridWorld path"),
+		ReplayNavigationPath))
+	{
+		TestEqual(
+			TEXT("Replay path keeps the recorded exact cell sequence"),
+			ReplayNavigationPath->CellPath,
+			ExactCells);
+		TestEqual(
+			TEXT("Replay path still uses ReservedCorridor while following"),
+			ReplayNavigationPath->DynamicAgentPolicy,
+			EGridDynamicAgentPolicy::ReservedCorridor);
+		TestTrue(
+			TEXT("Replay materialization tells path following to wait without abandoning the exact cells"),
+			ReplayNavigationPath->bAllowDynamicAgentConflictsDuringValidation);
+	}
+
 	World->DestroyWorld(false);
 	return true;
 }

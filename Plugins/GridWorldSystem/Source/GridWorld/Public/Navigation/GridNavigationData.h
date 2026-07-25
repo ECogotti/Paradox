@@ -79,7 +79,8 @@ public:
 		bool bIsPartial,
 		EGridInjectedPathInvalidationPolicy InvalidationPolicy,
 		const FGuid& SourcePreviewId,
-		FGridInjectedPath& OutInjectedPath) const;
+		FGridInjectedPath& OutInjectedPath,
+		bool bAllowDynamicAgentConflictsDuringValidation = false) const;
 	/** Revalidates a previously stamped path against the current snapshot, agent and querier context. */
 	FGridInjectedPathValidationResult ValidateInjectedPath(
 		const FGridInjectedPath& InjectedPath,
@@ -107,8 +108,8 @@ public:
 	bool CanClaimTrafficGoal(const FGridTrafficGoalClaimRequest& Request, FGuid* OutBlockingOwnerId = nullptr) const;
 	/** Atomically claims one separated Move To Grid Cell destination. */
 	bool TryClaimTrafficGoal(const FGridTrafficGoalClaimRequest& Request);
-	/** Returns whether a destination belongs to another active task. */
-	bool IsTrafficGoalClaimedByOther(const FGridCellId& CellId, const UObject* Claimant) const;
+	/** Returns whether a destination belongs to another traffic owner; Claimant distinguishes claims when OwnerId is unavailable. */
+	bool IsTrafficGoalClaimedByOther(const FGridCellId& CellId, const UObject* Claimant, const FGuid& OwnerId = FGuid()) const;
 	/** Releases every temporary destination claim owned by Claimant. */
 	void ReleaseTrafficGoalClaims(const UObject* Claimant);
 	/** Converts a reached destination into parking protection tied to its Pawn. */

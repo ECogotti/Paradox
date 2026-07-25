@@ -39,6 +39,7 @@ void FGridNavigationPath::ResetForRepath()
 	ParentPathInstanceId.Invalidate();
 	SourcePreviewId.Invalidate();
 	InjectedInvalidationPolicy = EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
+	bAllowDynamicAgentConflictsDuringValidation = false;
 }
 
 FVector::FReal FGridNavigationPath::GetCostFromIndex(int32 PathPointIndex) const

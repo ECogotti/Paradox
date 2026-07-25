@@ -69,6 +69,15 @@ bool FGridOverlayCompositionTest::RunTest(const FString& Parameters)
 	Occupant->RegisterComponent();
 	Occupant->Activate(true);
 
+	UGridNavigationOccupancyComponent* AgentOccupant = NewObject<UGridNavigationOccupancyComponent>(Owner);
+	Owner->AddInstanceComponent(AgentOccupant);
+	AgentOccupant->SetRelativeLocation(Base->Cells[0].WorldCenter);
+	AgentOccupant->BoxExtent = FVector(20.0, 20.0, 20.0);
+	AgentOccupant->bBlocksWhenConsidered = false;
+	AgentOccupant->AdditionalCost = 0;
+	AgentOccupant->RegisterComponent();
+	AgentOccupant->Activate(true);
+
 	UGridNavigationLinkComponent* LinkComponent = NewObject<UGridNavigationLinkComponent>(Owner);
 	Owner->AddInstanceComponent(LinkComponent);
 	LinkComponent->StartOffset = Base->Cells[0].WorldCenter;
@@ -85,6 +94,10 @@ bool FGridOverlayCompositionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Ordinary occupancy owner is retained"), TraversalOverlay->Cells[1].OccupancyOwners.Contains(Occupant->OccupantId));
 	TestEqual(TEXT("Reservation owner recorded"), TraversalOverlay->Cells[1].ReservationOwners.Num(), 1);
 	TestEqual(TEXT("Explicit link composed"), TraversalOverlay->Links.Num(), 1);
+	TestTrue(TEXT("Traversal changes are classified separately"), FirstChangeSet.ChangedTraversalCells.Contains(Base->Cells[0].Id));
+	TestTrue(TEXT("Reservation blocking changes are classified separately"), FirstChangeSet.ChangedBlockingOccupancyCells.Contains(Base->Cells[1].Id));
+	TestTrue(TEXT("Occupancy cost changes are classified separately"), FirstChangeSet.ChangedOccupancyCostCells.Contains(Base->Cells[1].Id));
+	TestTrue(TEXT("Agent identity changes are classified separately"), FirstChangeSet.ChangedOccupancyOwnerCells.Contains(Base->Cells[0].Id));
 
 	FGridChangeSet OccupancyChangeSet;
 	const TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> OccupancyOverlay = FGridOverlayComposer::Compose(*World, *Base, &TraversalOverlay.Get(), true, OccupancyChangeSet);
@@ -92,6 +105,17 @@ bool FGridOverlayCompositionTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Occupancy-only update preserves traversal cost"), OccupancyOverlay->Cells[0].TraversalCost, 2200);
 	TestEqual(TEXT("Occupancy revision increments"), OccupancyOverlay->Revisions.Occupancy, TraversalOverlay->Revisions.Occupancy + 1);
 	TestEqual(TEXT("Traversal revision remains stable"), OccupancyOverlay->Revisions.Traversal, TraversalOverlay->Revisions.Traversal);
+
+	AgentOccupant->SetWorldLocation(Base->Cells[1].WorldCenter);
+	FGridChangeSet AgentMoveChangeSet;
+	const TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> AgentMoveOverlay =
+		FGridOverlayComposer::Compose(*World, *Base, &OccupancyOverlay.Get(), true, AgentMoveChangeSet);
+	TestTrue(TEXT("Moving a non-blocking agent changes the owner overlay"), AgentMoveChangeSet.ChangedOccupancyOwnerCells.Num() > 0);
+	TestTrue(TEXT("Moving a non-blocking agent changes the aggregate cells"), AgentMoveChangeSet.ChangedCells.Num() > 0);
+	TestTrue(TEXT("Moving a non-blocking agent does not change traversal"), AgentMoveChangeSet.ChangedTraversalCells.IsEmpty());
+	TestTrue(TEXT("Moving a non-blocking agent does not change blocking occupancy"), AgentMoveChangeSet.ChangedBlockingOccupancyCells.IsEmpty());
+	TestTrue(TEXT("Moving a zero-cost agent does not change occupancy cost"), AgentMoveChangeSet.ChangedOccupancyCostCells.IsEmpty());
+	TestEqual(TEXT("Agent move still increments only occupancy"), AgentMoveOverlay->Revisions.Traversal, OccupancyOverlay->Revisions.Traversal);
 
 	World->DestroyWorld(false);
 	return true;

@@ -44,8 +44,8 @@ public:
 	 */
 	bool TryClaimGoal(const FGridTrafficGoalClaimRequest& Request, bool& OutStateChanged);
 
-	/** Returns whether CellId is claimed by a task other than Claimant. */
-	bool IsGoalClaimedByOther(const FGridCellId& CellId, const UObject* Claimant) const;
+	/** Returns whether CellId is claimed by a different traffic owner (or, without an owner, another claimant). */
+	bool IsGoalClaimedByOther(const FGridCellId& CellId, const UObject* Claimant, const FGuid& OwnerId) const;
 
 	/** Releases all goal claims owned by Claimant and returns whether state changed. */
 	bool ReleaseGoalClaims(const UObject* Claimant);

@@ -1281,11 +1281,39 @@ bool UGridWorldPathFollowingComponent::UpdateDynamicAgentAvoidance()
 		StationaryBlockerSince = CurrentTime;
 	}
 
-	bool bShouldRepath = (GridPath->DynamicAgentPolicy == EGridDynamicAgentPolicy::YieldThenRepath
-			|| GridPath->DynamicAgentPolicy == EGridDynamicAgentPolicy::ReservedCorridor)
-		&& bStationary
+	const bool bStationaryLongEnough = bStationary
 		&& StationaryBlockerSince >= 0.0
-		&& CurrentTime - StationaryBlockerSince >= FMath::Max(0.0f, GridPath->DynamicAgentRepathDelay)
+		&& CurrentTime - StationaryBlockerSince >= FMath::Max(0.0f, GridPath->DynamicAgentRepathDelay);
+	const bool bPreserveExactPath = GridPath->Origin == EGridNavigationPathOrigin::Injected
+		&& GridPath->bAllowDynamicAgentConflictsDuringValidation;
+	const bool bPersistentFinalCellConflict = bPreserveExactPath
+		&& bStationaryLongEnough
+		&& !GridPath->CellPath.IsEmpty()
+		&& BlockingCellId == GridPath->CellPath.Last()
+		&& TrafficCurrentCellPathIndex >= GridPath->CellPath.Num() - 2;
+	if (bPersistentFinalCellConflict)
+	{
+		PublishDynamicAgentDebug(
+			LookAheadCellCenters,
+			LabelLocation,
+			BlockingCellCenter,
+			BlockingOccupantId,
+			false);
+		GRIDWORLD_LOG_INFO(
+			"Controller '%s' reached the predecessor of exact-path goal (%d,%d,%d), which remains reserved by %s; reporting Blocked for goal-contention resolution.",
+			*GetNameSafe(GetOwner()),
+			BlockingCellId.Coord.X,
+			BlockingCellId.Coord.Y,
+			BlockingCellId.Coord.Layer,
+			*BlockingOccupantId.ToString());
+		OnPathFinished(FPathFollowingResult(EPathFollowingResult::Blocked, FPathFollowingResultFlags::None));
+		return true;
+	}
+
+	bool bShouldRepath = !bPreserveExactPath
+		&& (GridPath->DynamicAgentPolicy == EGridDynamicAgentPolicy::YieldThenRepath
+			|| GridPath->DynamicAgentPolicy == EGridDynamicAgentPolicy::ReservedCorridor)
+		&& bStationaryLongEnough
 		&& Path.IsValid()
 		&& Path->IsUpToDate()
 		&& !Path->IsWaitingForRepath();

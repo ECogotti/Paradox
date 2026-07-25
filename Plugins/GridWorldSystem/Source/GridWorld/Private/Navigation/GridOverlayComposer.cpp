@@ -175,14 +175,40 @@ TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> FGridOverlayComposer::Compos
 		const FGridCellData* PreviousCell = PreviousSnapshot != nullptr && PreviousSnapshot->Cells.IsValidIndex(CellIndex)
 			? &PreviousSnapshot->Cells[CellIndex]
 			: nullptr;
-		if (PreviousCell == nullptr
+		const bool bTraversalChanged = PreviousCell == nullptr
 			|| Cell.bWalkable != PreviousCell->bWalkable
 			|| Cell.TraversalCost != PreviousCell->TraversalCost
-			|| Cell.bOccupied != PreviousCell->bOccupied
+			|| Cell.AreaId != PreviousCell->AreaId
+			|| Cell.TraversalFlags != PreviousCell->TraversalFlags
+			|| Cell.TraversalChannels != PreviousCell->TraversalChannels;
+		const bool bBlockingOccupancyChanged = PreviousCell == nullptr
 			|| Cell.bOccupancyBlocks != PreviousCell->bOccupancyBlocks
-			|| Cell.OccupancyCost != PreviousCell->OccupancyCost
-			|| Cell.OccupancyOwners != PreviousCell->OccupancyOwners
-			|| Cell.ReservationOwners != PreviousCell->ReservationOwners)
+			|| Cell.ReservationOwners != PreviousCell->ReservationOwners;
+		const bool bOccupancyCostChanged = PreviousCell == nullptr
+			|| Cell.OccupancyCost != PreviousCell->OccupancyCost;
+		const bool bOccupancyOwnersChanged = PreviousCell == nullptr
+			|| Cell.bOccupied != PreviousCell->bOccupied
+			|| Cell.OccupancyOwners != PreviousCell->OccupancyOwners;
+		if (bTraversalChanged)
+		{
+			OutChangeSet.ChangedTraversalCells.Add(Cell.Id);
+		}
+		if (bBlockingOccupancyChanged)
+		{
+			OutChangeSet.ChangedBlockingOccupancyCells.Add(Cell.Id);
+		}
+		if (bOccupancyCostChanged)
+		{
+			OutChangeSet.ChangedOccupancyCostCells.Add(Cell.Id);
+		}
+		if (bOccupancyOwnersChanged)
+		{
+			OutChangeSet.ChangedOccupancyOwnerCells.Add(Cell.Id);
+		}
+		if (bTraversalChanged
+			|| bBlockingOccupancyChanged
+			|| bOccupancyCostChanged
+			|| bOccupancyOwnersChanged)
 		{
 			OutChangeSet.ChangedCells.Add(Cell.Id);
 		}
