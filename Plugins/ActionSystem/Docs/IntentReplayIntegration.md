@@ -36,6 +36,10 @@ Non esiste un evento journal `Initialized`: `Action Init` è un hook locale dell
 
 Per una registrazione autoritativa usare enum, tag, handle, sequence, GUID e Property Bag. `DiagnosticMessage` non è un campo autoritativo e può cambiare senza invalidare una registrazione.
 
+Un risultato `Interrupted.HigherPriority` espone inoltre `CausingActionHandle`. Un replay può
+quindi distinguere una sostituzione intenzionale prodotta da una successiva action della stessa
+sessione da una preemption esterna, senza interpretare la stringa diagnostica.
+
 Una Definition con journal `Required` garantisce che l'Accepted sia scritto prima di qualsiasi preemption o acquisizione lock. Il sink non deve effettuare submit/cancel nella stessa chiamata sincrona: tali operazioni vengono respinte come rientranti. Eventuali reazioni vanno differite oppure eseguite dai delegate lifecycle.
 
 Ogni componente accetta un solo sink. `UIntentReplayComponent` coordina ownership, registrazione e deregistrazione durante il proprio lifecycle.

@@ -174,6 +174,13 @@ struct GAMEPLAYACTIONS_API FGameplayActionResult
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions")
 	FGameplayTag ReasonTag;
 
+	/**
+	 * Runtime handle of the action that directly caused this terminal transition.
+	 * Valid for scheduler preemption; invalid for self-completion, cancellation, failure, and abort.
+	 */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions")
+	FGameplayActionHandle CausingActionHandle;
+
 	/** Human-readable diagnostics only. Never use this string as authoritative gameplay data. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions")
 	FString DiagnosticMessage;

@@ -71,6 +71,11 @@ Ending -> hook specifico -> Cleanup -> stato terminale -> rilascio lock -> Ended
 
 Gli stati terminali sono `Succeeded`, `Failed`, `Cancelled`, `Interrupted` e `Aborted`. `DiagnosticMessage` è soltanto diagnostico; `TerminalState` e `ReasonTag` sono i dati autoritativi.
 
+Quando lo scheduler interrompe un'azione per priorità, `FGameplayActionResult.CausingActionHandle`
+contiene l'handle runtime dell'azione che ha causato la preemption. Negli altri percorsi terminali
+resta invalido. I consumer devono usare questo campo strutturato e non estrarre l'handle da
+`DiagnosticMessage`.
+
 ## Journaling transazionale
 
 Il primo `Accepted` viene offerto al sink prima di inserire l'istanza, acquisire lock o interrompere conflitti:

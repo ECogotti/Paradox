@@ -25,6 +25,7 @@ UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Action, "GameplayAction.Test
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_ActionChanged, "GameplayAction.Test.IntentReplay.ActionChanged");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_OriginPlayer, "GameplayAction.Origin.TestPlayer");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Correlation, "GameplayAction.Correlation.TestIntentReplay");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_MovementLock, "GameplayAction.Lock.Test.IntentReplayMovement");
 
 namespace IntentReplayTests
 {
@@ -515,6 +516,111 @@ bool FIntentReplayCompatibilityTimingTest::RunTest(const FString& Parameters)
 	Advance(*World, 2.0);
 	TestFalse(TEXT("Destroyed component is no longer a callback target"), DestroyedReplayComponent.IsValid());
 	Source.Actor->Destroy();
+	DestroyWorld(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FIntentReplaySameSessionPreemptionTest,
+	"IntentReplay.Playback.SameSessionPreemptionContinues",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIntentReplaySameSessionPreemptionTest::RunTest(const FString& Parameters)
+{
+	using namespace IntentReplayTests;
+	UWorld* World = MakeWorld(TEXT("IntentReplaySameSessionPreemptionTestWorld"));
+	if (!TestNotNull(TEXT("Test world exists"), World))
+	{
+		return false;
+	}
+
+	const FEntity Source = MakeEntity(*World);
+	UGameplayActionDefinition* Definition = MakeWaitDefinition(1.0);
+	Definition->ExecutionLocks.AddTag(TAG_IntentReplay_Test_MovementLock);
+	TestTrue(
+		TEXT("Player recording starts"),
+		Source.Replay->StartRecording(FIntentRecordingOptions()).Succeeded());
+	const FGameplayActionSubmissionResult FirstPlayerAction =
+		Source.Actions->SubmitAction(MakeRequest(*Definition, 0));
+	TestTrue(TEXT("First player movement starts"), FirstPlayerAction.IsAccepted());
+	Advance(*World, 0.05);
+	const FGameplayActionSubmissionResult SecondPlayerAction =
+		Source.Actions->SubmitAction(MakeRequest(*Definition, 10));
+	TestTrue(TEXT("Replacement player movement starts"), SecondPlayerAction.IsAccepted());
+	FGameplayActionResult FirstPlayerResult;
+	TestTrue(
+		TEXT("First player movement has a terminal result"),
+		Source.Actions->GetActionResult(FirstPlayerAction.Handle, FirstPlayerResult));
+	TestEqual(
+		TEXT("Player replacement interrupts the first movement"),
+		FirstPlayerResult.TerminalState,
+		EGameplayActionState::Interrupted);
+	TestTrue(
+		TEXT("Player interruption identifies its replacement"),
+		FirstPlayerResult.CausingActionHandle == SecondPlayerAction.Handle);
+	TestTrue(
+		TEXT("Player track finalizes immediately"),
+		Source.Replay->RequestStopRecording().Succeeded());
+	UIntentReplayTrack* Track = Source.Replay->GetLastFinalizedTrack();
+	TestEqual(TEXT("Replacement pattern contains two intents"), Track ? Track->GetEntryCount() : 0, 2);
+	Source.Actions->AbortAllActions(FGameplayTag());
+
+	FIntentReplayPlaybackOptions StrictFailureOptions;
+	StrictFailureOptions.TerminalFailurePolicy =
+		EIntentReplayTerminalFailurePolicy::StopPlayback;
+
+	const FEntity Clone = MakeEntity(*World);
+	TestEqual(
+		TEXT("Clone prepares the replacement pattern"),
+		Clone.Replay->PrepareReplay(Track, StrictFailureOptions).Status,
+		EIntentReplayPrepareStatus::Ready);
+	TestTrue(TEXT("Clone replay starts"), Clone.Replay->StartReplay().Succeeded());
+	Advance(*World, 0.051);
+	TestEqual(
+		TEXT("Same-session preemption does not fail playback"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Playing);
+	UIntentReplayPlaybackSession* CloneSession =
+		Clone.Replay->GetActivePlaybackSession();
+	TestEqual(
+		TEXT("Only the replacement replay action remains active"),
+		CloneSession ? CloneSession->GetReplayOwnedActionCount() : 0,
+		1);
+	Advance(*World, 1.01);
+	TestEqual(
+		TEXT("Clone completes after executing the replacement movement"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Completed);
+
+	const FEntity ExternallyPreemptedClone = MakeEntity(*World);
+	TestEqual(
+		TEXT("Second clone prepares the same track"),
+		ExternallyPreemptedClone.Replay
+			->PrepareReplay(Track, StrictFailureOptions)
+			.Status,
+		EIntentReplayPrepareStatus::Ready);
+	TestTrue(
+		TEXT("Second clone replay starts"),
+		ExternallyPreemptedClone.Replay->StartReplay().Succeeded());
+	AddExpectedError(
+		TEXT("ended with EGameplayActionState::Interrupted"),
+		EAutomationExpectedErrorFlags::Contains,
+		1);
+	const FGameplayActionSubmissionResult ExternalAction =
+		ExternallyPreemptedClone.Actions->SubmitAction(
+			MakeRequest(*Definition, 100));
+	TestTrue(TEXT("External preempting action starts"), ExternalAction.IsAccepted());
+	TestEqual(
+		TEXT("External preemption still fails strict playback"),
+		ExternallyPreemptedClone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Failed);
+
+	ExternallyPreemptedClone.Actions->CancelAction(
+		ExternalAction.Handle,
+		FGameplayTag());
+	Source.Actor->Destroy();
+	Clone.Actor->Destroy();
+	ExternallyPreemptedClone.Actor->Destroy();
 	DestroyWorld(World);
 	return true;
 }

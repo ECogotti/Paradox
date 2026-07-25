@@ -331,6 +331,9 @@ second World State participant in `BP_CloneCharacter`.
   `UEntityIdentityComponent` instances.
 - Repeated physical primitives for one target should raise the deduplicated component count, not
   additional candidate events.
+- A recorded movement replacement (a later click interrupting the current `MoveToGridCell`) is
+  replay-owned preemption and does not enter stationary fallback. A higher-priority action outside
+  that clone's replay session remains a terminal playback failure.
 - `ParadoxRecoveryFailed`: inspect World State restore and clone reconstruction diagnostics. The
   accepted paradox context and consolidated tracks remain available for inspection.
 - `GameOverReached` is the expected result of rewinding the final playable run; it is not an error.

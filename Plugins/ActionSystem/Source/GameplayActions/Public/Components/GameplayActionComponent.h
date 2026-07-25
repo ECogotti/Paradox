@@ -171,7 +171,8 @@ private:
 		EGameplayActionState TerminalState,
 		FGameplayTag ReasonTag,
 		const FString& DiagnosticMessage,
-		bool bEvaluateQueueAfterRelease);
+		bool bEvaluateQueueAfterRelease,
+		FGameplayActionHandle CausingActionHandle = FGameplayActionHandle());
 	void UpdateQueuedTimeouts(float DeltaTime);
 	void EvaluateQueuedActions();
 	void RefreshComponentTickEnabled();

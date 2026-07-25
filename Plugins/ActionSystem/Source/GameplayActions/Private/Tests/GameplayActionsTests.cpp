@@ -393,8 +393,14 @@ bool FGameplayActionsSchedulerTest::RunTest(const FString& Parameters)
 	FGameplayActionResult Terminal;
 	TestTrue(TEXT("A was interrupted"), Component->GetActionResult(AResult.Handle, Terminal));
 	TestEqual(TEXT("A interruption state"), Terminal.TerminalState, EGameplayActionState::Interrupted);
+	TestTrue(
+		TEXT("A interruption identifies the preempting action"),
+		Terminal.CausingActionHandle == HighResult.Handle);
 	TestTrue(TEXT("B was interrupted"), Component->GetActionResult(BResult.Handle, Terminal));
 	TestEqual(TEXT("B interruption state"), Terminal.TerminalState, EGameplayActionState::Interrupted);
+	TestTrue(
+		TEXT("B interruption identifies the preempting action"),
+		Terminal.CausingActionHandle == HighResult.Handle);
 	TestTrue(TEXT("Preemption emitted four events"), Observer->ObservedEvents.Num() >= EventBase + 4);
 	TestEqual(TEXT("Incoming Accepted is first"), Observer->ObservedEvents[EventBase].EventType, EGameplayActionEventType::Accepted);
 	TestEqual(TEXT("Higher-priority conflict ends first"), Observer->ObservedEvents[EventBase + 1].Handle, BResult.Handle);

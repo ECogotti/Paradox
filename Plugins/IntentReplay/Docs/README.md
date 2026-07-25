@@ -88,6 +88,10 @@ Le request di replay usano:
 
 Il default ferma la sessione se il submit viene rifiutato. Un fallimento terminale di una action viene invece registrato nel journal e la timeline continua, salvo configurazione diversa.
 
+Anche con la terminal failure policy `StopPlayback`, una action interrotta da una successiva action
+della stessa playback session rappresenta la riproduzione intenzionale del pattern registrato e non
+ferma la timeline. Una preemption causata da un'action esterna alla sessione resta invece un failure.
+
 Il replay è `Completed` soltanto quando tutte le entry sono state processate e tutte le action create dalla sessione sono terminali. `StopReplay` e i failure cancellano esclusivamente gli handle della sessione.
 
 ## Track condivisi

@@ -65,6 +65,10 @@ Per integrazioni native basate su proprietà riflesse, `SetRequestParameterFromP
 - Il componente conserva solo `EGameplayActionState` e `FGameplayActionResult` dopo il rilascio dell'istanza.
 - Eventi e parametri evento sono copie indipendenti.
 
+Per una terminazione `Interrupted` causata dallo scheduler,
+`FGameplayActionResult::CausingActionHandle` identifica l'action preempting. Il campo è invalido
+quando la terminazione non è stata causata da un'altra action.
+
 ## Estendere un'azione
 
 Derivare da `UGameplayActionInstance` e specializzare soltanto gli hook necessari:

@@ -218,7 +218,9 @@ FGameplayActionSubmissionResult UGameplayActionComponent::SubmitAction(const FGa
 			{
 				FinishActionInternal(*Conflict, EGameplayActionState::Interrupted,
 					GameplayActionTags::Result_Interrupted_HigherPriority,
-					FString::Printf(TEXT("Preempted by action %lld."), CandidateHandle.GetValue()), false);
+					FString::Printf(TEXT("Preempted by action %lld."), CandidateHandle.GetValue()),
+					false,
+					CandidateHandle);
 			}
 		}
 		StartAction(*Instance);
@@ -792,7 +794,8 @@ bool UGameplayActionComponent::FinishActionInternal(
 	const EGameplayActionState TerminalState,
 	const FGameplayTag ReasonTag,
 	const FString& DiagnosticMessage,
-	const bool bEvaluateQueueAfterRelease)
+	const bool bEvaluateQueueAfterRelease,
+	const FGameplayActionHandle CausingActionHandle)
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(GameplayActions_Finish);
 
@@ -825,6 +828,7 @@ bool UGameplayActionComponent::FinishActionInternal(
 		FGameplayActionResult Result;
 		Result.TerminalState = TerminalState;
 		Result.ReasonTag = ReasonTag;
+		Result.CausingActionHandle = CausingActionHandle;
 		Result.DiagnosticMessage = DiagnosticMessage;
 		Instance.State = TerminalState;
 		ActiveHandles.RemoveSingle(Instance.Handle);
@@ -937,7 +941,9 @@ void UGameplayActionComponent::EvaluateQueuedActions()
 				{
 					FinishActionInternal(*Conflict, EGameplayActionState::Interrupted,
 						GameplayActionTags::Result_Interrupted_HigherPriority,
-						FString::Printf(TEXT("Preempted by queued action %lld."), CandidateHandle.GetValue()), false);
+						FString::Printf(TEXT("Preempted by queued action %lld."), CandidateHandle.GetValue()),
+						false,
+						CandidateHandle);
 				}
 			}
 			StartAction(*Candidate);

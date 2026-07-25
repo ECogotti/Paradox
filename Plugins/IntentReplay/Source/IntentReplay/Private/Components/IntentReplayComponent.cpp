@@ -6,6 +6,7 @@
 #include "Engine/AssetManager.h"
 #include "Engine/StreamableManager.h"
 #include "Engine/World.h"
+#include "GameplayActionTags.h"
 #include "IntentReplayModule.h"
 #include "IntentReplayTags.h"
 #include "Journal/IntentExecutionJournal.h"
@@ -1087,6 +1088,15 @@ FGameplayActionJournalResult UIntentReplayComponent::HandleAcceptedJournalEvent(
 	{
 		JournalByHandle.Add(Event.Handle, Journal);
 	}
+	if (bReplayEvent && Event.Handle.IsValid() && ActivePlaybackSession)
+	{
+		// GameplayActions delivers the transactional Accepted snapshot before it preempts conflicts.
+		// Correlate the new handle now so a synchronous Ended event can identify an intentional
+		// same-session replacement without parsing its diagnostic string.
+		ActivePlaybackSession->RecordByRuntimeHandle.Add(
+			Event.Handle,
+			ReplayRecordedIntentId);
+	}
 	AppendExecutionEvent(
 		Journal,
 		Event,
@@ -1152,6 +1162,19 @@ void UIntentReplayComponent::ProcessLifecycleEvent(const FGameplayActionEvent& E
 		ReplayRecordedIntentId,
 		PlaybackSessionId);
 
+	if (bReplayEvent
+		&& ActivePlaybackSession
+		&& Event.EventType == EGameplayActionEventType::Accepted
+		&& Event.Handle.IsValid())
+	{
+		// Definitions with journaling Disabled reach IntentReplay only through the observer delegate.
+		// Accepted is still dispatched before any preempted Ended event, so retain the same causal
+		// ordering guarantee as the transactional journal path.
+		ActivePlaybackSession->RecordByRuntimeHandle.Add(
+			Event.Handle,
+			ReplayRecordedIntentId);
+	}
+
 	if (Event.EventType != EGameplayActionEventType::Ended)
 	{
 		return;
@@ -1187,9 +1210,18 @@ void UIntentReplayComponent::ProcessLifecycleEvent(const FGameplayActionEvent& E
 		UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
 		Session.RecordByRuntimeHandle.Add(Event.Handle, ReplayRecordedIntentId);
 		Session.ActiveReplayHandles.Remove(Event.Handle);
+		const bool bExpectedSameSessionPreemption =
+			Event.bHasResult
+			&& Event.Result.TerminalState == EGameplayActionState::Interrupted
+			&& Event.Result.ReasonTag
+				.MatchesTagExact(GameplayActionTags::Result_Interrupted_HigherPriority)
+			&& Event.Result.CausingActionHandle.IsValid()
+			&& Session.RecordByRuntimeHandle.Contains(
+				Event.Result.CausingActionHandle);
 		if (!bStoppingPlayback
 			&& Event.bHasResult
 			&& !IsSuccessfulTerminalAction(Event.Result)
+			&& !bExpectedSameSessionPreemption
 			&& Session.Options.TerminalFailurePolicy == EIntentReplayTerminalFailurePolicy::StopPlayback
 			&& !IsPlaybackTerminal(Session.State))
 		{

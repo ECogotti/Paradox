@@ -26,6 +26,11 @@ Le alternative sono configurabili in `FIntentReplayPlaybackOptions`.
 
 `StopReplay`, failure e teardown cancellano soltanto gli handle presenti nella playback session. Action estranee sullo stesso `UGameplayActionComponent` non vengono toccate.
 
+Una sostituzione registrata, per esempio un secondo `MoveTo` che interrompe il primo, viene
+riconosciuta confrontando `FGameplayActionResult.CausingActionHandle` con gli handle appartenenti
+alla playback session. Non viene usato il testo diagnostico. Con `StopPlayback`, le interruzioni
+causate da action esterne continuano a fermare il replay.
+
 ## Execution Journal
 
 Ogni recording e playback session possiede un journal distinto. Il componente conserva anche un journal ambientale per gli eventi osservati senza sessione.
