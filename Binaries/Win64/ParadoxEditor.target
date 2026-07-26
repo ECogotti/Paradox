@@ -136,6 +136,18 @@
 			"Type": "RequiredResource"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/ParadoxEditorTools/Binaries/Win64/UnrealEditor-ParadoxEditorTools.dll",
+			"Type": "DynamicLibrary"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ParadoxEditorTools/Binaries/Win64/UnrealEditor-ParadoxEditorTools.pdb",
+			"Type": "SymbolFile"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ParadoxEditorTools/Binaries/Win64/UnrealEditor.modules",
+			"Type": "RequiredResource"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/PuzzleSystem/Binaries/Win64/UnrealEditor-PuzzleSystem.dll",
 			"Type": "DynamicLibrary"
 		},
@@ -8855,6 +8867,10 @@
 		},
 		{
 			"Path": "$(ProjectDir)/Plugins/LineOfSight/LineOfSight.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ParadoxEditorTools/ParadoxEditorTools.uplugin",
 			"Type": "UFS"
 		},
 		{
@@ -33933,6 +33949,7 @@
 		"OodleNetwork",
 		"PCG",
 		"Paper2D",
+		"ParadoxEditorTools",
 		"PerforceSourceControl",
 		"PhysicsControl",
 		"PixWinPlugin",

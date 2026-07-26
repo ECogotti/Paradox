@@ -1,0 +1,19 @@
+{
+  "FileVersion": 3,
+  "Version": 1,
+  "VersionName": "1.0.0",
+  "FriendlyName": "Paradox Editor Tools",
+  "Description": "Extensible editor-only tools for the Paradox project. Includes Static Mesh Voxel Batch for correcting voxel mesh scale and pivot data.",
+  "Category": "Editor",
+  "CreatedBy": "Paradox",
+  "CanContainContent": false,
+  "IsBetaVersion": false,
+  "Installed": false,
+  "Modules": [
+    {
+      "Name": "ParadoxEditorTools",
+      "Type": "Editor",
+      "LoadingPhase": "PostEngineInit"
+    }
+  ]
+}
