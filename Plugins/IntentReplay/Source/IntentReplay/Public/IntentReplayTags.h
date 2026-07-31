@@ -23,6 +23,12 @@ namespace IntentReplayTags
 	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Failure_Compatibility);
 	/** GameplayActions rejected a prepared replay request. */
 	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Failure_SubmissionRejected);
+	/** Replay resume was requested while externally interrupted intents remain unreconciled. */
+	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Failure_PendingExternalRecovery);
+	/** Recovery referenced an intent that is not pending in the active playback session. */
+	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Failure_RecordedIntentNotFound);
+	/** GameplayActions rejected an explicit recoverable interruption. */
+	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Failure_ExternalInterruption);
 	/** Cancellation reason used only for handles owned by a stopped playback session. */
 	INTENTREPLAY_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cancelled_PlaybackStopped);
 }

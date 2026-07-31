@@ -2,6 +2,7 @@
 	"BuildId": "55116800",
 	"Modules": 
 	{
-		"IntentReplay": "UnrealEditor-IntentReplay.dll"
+		"IntentReplay": "UnrealEditor-IntentReplay.dll",
+		"IntentReplayPerception": "UnrealEditor-IntentReplayPerception.dll"
 	}
 }

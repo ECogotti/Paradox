@@ -1,5 +1,8 @@
 # GridWorld runtime module
 
+`InvalidStart + RecalculateToOriginalGoal` emits a contextual warning before its existing
+controller-aware recalculation. All non-start exact-path failures remain strict.
+
 `GridWorld` contains the navigation data, deterministic graph, generation, queries, runtime contributors, Blueprint facade and debug renderer.
 
 ## Ownership and lifetime

@@ -1100,11 +1100,37 @@ void UGridMoveToCellTask::PerformExactMove()
 					return;
 				}
 			}
-			GRIDWORLD_LOG_INFO(
-				"Exact GridWorld path '%s' became stale for controller '%s'; recalculating to its original goal. Reason: %s",
-				*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
-				*GetNameSafe(OwnerController),
-				*Validation.DiagnosticMessage);
+			if (Validation.FailureReason == EGridInjectedPathFailureReason::InvalidStart)
+			{
+				FGridCellId CurrentCell;
+				FVector CurrentCellCenter = FVector::ZeroVector;
+				ResolveCurrentPawnCell(CurrentCell, CurrentCellCenter);
+				const FGridCellId RecordedStart =
+					InjectedPath.Cells.IsEmpty() ? FGridCellId() : InjectedPath.Cells[0];
+				GRIDWORLD_LOG_WARNING(
+					"Exact GridWorld path '%s' for controller '%s' resumed from a different cell; "
+					"recorded=(%d,%d,%d), current=(%d,%d,%d), goal=(%d,%d,%d). "
+					"Discarding the stale runtime path and recalculating to the original goal.",
+					*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
+					*GetNameSafe(OwnerController),
+					RecordedStart.Coord.X,
+					RecordedStart.Coord.Y,
+					RecordedStart.Coord.Layer,
+					CurrentCell.Coord.X,
+					CurrentCell.Coord.Y,
+					CurrentCell.Coord.Layer,
+					InjectedPath.OriginalGoalCell.Coord.X,
+					InjectedPath.OriginalGoalCell.Coord.Y,
+					InjectedPath.OriginalGoalCell.Coord.Layer);
+			}
+			else
+			{
+				GRIDWORLD_LOG_INFO(
+					"Exact GridWorld path '%s' became stale for controller '%s'; recalculating to its original goal. Reason: %s",
+					*InjectedPath.PathInstanceId.ToString(EGuidFormats::DigitsWithHyphens),
+					*GetNameSafe(OwnerController),
+					*Validation.DiagnosticMessage);
+			}
 			RecalculateInjectedPathToOriginalGoal(GoalLocation);
 			return;
 		}

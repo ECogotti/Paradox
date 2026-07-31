@@ -7,6 +7,10 @@
 #include "GameFramework/Pawn.h"
 #include "GameplayActionTags.h"
 #include "Navigation/GridNavigationData.h"
+#include "Navigation/GridNavigationPath.h"
+#include "NavFilters/NavigationQueryFilter.h"
+#include "NavigationPath.h"
+#include "Navigation/PathFollowingComponent.h"
 #include "Paradox.h"
 #include "ParadoxCloneReplayExecutionStrategyPrivate.h"
 #include "Subsystems/GridWorldSubsystem.h"
@@ -161,11 +165,117 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 	}
 	if (!RestampResult.bIsValid)
 	{
-		return UE::Paradox::CloneReplay::Private::RejectRequest(
-			FString::Printf(
-				TEXT("Clone replay could not re-stamp the exact GridWorld path for controller '%s': %s"),
-				*GetNameSafe(CloneController),
-				*RestampResult.DiagnosticMessage));
+		if (RestampResult.FailureReason
+				!= EGridInjectedPathFailureReason::InvalidStart
+			|| RecordedPath->InvalidationPolicy
+				!= EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal)
+		{
+			return UE::Paradox::CloneReplay::Private::RejectRequest(
+				FString::Printf(
+					TEXT("Clone replay could not re-stamp the exact GridWorld path for controller '%s': %s"),
+					*GetNameSafe(CloneController),
+					*RestampResult.DiagnosticMessage));
+		}
+
+		AGridNavigationData* NavigationData = GridWorld->GetNavigationData();
+		UPathFollowingComponent* PathFollowing =
+			CloneController->FindComponentByClass<UPathFollowingComponent>();
+		const FGridCellId RecoveryGoal =
+			RecordedPath->RequestedGoalCell.IsValid()
+				? RecordedPath->RequestedGoalCell
+				: RecordedPath->OriginalGoalCell;
+		const FGridCellQueryResult CurrentCell =
+			GridWorld->ProjectPoint(CloneController->GetNavAgentLocation());
+		const FGridCellQueryResult GoalCell =
+			GridWorld->GetCell(RecoveryGoal);
+		const FSharedConstNavQueryFilter QueryFilter =
+			NavigationData
+				? UNavigationQueryFilter::GetQueryFilter(
+					*NavigationData,
+					CloneController,
+					RecordedPath->FilterClass)
+				: FSharedConstNavQueryFilter();
+		if (!NavigationData
+			|| CurrentCell.Status != EGridQueryStatus::Success
+			|| GoalCell.Status != EGridQueryStatus::Success
+			|| !QueryFilter.IsValid())
+		{
+			return UE::Paradox::CloneReplay::Private::RejectRequest(
+				TEXT("Clone replay could not resolve the controller-aware query required to recover an exact path from a different start cell."));
+		}
+
+		const FGuid WarningIdentity = Request.GetCorrelation().Id.IsValid()
+			? Request.GetCorrelation().Id
+			: RecordedPath->PathInstanceId;
+		if (!WarnedDifferentStartIntents.Contains(WarningIdentity))
+		{
+			WarnedDifferentStartIntents.Add(WarningIdentity);
+			const FGridCellId RecordedStart = RecordedPath->Cells[0];
+			PARADOX_LOG_WARNING(
+				TEXT("Clone '%s' is resuming movement intent '%s' from a different GridWorld cell; "
+					"recorded=(%d,%d,%d), current=(%d,%d,%d), goal=(%d,%d,%d). "
+					"The stale runtime path is discarded and a fresh ExactInjectedPath is queried."),
+				*GetNameSafe(ClonePawn),
+				*WarningIdentity.ToString(EGuidFormats::DigitsWithHyphens),
+				RecordedStart.Coord.X,
+				RecordedStart.Coord.Y,
+				RecordedStart.Coord.Layer,
+				CurrentCell.CellId.Coord.X,
+				CurrentCell.CellId.Coord.Y,
+				CurrentCell.CellId.Coord.Layer,
+				RecoveryGoal.Coord.X,
+				RecoveryGoal.Coord.Y,
+				RecoveryGoal.Coord.Layer);
+		}
+
+		FPathFindingQuery RecoveryQuery(
+			CloneController,
+			*NavigationData,
+			CloneController->GetNavAgentLocation(),
+			GoalCell.WorldCenter,
+			QueryFilter);
+		RecoveryQuery.SetAllowPartialPaths(RecordedPath->bAllowPartialPath);
+		RecoveryQuery.SetNavAgentProperties(
+			CloneController->GetNavAgentPropertiesRef());
+		if (PathFollowing)
+		{
+			PathFollowing->OnPathfindingQuery(RecoveryQuery);
+		}
+		const FPathFindingResult RecoveryPath =
+			AGridNavigationData::FindPath(
+				CloneController->GetNavAgentPropertiesRef(),
+				RecoveryQuery);
+		const FGridNavigationPath* GridRecoveryPath =
+			RecoveryPath.Path.IsValid()
+				? RecoveryPath.Path->CastPath<FGridNavigationPath>()
+				: nullptr;
+		if (!RecoveryPath.IsSuccessful() || !GridRecoveryPath
+			|| GridRecoveryPath->CellPath.IsEmpty())
+		{
+			return UE::Paradox::CloneReplay::Private::RejectRequest(
+				TEXT("Clone replay could not find a fresh GridWorld path from the clone's current cell to the recorded semantic goal."));
+		}
+
+		RestampResult = NavigationData->CreateExactInjectedPath(
+			CloneController,
+			CloneController->GetNavAgentPropertiesRef(),
+			RecordedPath->FilterClass,
+			CloneController->GetNavAgentLocation(),
+			GridRecoveryPath->CellPath,
+			RecoveryGoal,
+			RecordedPath->bAllowPartialPath,
+			RecoveryPath.Path->IsPartial(),
+			RecordedPath->InvalidationPolicy,
+			RecordedPath->SourcePreviewId,
+			Overrides.InjectedPath,
+			RecordedPath->bAllowDynamicAgentConflictsDuringValidation);
+		if (!RestampResult.bIsValid)
+		{
+			return UE::Paradox::CloneReplay::Private::RejectRequest(
+				FString::Printf(
+					TEXT("Clone replay found a recovery path but could not stamp it as an ExactInjectedPath: %s"),
+					*RestampResult.DiagnosticMessage));
+		}
 	}
 
 	// These fields are semantic recording metadata and do not participate in path validation.

@@ -44,6 +44,24 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Playback")
 	TArray<FGameplayActionHandle> GetReplayOwnedActionHandles() const { return ActiveReplayHandles.Array(); }
 
+	/** Number of externally interrupted intents that must be reconciled before ResumeReplay. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recovery")
+	int32 GetPendingExternalRecoveryCount() const { return PendingExternalRecoveryByIntent.Num(); }
+
+	/** Copies the immutable recovery snapshots without exposing the session's mutable map. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recovery")
+	TArray<FIntentReplaySuspendedIntent> GetPendingExternalRecoveryIntents() const
+	{
+		TArray<FIntentReplaySuspendedIntent> Result;
+		PendingExternalRecoveryByIntent.GenerateValueArray(Result);
+		Result.Sort(
+			[](const FIntentReplaySuspendedIntent& Left, const FIntentReplaySuspendedIntent& Right)
+			{
+				return Left.RecordedIntent.TrackSequence < Right.RecordedIntent.TrackSequence;
+			});
+		return Result;
+	}
+
 	/** Playback-local lifecycle/divergence journal. */
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Playback")
 	UIntentExecutionJournal* GetExecutionJournal() const { return ExecutionJournal; }
@@ -99,6 +117,14 @@ private:
 	UPROPERTY()
 	TSet<FGameplayActionHandle> ActiveReplayHandles;
 
+	/** Immutable intent snapshots awaiting explicit reissue or already-satisfied reconciliation. */
+	UPROPERTY()
+	TMap<FRecordedIntentId, FIntentReplaySuspendedIntent> PendingExternalRecoveryByIntent;
+
+	/** Handle-to-reason guard that recognizes only the interruption initiated by the owner command. */
+	UPROPERTY()
+	TMap<FGameplayActionHandle, FGameplayTag> ExpectedExternalInterruptionReasons;
+
 	/** Session-owned diagnostic journal. */
 	UPROPERTY(Transient)
 	TObjectPtr<UIntentExecutionJournal> ExecutionJournal;
@@ -110,6 +136,9 @@ private:
 	double StartTimeSeconds = 0.0;
 	double PauseStartTimeSeconds = 0.0;
 	double AccumulatedPausedSeconds = 0.0;
+	double FinalElapsedSeconds = 0.0;
+	int64 NextTimelineSequence = 0;
+	bool bClockStarted = false;
 	bool bClockPaused = false;
 	bool bAllEntriesSubmittedBroadcast = false;
 	bool bPausedBoundActionsBySession = false;

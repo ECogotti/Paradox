@@ -95,11 +95,13 @@ an earlier run are ignored.
 At barrier release, in one logical frame, the loop:
 
 1. starts the player recorder;
-2. starts every ready clone replay;
+2. authorizes every ready clone coordinator;
 3. enters `ActiveRun`;
 4. broadcasts `OnRunStarted`.
 
-No recorder or replay starts before the barrier. If the player recorder cannot start, prepared
+The Replay Behavior Tree task is the only caller that starts the already prepared clone replay;
+observation comparison is armed before authorization. No recorder or replay starts before the
+barrier. If the player recorder cannot start, prepared
 clone sessions are stopped/unbound, the selected spawn is released, the player is deactivated, and
 the loop returns to `ChronoSpawnSelection` with `SynchronizedStartFailed`.
 
@@ -114,16 +116,41 @@ A legal rewind:
 2. stops and unbinds clone playback;
 3. aborts player Gameplay Actions with the system-reset result;
 4. finalizes the player recording synchronously in `Immediate` mode;
-5. validates and retains the immutable track in a reflected consolidated-timeline record;
-6. marks the selected Chrono Spawn occupied;
-7. deactivates the player and destroys only loop-created runtime clones;
-8. restores the World State baseline;
-9. reapplies occupied Chrono Spawn states;
-10. reconstructs every consolidated timeline in Temporal Index order.
+5. validates and retains the immutable Timeline Bundle (Action Track plus Observation Track), while
+   retaining `ReplayTrack` as a compatibility view in the reflected consolidated-timeline record;
+6. saves the registered player `PerceptionKnowledge` Entity ID in that consolidated timeline;
+7. marks the selected Chrono Spawn occupied;
+8. disables and unregisters the player Perception Source, then destroys only loop-created runtime
+   clones;
+9. restores the World State baseline;
+10. reapplies occupied Chrono Spawn states;
+11. reconstructs every consolidated timeline in Temporal Index order.
 
-Intent Replay tracks live in the transient package. The reflected consolidated-timeline array is
-their GC owner across reset. An empty finalized track is valid. Callers receive value copies and
-cannot mutate the coordinator's storage or source tracks.
+Intent Replay tracks live in the transient package. The reflected consolidated-timeline array owns
+each full Timeline Bundle across reset. An empty finalized Action Track is valid. Callers receive
+value copies and cannot mutate the coordinator's storage, Replay Track, or Observation Track.
+Explicit legacy action-only timelines still replay with a warning and no perceptual comparison.
+
+## Stable perception identity
+
+`FParadoxConsolidatedTimeline::AvatarPerceptionEntityId` is the stable perceptual identity of the
+avatar that originally produced that run. A reconstructed clone receives this ID while its
+`UPerceptionKnowledgeSourceComponent` is disabled and unregistered, before deferred spawning
+finishes. Registration and exact ID equality are validated before the clone can join the
+synchronized start.
+
+The player Source is disabled at the end of a run. Selecting the next Chrono Spawn assigns a fresh,
+collision-checked ID before re-enabling it, so T0, T1, and the current player are distinct live
+sources. Reconstructing T0 repeatedly still produces the same T0 ID. Consequently a T0 footstep
+heard and recorded during the original T1 run has the same strict event key when T1 is later
+replayed and is `Matched`; a genuinely new source still produces an unexpected observation.
+
+Identity reassignment or registration collisions are blocking setup failures with diagnostics.
+Legacy action-only timelines may omit the ID only because they also disable perceptual comparison.
+
+Every newly activated player run establishes standing as its deterministic stance baseline before
+recording starts. Crouch and uncrouch after that point are absolute, instantaneous Gameplay Actions
+and therefore remain in the immutable Action Track.
 
 When the player occupies the last available timeline, rewind still finalizes and retains that
 timeline, marks the final Chrono Spawn `Occupied`, and enters `GameOver`. It does not reconstruct a
@@ -156,9 +183,13 @@ freeze that clone's controller, Character Movement, and Gameplay Actions.
 Exact GridWorld paths carry the query context of the controller that created them, including the
 requesting Pawn's occupancy identity. `UParadoxCloneReplayExecutionStrategy` therefore copies each
 prepared clone movement request and re-stamps its exact cell sequence for that clone's controller
-immediately before submission. The consolidated `UIntentReplayTrack` is never modified. Topology,
-traversal, start-cell, and destination-contention validation still run normally against the current
-world.
+immediately before submission. If investigation moved the clone, only an `InvalidStart` path under
+`RecalculateToOriginalGoal` is replaced by a fresh controller-aware exact path from the current
+cell; one contextual warning is emitted. The consolidated `UIntentReplayTrack` is never modified.
+Topology, filter, traversal, link, goal, and destination-contention validation remain authoritative.
+
+Replay/Investigation behavior, priorities, recovery, and the native BT setup are documented in
+[CLONE_BEHAVIOR.md](CLONE_BEHAVIOR.md).
 
 The native clone strategy enables `bOverrideGoalContentionPolicy` by default and applies
 `RedirectOnCompletion` only to the runtime request copy. This lets a clone preserve the recorded

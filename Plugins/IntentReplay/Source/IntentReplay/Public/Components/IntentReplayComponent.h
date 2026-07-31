@@ -56,6 +56,14 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	SessionId);
 /** Shared signature for completed, failed, and user-stopped playback notifications. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FIntentReplayFinishedDelegate, const FIntentReplayResult&, Result);
+/** Fired after every authoritative recording/playback transition with an immutable clock snapshot. */
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FIntentReplayTimelineLifecycleDelegate,
+	const FIntentReplayTimelineLifecycleEvent&,
+	Event);
+DECLARE_MULTICAST_DELEGATE_OneParam(
+	FIntentReplayTimelineLifecycleNativeDelegate,
+	const FIntentReplayTimelineLifecycleEvent&);
 
 /**
  * Records immutable GameplayActions request snapshots and replays finalized tracks on this actor.
@@ -137,6 +145,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recording")
 	UIntentReplayTrack* GetLastFinalizedTrack() const { return LastFinalizedTrack; }
 
+	/** Read-only view of the active or most recent recording timeline. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelineClockSnapshot GetRecordingClockSnapshot() const;
+
+	/** Atomically captures recording-relative time and allocates deterministic cross-channel order. */
+	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelinePointResult CaptureRecordingTimelinePoint(
+		FIntentRecordingSessionId ExpectedSessionId);
+
 	/**
 	 * Validates a finalized track and creates recipient-local prepared requests.
 	 * Definition loading may make this asynchronous; StartReplay is legal only in Ready.
@@ -158,6 +175,28 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Playback")
 	FIntentReplayOperationResult ResumeReplay();
 
+	/**
+	 * Pauses scheduling, snapshots every currently replay-owned intent, and interrupts those actions.
+	 * The resulting snapshots must be reissued or resolved before ResumeReplay can succeed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Playback|Recovery")
+	FIntentReplayExternalInterruptionResult BeginExternalReplayInterruption(
+		FGameplayTag InterruptionReason);
+
+	/** Rebuilds and resubmits one immutable intent snapshot using the prepared replay request. */
+	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Playback|Recovery")
+	FIntentReplayRecoveryResult ReissueExternallyInterruptedIntent(
+		FRecordedIntentId RecordedIntentId);
+
+	/** Reconciles an interrupted intent whose semantic outcome is already satisfied in the world. */
+	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Playback|Recovery")
+	FIntentReplayOperationResult ResolveExternallyInterruptedIntentAsSatisfied(
+		FRecordedIntentId RecordedIntentId);
+
+	/** True while ResumeReplay is intentionally blocked by unreconciled external interruptions. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Playback|Recovery")
+	bool HasPendingExternalReplayRecovery() const;
+
 	/** Stops scheduling and cancels only handles created by the current playback session. */
 	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Playback")
 	FIntentReplayOperationResult StopReplay();
@@ -170,6 +209,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Playback")
 	UIntentReplayPlaybackSession* GetActivePlaybackSession() const { return ActivePlaybackSession; }
 
+	/** Read-only view of the most recently prepared playback timeline. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelineClockSnapshot GetPlaybackClockSnapshot() const;
+
+	/** Atomically captures playback-relative time and allocates deterministic cross-channel order. */
+	UFUNCTION(BlueprintCallable, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelinePointResult CapturePlaybackTimelinePoint(
+		FIntentReplayPlaybackSessionId ExpectedSessionId);
+
 	/** Journal for observed GameplayActions that are not assigned to a recording or playback session. */
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Journal")
 	UIntentExecutionJournal* GetAmbientExecutionJournal() const { return AmbientExecutionJournal; }
@@ -177,6 +225,12 @@ public:
 	/** Captures read-only diagnostic state without exposing mutable session internals. */
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Debug")
 	FIntentReplayDebugSnapshot GetDebugSnapshot() const;
+
+	/** Native lifecycle channel intended for optional synchronized runtime modules. */
+	FIntentReplayTimelineLifecycleNativeDelegate& OnTimelineLifecycleChangedNative()
+	{
+		return TimelineLifecycleChangedNative;
+	}
 
 	/** GameplayActions synchronous journal transaction entry point; not a general caller API. */
 	virtual FGameplayActionJournalResult WriteGameplayActionEvent_Implementation(
@@ -229,6 +283,10 @@ public:
 	/** User-requested StopReplay terminal notification. */
 	UPROPERTY(BlueprintAssignable, Category = "Intent Replay|Events")
 	FIntentReplayFinishedDelegate OnReplayStopped;
+
+	/** Generic immutable lifecycle notification; existing specialized events retain their behavior. */
+	UPROPERTY(BlueprintAssignable, Category = "Intent Replay|Events")
+	FIntentReplayTimelineLifecycleDelegate OnTimelineLifecycleChanged;
 
 	/** Optional explicit component on the same actor. When unset, the first matching component is cached. */
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Intent Replay|Binding")
@@ -285,6 +343,12 @@ private:
 	double GetCurrentTimeSeconds() const;
 	double GetRecordingElapsedSeconds(const UIntentRecordingSession& Session) const;
 	double GetPlaybackElapsedSeconds(const UIntentReplayPlaybackSession& Session) const;
+	FIntentReplayTimelinePointResult CaptureRecordingTimelinePointInternal(
+		UIntentRecordingSession& Session);
+	FIntentReplayTimelineClockSnapshot BuildRecordingClockSnapshot(
+		const UIntentRecordingSession& Session) const;
+	FIntentReplayTimelineClockSnapshot BuildPlaybackClockSnapshot(
+		const UIntentReplayPlaybackSession& Session) const;
 	bool IsReplayEvent(const FGameplayActionEvent& Event, FRecordedIntentId& OutRecordedIntentId) const;
 	bool IsTrackEligible(const FGameplayActionEvent& Event) const;
 
@@ -396,4 +460,5 @@ private:
 	bool bShuttingDown = false;
 	bool bStoppingPlayback = false;
 	FString LastDiagnostic;
+	FIntentReplayTimelineLifecycleNativeDelegate TimelineLifecycleChangedNative;
 };

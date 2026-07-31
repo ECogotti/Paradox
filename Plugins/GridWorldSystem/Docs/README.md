@@ -1,5 +1,12 @@
 # Grid World System
 
+## Exact path resumed from another cell
+
+`InvalidStart + RecalculateToOriginalGoal` remains an authorized recalculation path. AI and non-AI
+movement log recorded start, current cell, and original goal before discarding the stale path. No
+other exact validation is relaxed: topology, filter, link, traversal, occupancy, and goal
+mismatches retain their structured failure behavior.
+
 ## GameplayActions integration
 
 The optional `GameplayActionsGridWorld` bridge wraps `UGridMoveToCellTask` without adding a

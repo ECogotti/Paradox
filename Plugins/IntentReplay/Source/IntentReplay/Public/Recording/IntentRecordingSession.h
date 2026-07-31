@@ -27,6 +27,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recording")
 	FIntentReplayTrackId GetTrackId() const { return TrackId; }
 
+	/** Identity of this mutable attempt; distinct from the track it may publish. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recording")
+	FIntentRecordingSessionId GetSessionId() const { return SessionId; }
+
 	/** Number of Accepted action snapshots currently committed to mutable storage. */
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Recording")
 	int32 GetEntryCount() const { return MutableEntries.Num(); }
@@ -47,6 +51,9 @@ private:
 	/** New GUID for every StartRecording; never recycled from a previous track. */
 	UPROPERTY()
 	FIntentReplayTrackId TrackId;
+
+	UPROPERTY()
+	FIntentRecordingSessionId SessionId;
 
 	/** Immutable copy of caller options for this session. */
 	UPROPERTY()
@@ -74,6 +81,7 @@ private:
 	double PauseStartTimeSeconds = 0.0;
 	double AccumulatedPausedSeconds = 0.0;
 	double FinalRecordedDurationSeconds = 0.0;
+	int64 NextTimelineSequence = 0;
 	bool bClockPaused = false;
 
 	friend class UIntentReplayComponent;

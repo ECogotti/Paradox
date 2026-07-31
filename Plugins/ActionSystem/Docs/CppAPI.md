@@ -69,6 +69,12 @@ Per una terminazione `Interrupted` causata dallo scheduler,
 `FGameplayActionResult::CausingActionHandle` identifica l'action preempting. Il campo è invalido
 quando la terminazione non è stata causata da un'altra action.
 
+`InterruptAction(Handle, ReasonTag)` e l'operazione esplicita riservata a un sistema autorevole:
+termina una singola action accettata nello stato `Interrupted`, conserva il reason nel risultato e
+nel journal e non consulta il flag di preemption `bInterruptible`. Un reason non valido usa
+`GameplayAction.Result.Interrupted.External`. `CancelAction` mantiene invece la semantica distinta
+`Cancelled`.
+
 ## Estendere un'azione
 
 Derivare da `UGameplayActionInstance` e specializzare soltanto gli hook necessari:

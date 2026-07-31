@@ -17,6 +17,18 @@ namespace
 		TEXT("0: disabled (default)\n")
 		TEXT("1: enabled for Temporal Vision components whose local debug flag is enabled"),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxCloneBehaviorDebug(
+		TEXT("Paradox.CloneBehavior.Debug"),
+		0,
+		TEXT("Enables Paradox clone behavior diagnostics when the owning component local flag is enabled."),
+		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxFootstepDebug(
+		TEXT("Paradox.Footsteps.Debug"),
+		0,
+		TEXT("Enables project footstep-perception diagnostics when the owning adapter local flag is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -24,9 +36,23 @@ bool IsParadoxTimeLoopDebugEnabled()
 	return CVarParadoxTimeLoopDebug.GetValueOnGameThread() != 0;
 }
 
+bool IsParadoxCloneBehaviorDebugEnabled()
+{
+	return CVarParadoxCloneBehaviorDebug.GetValueOnGameThread() != 0;
+}
+
+bool IsParadoxFootstepDebugEnabled()
+{
+	return CVarParadoxFootstepDebug.GetValueOnGameThread() != 0;
+}
+
 namespace ParadoxGameplayTags
 {
 	UE_DEFINE_GAMEPLAY_TAG(Origin_Player, "GameplayAction.Origin.Player");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Action_SetCrouched,
+		"GameplayAction.Character.SetCrouched");
+	UE_DEFINE_GAMEPLAY_TAG(Lock_Stance, "GameplayAction.Lock.Stance");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Outcome_FutureObserved,
 		"Paradox.Relation.Outcome.FutureObserved");
@@ -36,4 +62,31 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Reason_SafeTemporalOrder,
 		"Paradox.Relation.Reason.SafeTemporalOrder");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Interrupted_ByInvestigation,
+		"GameplayAction.Result.Interrupted.ByInvestigation");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Interrupted_InvestigationSuperseded,
+		"GameplayAction.Result.Interrupted.InvestigationSuperseded");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Origin_Investigation,
+		"GameplayAction.Origin.Investigation");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Action_InvestigationInspect,
+		"GameplayAction.Investigation.Inspect");
+	UE_DEFINE_GAMEPLAY_TAG(
+		State_Computer_Powered,
+		"Computer.State.Powered");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Test_State_Active,
+		"Paradox.Test.State.Active");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Test_Event_Noise,
+		"Paradox.Test.Event.Noise");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Event_Noise_Character_Footstep,
+		"PerceptionKnowledge.Event.Noise.Character.Footstep");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Cause_CharacterMovement_Footstep,
+		"PerceptionKnowledge.Cause.CharacterMovement.Footstep");
 }

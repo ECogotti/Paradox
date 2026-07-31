@@ -250,6 +250,23 @@ bool FGameplayActionsLifecycleTest::RunTest(const FString& Parameters)
 		Component->CancelAction(Cancelled.Handle, FGameplayTag()), EGameplayActionOperationResult::Succeeded);
 	Component->GetActionResult(Cancelled.Handle, Result);
 	TestEqual(TEXT("Cancel terminal state"), Result.TerminalState, EGameplayActionState::Cancelled);
+	const FGameplayActionSubmissionResult Interrupted = Component->SubmitAction(MakeRequest(*Definition));
+	TestEqual(
+		TEXT("Explicit interruption succeeds"),
+		Component->InterruptAction(Interrupted.Handle, FGameplayTag()),
+		EGameplayActionOperationResult::Succeeded);
+	Component->GetActionResult(Interrupted.Handle, Result);
+	TestEqual(TEXT("Interruption terminal state"), Result.TerminalState, EGameplayActionState::Interrupted);
+	TestEqual(
+		TEXT("Invalid interruption reason uses the generic fallback"),
+		Result.ReasonTag,
+		GameplayActionTags::Result_Interrupted_External.GetTag());
+	TestEqual(
+		TEXT("A terminal action cannot be interrupted again"),
+		Component->InterruptAction(
+			Interrupted.Handle,
+			GameplayActionTags::Result_Interrupted_HigherPriority),
+		EGameplayActionOperationResult::HandleNotFound);
 	const FGameplayActionSubmissionResult Failed = Component->SubmitAction(MakeRequest(*Definition));
 	CastChecked<UGameplayActionTestInstance>(Component->GetActionInstance(Failed.Handle))->FailForTest();
 	Component->GetActionResult(Failed.Handle, Result);

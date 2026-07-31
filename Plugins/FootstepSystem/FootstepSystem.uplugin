@@ -1,0 +1,24 @@
+{
+	"FileVersion": 3,
+	"Version": 1,
+	"VersionName": "1.0.0",
+	"FriendlyName": "Footstep System",
+	"Description": "Animation-driven, surface-aware footstep events with data-driven audio, Niagara, decals, and runtime diagnostics.",
+	"Category": "Gameplay",
+	"CreatedBy": "Paradox",
+	"CanContainContent": true,
+	"IsBetaVersion": true,
+	"Modules": [
+		{
+			"Name": "FootstepSystem",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "Niagara",
+			"Enabled": true
+		}
+	]
+}

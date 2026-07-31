@@ -13,11 +13,20 @@
 			"Name": "IntentReplay",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "IntentReplayPerception",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
 		}
 	],
 	"Plugins": [
 		{
 			"Name": "GameplayActions",
+			"Enabled": true
+		},
+		{
+			"Name": "PerceptionKnowledge",
 			"Enabled": true
 		}
 	]

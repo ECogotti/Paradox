@@ -1,5 +1,8 @@
 # GameplayActionsGridWorld runtime module
 
+AI and non-AI paths make intentional different-start recalculation observable through their module
+log while preserving strict validation for every other mismatch.
+
 The module owns the native Grid Move Definition, action instance, tags, logging category, and tests.
 AIControllers call the exported GridWorld task directly instead of duplicating navigation or goal
 contention. Other Controllers project the requested goal through GridWorld and execute the resulting
