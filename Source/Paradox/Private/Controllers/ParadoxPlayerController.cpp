@@ -1,6 +1,7 @@
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Controllers/ParadoxPlayerController.h"
+#include "Actions/ParadoxSetCrouchedActionDefinition.h"
 #include "Actions/GameplayActionDefinition.h"
 #include "Actions/GridMoveToCellActionDefinition.h"
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
@@ -8,9 +9,14 @@
 #include "Camera/ParadoxCameraBoundsVolume.h"
 #include "Camera/ParadoxCameraRig.h"
 #include "Components/GameplayActionComponent.h"
+#include "Components/PerceptionKnowledgeHearingRangeRendererComponent.h"
+#include "Components/PerceptionKnowledgeListenerComponent.h"
+#include "Data/PerceptionKnowledgeProfile.h"
 #include "Components/TacticalPauseActionQueueComponent.h"
 #include "DrawDebugHelpers.h"
 #include "GameplayActionTags.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
 #include "InputAction.h"
 #include "NiagaraSystem.h"
 #include "NiagaraFunctionLibrary.h"
@@ -65,6 +71,17 @@ AParadoxPlayerController::AParadoxPlayerController()
 	OutcomePresentationComponent =
 		CreateDefaultSubobject<UParadoxOutcomePresentationComponent>(
 			TEXT("Outcome Presentation Component"));
+	PerceptionKnowledgeListener =
+		CreateDefaultSubobject<UPerceptionKnowledgeListenerComponent>(
+			TEXT("PerceptionKnowledgeListener"));
+	HearingRangeRenderer =
+		CreateDefaultSubobject<
+			UPerceptionKnowledgeHearingRangeRendererComponent>(
+			TEXT("PerceptionKnowledgeHearingRangeRenderer"));
+	PerceptionProfile =
+		CreateDefaultSubobject<UPerceptionKnowledgeProfile>(
+			TEXT("DefaultPerceptionKnowledgeProfile"));
+	PerceptionKnowledgeListener->SetListenerProfile(PerceptionProfile);
 
 	// configure the controller
 	bShowMouseCursor = true;
@@ -79,12 +96,58 @@ AParadoxPlayerController::AParadoxPlayerController()
 	{
 		MoveToGridCellActionDefinition = MoveToGridCellDefinitionFinder.Object;
 	}
+	static ConstructorHelpers::FObjectFinder<UGameplayActionDefinition> SetCrouchedDefinitionFinder(
+		TEXT("/Game/Data/GameplayActions/DA_ParadoxSetCrouched.DA_ParadoxSetCrouched"));
+	if (SetCrouchedDefinitionFinder.Succeeded())
+	{
+		SetCrouchedActionDefinition = SetCrouchedDefinitionFinder.Object;
+	}
 	GridPathPreviewComponent->GoalContentionPolicy = MoveGoalContentionPolicy;
+}
+
+void AParadoxPlayerController::GetActorEyesViewPoint(
+	FVector& OutLocation,
+	FRotator& OutRotation) const
+{
+	const APawn* PossessedPawn = GetPawn();
+	if (!IsValid(PossessedPawn))
+	{
+		Super::GetActorEyesViewPoint(OutLocation, OutRotation);
+		return;
+	}
+
+	FRotator IgnoredPawnViewRotation;
+	PossessedPawn->GetActorEyesViewPoint(
+		OutLocation,
+		IgnoredPawnViewRotation);
+	OutRotation = PossessedPawn->GetActorRotation();
 }
 
 void AParadoxPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	if (PerceptionKnowledgeListener)
+	{
+		UPerceptionKnowledgeProfile* ListenerProfile =
+			PerceptionKnowledgeListener->GetListenerProfile();
+		const bool bUsesControllerOwnedFallback =
+			ListenerProfile && ListenerProfile->IsIn(this);
+		UPerceptionKnowledgeProfile* DesiredProfile =
+			(!ListenerProfile || bUsesControllerOwnedFallback)
+				&& PerceptionProfile
+				? PerceptionProfile.Get()
+				: ListenerProfile;
+
+		// Preserve a Profile authored directly on the Listener component. The controller-level
+		// property only replaces an empty Listener or this controller's native fallback. Reapply
+		// the selected Profile after Blueprint component-template serialization so native sense
+		// configs and renderers cannot retain constructor fallback values.
+		if (DesiredProfile)
+		{
+			PerceptionKnowledgeListener->SetListenerProfile(
+				DesiredProfile);
+		}
+	}
 	EnsureFreeCameraInitialized(false);
 	TacticalPauseSubsystem = GetWorld()
 		? GetWorld()->GetSubsystem<UTacticalPauseWorldSubsystem>()
@@ -242,6 +305,14 @@ void AParadoxPlayerController::SetupInputComponent()
 					ETriggerEvent::Started,
 					this,
 					&AParadoxPlayerController::OnRewindTriggered);
+			}
+			if (CrouchAction)
+			{
+				EnhancedInputComponent->BindAction(
+					CrouchAction,
+					ETriggerEvent::Started,
+					this,
+					&AParadoxPlayerController::OnCrouchTriggered);
 			}
 			if (CameraMoveAction)
 			{
@@ -438,6 +509,33 @@ void AParadoxPlayerController::OnRewindTriggered()
 			TEXT("Rewind input was rejected for controller '%s': %s"),
 			*GetNameSafe(this),
 			*Result.DiagnosticMessage);
+	}
+}
+
+void AParadoxPlayerController::OnCrouchTriggered()
+{
+	ACharacter* PossessedCharacter = Cast<ACharacter>(GetPawn());
+	if (!PossessedCharacter)
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Crouch input on controller '%s' has no possessed Character."),
+			*GetNameSafe(this));
+		return;
+	}
+
+	const UCharacterMovementComponent* CharacterMovement =
+		PossessedCharacter->GetCharacterMovement();
+	const bool bDesiredCrouched =
+		!(PossessedCharacter->IsCrouched()
+			|| (CharacterMovement && CharacterMovement->bWantsToCrouch));
+	const FGameplayActionSubmissionResult Submission =
+		RequestSetCrouched(bDesiredCrouched);
+	if (!Submission.IsAccepted())
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Set Crouched submission failed for controller '%s': %s"),
+			*GetNameSafe(this),
+			*Submission.DiagnosticMessage);
 	}
 }
 
@@ -1224,6 +1322,76 @@ FGameplayActionSubmissionResult AParadoxPlayerController::RequestMoveAlongGridPa
 		EGridMovePathSource::ExactInjectedPath,
 		CachedDestination,
 		&InjectedPath);
+}
+
+FGameplayActionSubmissionResult AParadoxPlayerController::RequestSetCrouched(
+	const bool bDesiredCrouched)
+{
+	FGameplayActionSubmissionResult Failure;
+	Failure.Status = EGameplayActionSubmissionStatus::RejectedInvalidRequest;
+	Failure.ReasonTag = GameplayActionTags::Result_Failure_InvalidRequest;
+	if (!IsMovementInputAllowed())
+	{
+		Failure.DiagnosticMessage =
+			TEXT("Player stance input is disabled outside the ActiveRun time-loop phase.");
+		return Failure;
+	}
+
+	AParadoxPlayerCharacter* ParadoxCharacter =
+		Cast<AParadoxPlayerCharacter>(GetPawn());
+	UGameplayActionComponent* ActionComponent =
+		ParadoxCharacter
+			? ParadoxCharacter->GetGameplayActionComponent()
+			: nullptr;
+	if (!ActionComponent)
+	{
+		Failure.DiagnosticMessage =
+			TEXT("The possessed Paradox Player Character has no Gameplay Action Component.");
+		return Failure;
+	}
+	if (!SetCrouchedActionDefinition)
+	{
+		Failure.DiagnosticMessage =
+			TEXT("Set Crouched Action Definition is not configured.");
+		return Failure;
+	}
+
+	FGameplayActionRequestCreationResult Creation =
+		UGameplayActionBlueprintLibrary::CreateActionRequest(
+			SetCrouchedActionDefinition);
+	if (!Creation.WasCreated())
+	{
+		Failure.DiagnosticMessage = Creation.DiagnosticMessage;
+		return Failure;
+	}
+
+	bPendingDesiredCrouched = bDesiredCrouched;
+	const FProperty* DesiredCrouchedProperty = FindFProperty<FProperty>(
+		StaticClass(),
+		GET_MEMBER_NAME_CHECKED(
+			AParadoxPlayerController,
+			bPendingDesiredCrouched));
+	const EGameplayActionParameterAccessResult ParameterResult =
+		UGameplayActionBlueprintLibrary::SetRequestParameterFromProperty(
+			Creation.Request,
+			ParadoxSetCrouchedActionParameters::DesiredCrouched,
+			DesiredCrouchedProperty,
+			DesiredCrouchedProperty
+				? DesiredCrouchedProperty->ContainerPtrToValuePtr<void>(this)
+				: nullptr);
+	if (ParameterResult != EGameplayActionParameterAccessResult::Success)
+	{
+		Failure.DiagnosticMessage =
+			TEXT("The Set Crouched Definition does not expose a compatible DesiredCrouched parameter.");
+		return Failure;
+	}
+
+	UGameplayActionBlueprintLibrary::SetRequestContext(
+		Creation.Request,
+		ParadoxGameplayTags::Origin_Player,
+		this,
+		FGameplayActionCorrelationData());
+	return ActionComponent->SubmitAction(Creation.Request);
 }
 
 FParadoxTimeLoopOperationResult AParadoxPlayerController::RequestTimeRewind()

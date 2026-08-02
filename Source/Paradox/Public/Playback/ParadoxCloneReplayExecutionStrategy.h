@@ -41,4 +41,8 @@ public:
 	virtual FGameplayActionSubmissionResult SubmitPreparedRequest(
 		UGameplayActionComponent* ActionComponent,
 		const FGameplayActionRequest& Request) const override;
+
+private:
+	/** Game-thread-only suppression for the required once-per-intent recovery warning. */
+	mutable TSet<FGuid> WarnedDifferentStartIntents;
 };

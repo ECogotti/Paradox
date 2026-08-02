@@ -3,14 +3,19 @@
 #include "Characters/ParadoxCharacter.h"
 #include "Characters/ParadoxCloneCharacter.h"
 #include "Characters/ParadoxPlayerCharacter.h"
+#include "Behavior/ParadoxCloneBehaviorCoordinatorComponent.h"
 #include "Actions/GridMoveToCellActionDefinition.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/GameplayActionComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Components/IntentReplayComponent.h"
+#include "Components/IntentReplayObservationComponent.h"
+#include "Components/PerceptionKnowledgeListenerComponent.h"
+#include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Controllers/ParadoxCloneController.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Data/EntityRelationPolicySet.h"
+#include "Data/IntentReplayTimelineBundle.h"
 #include "EngineUtils.h"
 #include "EntityRelationTags.h"
 #include "GameFramework/CharacterMovementComponent.h"
@@ -109,11 +114,12 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 	}
 	if (!PlayerCharacter->GetGameplayActionComponent()
 		|| !PlayerCharacter->GetIntentReplayComponent()
-		|| !PlayerCharacter->GetTemporalEntityComponent())
+		|| !PlayerCharacter->GetTemporalEntityComponent()
+		|| !PlayerCharacter->GetPerceptionKnowledgeSourceComponent())
 	{
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::MissingComponent,
-			TEXT("The player is missing a required Gameplay Actions, Intent Replay, or temporal identity component."),
+			TEXT("The player is missing a required Gameplay Actions, Intent Replay, temporal identity, or Perception Knowledge Source component."),
 			true);
 	}
 
@@ -315,11 +321,45 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 			TEXT("Intent Replay returned no valid immutable track after immediate finalization."),
 			true);
 	}
+	UIntentReplayObservationComponent* ObservationReplay =
+		PlayerCharacter->GetObservationReplayComponent();
+	UIntentReplayTimelineBundle* TimelineBundle = ObservationReplay
+		? ObservationReplay->GetLastTimelineBundle()
+		: nullptr;
+	if (IsValid(TimelineBundle)
+		&& (!TimelineBundle->ValidateBundle().bValid
+			|| TimelineBundle->GetActionTrack() != FinalizedTrack))
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RecordingFailed,
+			TEXT("The synchronized observation recorder published an invalid or mismatched Timeline Bundle for the finalized Action Track."),
+			true);
+	}
+	if (!IsValid(TimelineBundle))
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("The finalized run has no synchronized Timeline Bundle and is being retained as a legacy action-only timeline; perceptual comparison will be unavailable for its clone."));
+	}
+	UPerceptionKnowledgeSourceComponent* PlayerPerceptionSource =
+		PlayerCharacter->GetPerceptionKnowledgeSourceComponent();
+	if (!PlayerPerceptionSource
+		|| !PlayerPerceptionSource->IsSemanticallyRegistered()
+		|| !PlayerPerceptionSource->GetEntityId().IsValid())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RecordingFailed,
+			TEXT("The finalized player run has no registered, valid Perception Knowledge identity to transfer to its clone."),
+			true);
+	}
+	const FPerceptionKnowledgeEntityId AvatarPerceptionEntityId =
+		PlayerPerceptionSource->GetEntityId();
 
 	FParadoxConsolidatedTimeline& Timeline = ConsolidatedTimelines.AddDefaulted_GetRef();
 	Timeline.TemporalIndex = ConsolidatedTimelines.Num() - 1;
 	Timeline.ChronoSpawn = SelectedChronoSpawn;
 	Timeline.ReplayTrack = FinalizedTrack;
+	Timeline.TimelineBundle = TimelineBundle;
+	Timeline.AvatarPerceptionEntityId = AvatarPerceptionEntityId;
 	SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Occupied);
 
 	const FParadoxTimeLoopOperationResult ConsolidatedResult = MakeResult(
@@ -857,6 +897,47 @@ bool UParadoxTimeLoopComponent::ActivatePlayerAtSelectedSpawn(FString& OutFailur
 		return false;
 	}
 
+	UPerceptionKnowledgeSourceComponent* PerceptionSource =
+		PlayerCharacter->GetPerceptionKnowledgeSourceComponent();
+	if (!PerceptionSource)
+	{
+		OutFailure =
+			TEXT("The player has no Perception Knowledge Source to identify the new run.");
+		return false;
+	}
+	const FPerceptionKnowledgeOperationResult DisableSourceResult =
+		PerceptionSource->SetSourceEnabled(false);
+	if (!DisableSourceResult.IsSuccess())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Player Perception Source could not be disabled before assigning a new run identity: %s"),
+			*DisableSourceResult.Message);
+		return false;
+	}
+	const FPerceptionKnowledgeEntityId NewRunEntityId =
+		FPerceptionKnowledgeEntityId::NewId();
+	const FPerceptionKnowledgeOperationResult IdentityResult =
+		PerceptionSource->AssignEntityId(NewRunEntityId);
+	if (!IdentityResult.IsSuccess())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Player Perception Source rejected the new run identity %s: %s"),
+			*NewRunEntityId.ToString(),
+			*IdentityResult.Message);
+		return false;
+	}
+	const FPerceptionKnowledgeOperationResult EnableSourceResult =
+		PerceptionSource->SetSourceEnabled(true);
+	if (!EnableSourceResult.IsSuccess()
+		|| !PerceptionSource->IsSemanticallyRegistered())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Player Perception Source could not register identity %s for the new run: %s"),
+			*NewRunEntityId.ToString(),
+			*EnableSourceResult.Message);
+		return false;
+	}
+
 	PlayerCharacter->SetActorTransform(
 		SelectedChronoSpawn->GetActorTransform(),
 		false,
@@ -868,6 +949,19 @@ bool UParadoxTimeLoopComponent::ActivatePlayerAtSelectedSpawn(FString& OutFailur
 	if (UCharacterMovementComponent* Movement = PlayerCharacter->GetCharacterMovement())
 	{
 		Movement->SetMovementMode(MOVE_Walking);
+		PlayerCharacter->UnCrouch();
+		if (PlayerCharacter->IsCrouched())
+		{
+			// ACharacter::UnCrouch records the persistent desire for the next movement update.
+			// Apply the matching Character Movement operation now as the deterministic run baseline.
+			Movement->UnCrouch(false);
+		}
+		if (PlayerCharacter->IsCrouched() || Movement->bWantsToCrouch)
+		{
+			OutFailure =
+				TEXT("The player could not establish the standing baseline for the new run.");
+			return false;
+		}
 	}
 	return true;
 }
@@ -882,6 +976,22 @@ void UParadoxTimeLoopComponent::DeactivatePlayer()
 	if (UGameplayActionComponent* Actions = PlayerCharacter->GetGameplayActionComponent())
 	{
 		Actions->AbortAllActions(GameplayActionTags::Result_Aborted_SystemReset);
+	}
+	if (UPerceptionKnowledgeSourceComponent* PerceptionSource =
+		PlayerCharacter->GetPerceptionKnowledgeSourceComponent())
+	{
+		const FPerceptionKnowledgeOperationResult DisableResult =
+			PerceptionSource->SetSourceEnabled(false);
+		if (!DisableResult.IsSuccess()
+			|| PerceptionSource->IsSemanticallyRegistered()
+			|| PerceptionSource->IsNativeStimuliSourceRegistered())
+		{
+			PARADOX_LOG_ERROR(
+				TEXT("Player '%s' Perception Source could not fully unregister identity %s during deactivation: %s"),
+				*GetNameSafe(PlayerCharacter),
+				*PerceptionSource->GetEntityId().ToString(),
+				*DisableResult.Message);
+		}
 	}
 	if (UCharacterMovementComponent* Movement = PlayerCharacter->GetCharacterMovement())
 	{
@@ -970,6 +1080,31 @@ bool UParadoxTimeLoopComponent::PreparePlayerRecorder(FString& OutFailure)
 	{
 		OutFailure =
 			TEXT("The player already owns a non-terminal recording session during run preparation.");
+		return false;
+	}
+	UIntentReplayObservationComponent* Observation =
+		PlayerCharacter->GetObservationReplayComponent();
+	AParadoxPlayerController* Controller = GetWorld()
+		? Cast<AParadoxPlayerController>(GetWorld()->GetFirstPlayerController())
+		: nullptr;
+	UPerceptionKnowledgeListenerComponent* Listener = Controller
+		? Controller->GetPerceptionKnowledgeListener()
+		: nullptr;
+	if (!Observation || !Listener)
+	{
+		OutFailure =
+			TEXT("The player is missing synchronized Observation Replay or its controller-owned PerceptionKnowledge listener.");
+		return false;
+	}
+	Observation->SetIntentReplaySource(Replay);
+	Observation->SetPerceptionKnowledgeListener(Listener);
+	const FIntentReplayObservationOperationResult ObservationInitialization =
+		Observation->InitializeObservationReplay();
+	if (!ObservationInitialization.Succeeded())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Player Observation Replay initialization failed: %s"),
+			*ObservationInitialization.DiagnosticMessage);
 		return false;
 	}
 	return true;
@@ -1515,6 +1650,15 @@ bool UParadoxTimeLoopComponent::PrepareClonePlaybacks(FString& OutFailure)
 		Runtime.ReplayComponent = Replay;
 		Runtime.TemporalIndex =
 			Temporal ? Temporal->GetTemporalIndex() : INDEX_NONE;
+		const FParadoxConsolidatedTimeline* SourceTimeline =
+			ConsolidatedTimelines.FindByPredicate(
+				[&Runtime](const FParadoxConsolidatedTimeline& Timeline)
+				{
+					return Timeline.TemporalIndex == Runtime.TemporalIndex;
+				});
+		Runtime.TimelineBundle = SourceTimeline
+			? SourceTimeline->TimelineBundle
+			: nullptr;
 
 		if (!Temporal
 			|| !Temporal->HasValidTemporalIndex()
@@ -1563,6 +1707,31 @@ bool UParadoxTimeLoopComponent::PrepareClonePlaybacks(FString& OutFailure)
 		Runtime.SessionId = PrepareResult.SessionId;
 		if (PrepareResult.Status == EIntentReplayPrepareStatus::Ready)
 		{
+			UParadoxCloneBehaviorCoordinatorComponent* Coordinator =
+				Clone->GetBehaviorCoordinator();
+			AParadoxCloneController* Controller =
+				Cast<AParadoxCloneController>(Clone->GetController());
+			const FParadoxCloneBehaviorOperationResult BehaviorInitialization =
+				Coordinator
+					? Coordinator->InitializeForRun(
+						Runtime.TimelineBundle.Get())
+					: FParadoxCloneBehaviorOperationResult();
+			FString BehaviorTreeFailure;
+			if (!Coordinator || !BehaviorInitialization.IsSuccess()
+				|| !Controller
+				|| !Controller->StartCloneBehaviorTree(
+					BehaviorTreeFailure))
+			{
+				FIntentReplayFailure Failure;
+				Failure.DiagnosticMessage = !BehaviorInitialization.IsSuccess()
+					? BehaviorInitialization.DiagnosticMessage
+					: BehaviorTreeFailure;
+				MarkClonePlaybackFailed(
+					Runtime,
+					Failure,
+					EIntentReplayPlaybackState::Failed);
+				continue;
+			}
 			Runtime.State = EParadoxClonePlaybackState::Ready;
 			OnClonePlaybackReady.Broadcast(
 				MakeClonePlaybackSnapshot(Runtime));
@@ -1618,23 +1787,21 @@ void UParadoxTimeLoopComponent::TryReleaseSynchronizedStart()
 		}
 
 		SetClonePlaybackMovementEnabled(*Clone, true);
-		const FIntentReplayOperationResult StartResult =
-			Replay->StartReplay();
-		if (!StartResult.Succeeded())
+		UParadoxCloneBehaviorCoordinatorComponent* Coordinator =
+			Clone->GetBehaviorCoordinator();
+		const FParadoxCloneBehaviorOperationResult Authorization =
+			Coordinator
+				? Coordinator->AuthorizeReplayStart()
+				: FParadoxCloneBehaviorOperationResult();
+		if (!Coordinator || !Authorization.IsSuccess())
 		{
+			FIntentReplayFailure Failure;
+			Failure.DiagnosticMessage = Authorization.DiagnosticMessage;
 			MarkClonePlaybackFailed(
 				Runtime,
-				StartResult.Failure,
+				Failure,
 				Replay->GetPlaybackState());
 			continue;
-		}
-		if (Runtime.State == EParadoxClonePlaybackState::Ready)
-		{
-			Runtime.State = Replay->GetPlaybackState()
-					== EIntentReplayPlaybackState::Completed
-				? EParadoxClonePlaybackState::Completed
-				: EParadoxClonePlaybackState::Playing;
-			BroadcastClonePlaybackState(Runtime);
 		}
 	}
 
@@ -2034,9 +2201,39 @@ void UParadoxTimeLoopComponent::HandleCloneReplayPrepared(
 	}
 	else
 	{
-		Runtime->State = EParadoxClonePlaybackState::Ready;
-		OnClonePlaybackReady.Broadcast(
-			MakeClonePlaybackSnapshot(*Runtime));
+		AParadoxCloneCharacter* MutableClone = Runtime->Clone.Get();
+		UParadoxCloneBehaviorCoordinatorComponent* Coordinator =
+			MutableClone ? MutableClone->GetBehaviorCoordinator() : nullptr;
+		AParadoxCloneController* Controller = MutableClone
+			? Cast<AParadoxCloneController>(MutableClone->GetController())
+			: nullptr;
+		const FParadoxCloneBehaviorOperationResult BehaviorInitialization =
+			Coordinator
+				? Coordinator->InitializeForRun(
+					Runtime->TimelineBundle.Get())
+				: FParadoxCloneBehaviorOperationResult();
+		FString BehaviorTreeFailure;
+		if (!Coordinator || !BehaviorInitialization.IsSuccess()
+			|| !Controller
+			|| !Controller->StartCloneBehaviorTree(
+				BehaviorTreeFailure))
+		{
+			FIntentReplayFailure Failure;
+			Failure.DiagnosticMessage =
+				!BehaviorInitialization.IsSuccess()
+					? BehaviorInitialization.DiagnosticMessage
+					: BehaviorTreeFailure;
+			MarkClonePlaybackFailed(
+				*Runtime,
+				Failure,
+				EIntentReplayPlaybackState::Failed);
+		}
+		else
+		{
+			Runtime->State = EParadoxClonePlaybackState::Ready;
+			OnClonePlaybackReady.Broadcast(
+				MakeClonePlaybackSnapshot(*Runtime));
+		}
 	}
 	TryReleaseSynchronizedStart();
 }
@@ -2166,6 +2363,51 @@ bool UParadoxTimeLoopComponent::ReconstructConsolidatedClones(FString& OutFailur
 			Replay->ExecutionStrategyClass =
 				UParadoxCloneReplayExecutionStrategy::StaticClass();
 		}
+		UPerceptionKnowledgeSourceComponent* ClonePerceptionSource =
+			Clone->GetPerceptionKnowledgeSourceComponent();
+		if (!ClonePerceptionSource)
+		{
+			OutFailure = FString::Printf(
+				TEXT("Clone %d has no Perception Knowledge Source."),
+				Timeline.TemporalIndex);
+			Clone->Destroy();
+			return false;
+		}
+		if (Timeline.AvatarPerceptionEntityId.IsValid())
+		{
+			const FPerceptionKnowledgeOperationResult DisableSourceResult =
+				ClonePerceptionSource->SetSourceEnabled(false);
+			const FPerceptionKnowledgeOperationResult IdentityResult =
+				DisableSourceResult.IsSuccess()
+					? ClonePerceptionSource->AssignEntityId(
+						Timeline.AvatarPerceptionEntityId)
+					: DisableSourceResult;
+			const FPerceptionKnowledgeOperationResult EnableSourceResult =
+				IdentityResult.IsSuccess()
+					? ClonePerceptionSource->SetSourceEnabled(true)
+					: IdentityResult;
+			if (!DisableSourceResult.IsSuccess()
+				|| !IdentityResult.IsSuccess()
+				|| !EnableSourceResult.IsSuccess())
+			{
+				OutFailure = FString::Printf(
+					TEXT("Clone %d could not inherit Perception Entity ID %s before spawning: disable='%s', assign='%s', enable='%s'."),
+					Timeline.TemporalIndex,
+					*Timeline.AvatarPerceptionEntityId.ToString(),
+					*DisableSourceResult.Message,
+					*IdentityResult.Message,
+					*EnableSourceResult.Message);
+				Clone->Destroy();
+				return false;
+			}
+		}
+		else
+		{
+			PARADOX_LOG_WARNING(
+				TEXT("Legacy action-only timeline %d has no stable Perception Entity ID; clone '%s' uses a fresh identity and has no perceptual comparison."),
+				Timeline.TemporalIndex,
+				*GetNameSafe(Clone));
+		}
 		Clone->FinishSpawning(
 			CloneTransform,
 			false,
@@ -2183,6 +2425,22 @@ bool UParadoxTimeLoopComponent::ReconstructConsolidatedClones(FString& OutFailur
 			OutFailure = FString::Printf(
 				TEXT("Clone %d did not complete BeginPlay during reconstruction."),
 				Timeline.TemporalIndex);
+			return false;
+		}
+		if (Timeline.AvatarPerceptionEntityId.IsValid()
+			&& (!ClonePerceptionSource->IsSemanticallyRegistered()
+				|| ClonePerceptionSource->GetEntityId()
+					!= Timeline.AvatarPerceptionEntityId))
+		{
+			OutFailure = FString::Printf(
+				TEXT("Clone %d finished spawning without registering inherited Perception Entity ID %s (current %s, registered=%s)."),
+				Timeline.TemporalIndex,
+				*Timeline.AvatarPerceptionEntityId.ToString(),
+				*ClonePerceptionSource->GetEntityId().ToString(),
+				ClonePerceptionSource->IsSemanticallyRegistered()
+					? TEXT("true")
+					: TEXT("false"));
+			Clone->Destroy();
 			return false;
 		}
 		RuntimeClones.Add(Clone);

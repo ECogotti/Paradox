@@ -60,6 +60,17 @@ bEnableDebug = true
 
 `GetDebugSnapshot` espone binding, stato recording/playback, ID, conteggi, drain pendenti, prossimo indice, handle posseduti e ultima diagnostica. Il plugin aggiunge scope Unreal Insights alle operazioni principali di recording, preparazione e submit.
 
+Il modulo opzionale usa una categoria e un gate separati:
+
+```text
+LogIntentReplayPerception
+IntentReplayPerception.Debug 1
+bEnableDebug = true
+```
+
+Per colori, HUD, filtri, dump e matching consultare
+[`IntentReplayPerception/Docs/DEBUGGING.md`](../Source/IntentReplayPerception/Docs/DEBUGGING.md).
+
 ## Problemi comuni
 
 ### Il track ha zero entry
@@ -123,6 +134,7 @@ Le suite principali sono:
 
 ```text
 IntentReplay.*
+IntentReplayPerception.*
 GameplayActions.*
 ```
 

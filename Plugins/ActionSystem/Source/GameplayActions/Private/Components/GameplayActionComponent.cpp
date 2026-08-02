@@ -307,6 +307,38 @@ EGameplayActionOperationResult UGameplayActionComponent::CancelAction(const FGam
 	return EGameplayActionOperationResult::Succeeded;
 }
 
+EGameplayActionOperationResult UGameplayActionComponent::InterruptAction(
+	const FGameplayActionHandle Handle,
+	FGameplayTag ReasonTag)
+{
+	if (!IsInGameThread())
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+	if (bInInitialJournalTransaction || bInValidationCallback || bInInitCallback)
+	{
+		return EGameplayActionOperationResult::RejectedReentrant;
+	}
+	UGameplayActionInstance* Instance = GetActionInstance(Handle);
+	if (!Instance)
+	{
+		return EGameplayActionOperationResult::HandleNotFound;
+	}
+	if (!IsRuntimeState(Instance->State) || Instance->State == EGameplayActionState::Ending)
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+
+	FinishActionInternal(
+		*Instance,
+		EGameplayActionState::Interrupted,
+		ReasonTag.IsValid() ? ReasonTag : GameplayActionTags::Result_Interrupted_External,
+		TEXT("Action interrupted by an external system authority."),
+		true);
+	FlushEventQueue();
+	return EGameplayActionOperationResult::Succeeded;
+}
+
 int32 UGameplayActionComponent::AbortAllActions(FGameplayTag ReasonTag)
 {
 	if (!IsInGameThread())

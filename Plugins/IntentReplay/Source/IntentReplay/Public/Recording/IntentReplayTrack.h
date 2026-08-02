@@ -22,7 +22,11 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Track")
 	FIntentReplayTrackId GetTrackId() const { return TrackId; }
 
-	/** Serialized format contract used by ValidateTrack; currently version 1. */
+	/** Recording attempt that produced this track; valid for format 2 and later. */
+	UFUNCTION(BlueprintPure, Category = "Intent Replay|Track")
+	FIntentRecordingSessionId GetSourceRecordingSessionId() const { return SourceRecordingSessionId; }
+
+	/** Serialized format contract used by ValidateTrack; version 2 is current, version 1 is legacy. */
 	UFUNCTION(BlueprintPure, Category = "Intent Replay|Track")
 	int32 GetFormatVersion() const { return FormatVersion; }
 
@@ -65,6 +69,7 @@ private:
 	/** One-way publication step called only by UIntentReplayComponent. */
 	void InitializeFinalized(
 		FIntentReplayTrackId InTrackId,
+		FIntentRecordingSessionId InSourceRecordingSessionId,
 		TArray<FRecordedIntent>&& InEntries,
 		double InRecordedDurationSeconds,
 		FString InSourceLabel,
@@ -74,9 +79,12 @@ private:
 	UPROPERTY()
 	FIntentReplayTrackId TrackId;
 
+	UPROPERTY()
+	FIntentRecordingSessionId SourceRecordingSessionId;
+
 	/** Format used to reject unsupported future/legacy layouts explicitly. */
 	UPROPERTY()
-	int32 FormatVersion = 1;
+	int32 FormatVersion = 2;
 
 	/** Immutable after InitializeFinalized returns. */
 	UPROPERTY()
@@ -99,4 +107,5 @@ private:
 	bool bFinalized = false;
 
 	friend class UIntentReplayComponent;
+	friend struct FIntentReplayCoreTestAccessor;
 };

@@ -37,7 +37,7 @@ FIntentReplayTrackValidationResult UIntentReplayTrack::ValidateTrack() const
 		Result.DiagnosticMessage = TEXT("The replay track is not finalized.");
 		return Result;
 	}
-	if (FormatVersion != 1)
+	if (FormatVersion != 1 && FormatVersion != 2)
 	{
 		Result.DiagnosticMessage = FString::Printf(TEXT("Unsupported replay track format version %d."), FormatVersion);
 		return Result;
@@ -47,6 +47,11 @@ FIntentReplayTrackValidationResult UIntentReplayTrack::ValidateTrack() const
 		Result.DiagnosticMessage = TEXT("The replay track has an invalid Track ID.");
 		return Result;
 	}
+	if (FormatVersion >= 2 && !SourceRecordingSessionId.IsValid())
+	{
+		Result.DiagnosticMessage = TEXT("The replay track has an invalid source Recording Session ID.");
+		return Result;
+	}
 	if (!FMath::IsFinite(RecordedDurationSeconds) || RecordedDurationSeconds < 0.0)
 	{
 		Result.DiagnosticMessage = TEXT("The replay track duration is invalid.");
@@ -54,8 +59,9 @@ FIntentReplayTrackValidationResult UIntentReplayTrack::ValidateTrack() const
 	}
 
 	TSet<FRecordedIntentId> UniqueIds;
+	TSet<int64> UniqueTimelineSequences;
 	double PreviousTime = -1.0;
-	int32 PreviousSequence = INDEX_NONE;
+	int64 PreviousTimelineSequence = INDEX_NONE;
 	for (int32 Index = 0; Index < Entries.Num(); ++Index)
 	{
 		const FRecordedIntent& Entry = Entries[Index];
@@ -84,15 +90,24 @@ FIntentReplayTrackValidationResult UIntentReplayTrack::ValidateTrack() const
 			Result.DiagnosticMessage = TEXT("Track sequence indices are not contiguous.");
 			return Result;
 		}
+		const int64 EffectiveTimelineSequence =
+			FormatVersion >= 2 ? Entry.TimelineSequence : Entry.TrackSequence;
+		if (EffectiveTimelineSequence < 0
+			|| (FormatVersion >= 2 && UniqueTimelineSequences.Contains(EffectiveTimelineSequence)))
+		{
+			Result.DiagnosticMessage = TEXT("Timeline sequence indices are invalid or duplicated.");
+			return Result;
+		}
+		UniqueTimelineSequences.Add(EffectiveTimelineSequence);
 		if (Entry.RelativeAcceptedTimeSeconds < PreviousTime
 			|| (FMath::IsNearlyEqual(Entry.RelativeAcceptedTimeSeconds, PreviousTime)
-				&& Entry.TrackSequence <= PreviousSequence))
+				&& EffectiveTimelineSequence <= PreviousTimelineSequence))
 		{
 			Result.DiagnosticMessage = TEXT("Recorded intents are not deterministically ordered.");
 			return Result;
 		}
 		PreviousTime = Entry.RelativeAcceptedTimeSeconds;
-		PreviousSequence = Entry.TrackSequence;
+		PreviousTimelineSequence = EffectiveTimelineSequence;
 	}
 
 	Result.bValid = true;
@@ -102,6 +117,7 @@ FIntentReplayTrackValidationResult UIntentReplayTrack::ValidateTrack() const
 
 void UIntentReplayTrack::InitializeFinalized(
 	const FIntentReplayTrackId InTrackId,
+	const FIntentRecordingSessionId InSourceRecordingSessionId,
 	TArray<FRecordedIntent>&& InEntries,
 	const double InRecordedDurationSeconds,
 	FString InSourceLabel,
@@ -110,10 +126,11 @@ void UIntentReplayTrack::InitializeFinalized(
 	// This is the sole mutation point. The component calls it once after moving entries out of the
 	// recording session, and no public mutator exists afterward.
 	TrackId = InTrackId;
+	SourceRecordingSessionId = InSourceRecordingSessionId;
 	Entries = MoveTemp(InEntries);
 	RecordedDurationSeconds = FMath::Max(0.0, InRecordedDurationSeconds);
 	SourceLabel = MoveTemp(InSourceLabel);
 	MetadataTags = MoveTemp(InMetadataTags);
-	FormatVersion = 1;
+	FormatVersion = 2;
 	bFinalized = true;
 }

@@ -13,6 +13,18 @@ L’architettura supporta il trasferimento della registrazione fra entità diver
 7. Chiama `PrepareReplay`; se il risultato è `Preparing`, attende `OnReplayPrepared`, poi chiama `StartReplay`.
 8. Avvia una nuova recording session sul player ripristinato.
 
+Se è attivo `IntentReplayPerception`, il coordinatore conserva invece il
+`UIntentReplayTimelineBundle` emesso da `OnObservationTrackFinalized`. Il bundle trattiene sia
+l'Action Track sia l'Observation Track e ne impedisce il pairing tra sessioni diverse. Dopo il reset:
+
+1. passa `Bundle->GetActionTrack()` a `PrepareReplay`;
+2. quando il core è `Ready`, chiama `StartObservationComparison(Bundle, Options)`;
+3. chiama `StartReplay`;
+4. conserva il bundle in una `UPROPERTY(Transient)` per tutto il replay.
+
+Non ricostruire il bundle da due puntatori raw e non armare la comparison dopo che il clock è
+avanzato, salvo opt-in esplicito al late join.
+
 Il default di `RequestStopRecording` è `Immediate`: il track è disponibile nello stesso ramo di
 esecuzione, ma le entry ancora in esecuzione non avranno il risultato originale. Usare esplicitamente
 `AsyncStop` soltanto quando il coordinatore può proseguire da `OnRecordingFinalized` e necessita dei

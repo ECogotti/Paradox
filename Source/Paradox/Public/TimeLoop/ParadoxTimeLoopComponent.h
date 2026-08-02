@@ -12,6 +12,7 @@ class AParadoxPlayerCharacter;
 class AParadoxWorldStateAnchor;
 class UEntityRelationPolicySet;
 class UIntentReplayComponent;
+class UIntentReplayTimelineBundle;
 class UParadoxTemporalVisionComponent;
 class UWorldStateSubsystem;
 
@@ -23,6 +24,7 @@ struct FParadoxClonePlaybackRuntime
 	int32 TemporalIndex = INDEX_NONE;
 	EParadoxClonePlaybackState State = EParadoxClonePlaybackState::Unprepared;
 	FIntentReplayPlaybackSessionId SessionId;
+	TWeakObjectPtr<UIntentReplayTimelineBundle> TimelineBundle;
 	FParadoxClonePlaybackFailure LastFailure;
 };
 

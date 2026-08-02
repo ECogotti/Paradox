@@ -480,6 +480,28 @@ bool UGridMoveToCellAction::StartControllerMove(
 		else if (CachedSettings.InjectedPath.InvalidationPolicy
 			== EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal)
 		{
+			if (Validation.FailureReason == EGridInjectedPathFailureReason::InvalidStart)
+			{
+				const FGridCellQueryResult CurrentCell =
+					UGridWorldBlueprintLibrary::ProjectPointToGrid(&Controller, StartLocation);
+				const FGridCellId RecordedStart = CachedSettings.InjectedPath.Cells.IsEmpty()
+					? FGridCellId()
+					: CachedSettings.InjectedPath.Cells[0];
+				GAMEPLAYACTIONSGRIDWORLD_LOG_WARNING(
+					TEXT("Exact path action for controller '%s' resumed from a different cell; "
+						"recorded=(%d,%d,%d), current=(%d,%d,%d), goal=(%d,%d,%d). "
+						"Discarding the stale runtime path and recalculating to the original goal."),
+					*GetNameSafe(&Controller),
+					RecordedStart.Coord.X,
+					RecordedStart.Coord.Y,
+					RecordedStart.Coord.Layer,
+					CurrentCell.CellId.Coord.X,
+					CurrentCell.CellId.Coord.Y,
+					CurrentCell.CellId.Coord.Layer,
+					CachedSettings.InjectedPath.OriginalGoalCell.Coord.X,
+					CachedSettings.InjectedPath.OriginalGoalCell.Coord.Y,
+					CachedSettings.InjectedPath.OriginalGoalCell.Coord.Layer);
+			}
 			bRecalculatedInjectedPath = true;
 			PathResult = NavigationSystem->FindPathSync(Controller.GetNavAgentPropertiesRef(), Query);
 		}

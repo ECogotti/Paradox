@@ -10,9 +10,11 @@
 #include "Components/GameplayActionComponent.h"
 #include "Components/IntentReplayComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
+#include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Components/EntityIdentityComponent.h"
 #include "Controllers/ParadoxCloneController.h"
+#include "Controllers/ParadoxPlayerController.h"
 #include "Data/EntityRelationPolicySet.h"
 #include "Engine/Engine.h"
 #include "Engine/EngineBaseTypes.h"
@@ -151,6 +153,12 @@ namespace UE::Paradox::TimeLoop::Tests
 			if (Context)
 			{
 				Context->SetCurrentWorld(World);
+			}
+			if (World)
+			{
+				// Clone reconstruction now starts the authored Behavior Tree and semantic
+				// listener, both of which require the AI system present in a gameplay world.
+				World->CreateAISystem();
 			}
 		}
 
@@ -299,17 +307,31 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 
 	UClass* PlayerClass = LoadObject<UClass>(
 		nullptr,
-		TEXT("/Game/TopDown/Blueprints/BP_PlayerCharacter.BP_PlayerCharacter_C"));
+		TEXT("/Game/Characters/Astronaut/Blueprints/BP_PlayerAstronaut.BP_PlayerAstronaut_C"));
 	if (!TestNotNull(TEXT("Project player Blueprint loads"), PlayerClass))
+	{
+		return false;
+	}
+	UClass* PlayerControllerClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/Game/Characters/Astronaut/Blueprints/BP_PlayerController.BP_PlayerController_C"));
+	if (!TestNotNull(
+		TEXT("Project player controller Blueprint loads"),
+		PlayerControllerClass)
+		|| !TestTrue(
+			TEXT("Project player controller uses AParadoxPlayerController"),
+			PlayerControllerClass
+				&& PlayerControllerClass->IsChildOf(
+					AParadoxPlayerController::StaticClass())))
 	{
 		return false;
 	}
 	UClass* CloneClass = LoadObject<UClass>(
 		nullptr,
-		TEXT("/Game/TopDown/Blueprints/BP_CloneCharacter.BP_CloneCharacter_C"));
+		TEXT("/Game/Characters/Astronaut/Blueprints/BP_CloneAstronaut.BP_CloneAstronaut_C"));
 	UClass* CloneControllerClass = LoadObject<UClass>(
 		nullptr,
-		TEXT("/Game/TopDown/Blueprints/BP_CloneController.BP_CloneController_C"));
+		TEXT("/Game/Characters/Astronaut/Blueprints/BP_CloneController.BP_CloneController_C"));
 	if (!TestNotNull(TEXT("Project clone Blueprint loads"), CloneClass)
 		|| !TestTrue(
 			TEXT("Project clone Blueprint uses AParadoxCloneCharacter"),
@@ -331,6 +353,15 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		PlayerClass,
 		FTransform::Identity,
 		PlayerParameters);
+	FActorSpawnParameters PlayerControllerParameters =
+		PlayerParameters;
+	PlayerControllerParameters.Name =
+		TEXT("TimeLoopTestPlayerController");
+	AParadoxPlayerController* PlayerController =
+		TestWorld.World->SpawnActor<AParadoxPlayerController>(
+			PlayerControllerClass,
+			FTransform::Identity,
+			PlayerControllerParameters);
 	AActor* Coordinator = TestWorld.World->SpawnActor<AActor>();
 	AParadoxChronoSpawn* Spawn0 = SpawnChronoSpawn(
 		*TestWorld.World,
@@ -345,6 +376,9 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		FVector(400.0, 0.0, 0.0),
 		TEXT("ChronoSpawn_2"));
 	if (!TestNotNull(TEXT("Player spawned"), Player)
+		|| !TestNotNull(
+			TEXT("Player Controller with perception Listener spawned"),
+			PlayerController)
 		|| !TestNotNull(TEXT("Coordinator spawned"), Coordinator)
 		|| !TestNotNull(TEXT("Chrono Spawn 0 spawned"), Spawn0)
 		|| !TestNotNull(TEXT("Chrono Spawn 1 spawned"), Spawn1)
@@ -352,6 +386,7 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	{
 		return false;
 	}
+	PlayerController->Possess(Player);
 
 	UParadoxTimeLoopComponent* TimeLoop =
 		NewObject<UParadoxTimeLoopComponent>(
@@ -454,6 +489,11 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		Player->GetIntentReplayComponent()
 			->StartRecording(RecordingOptions)
 			.Succeeded());
+	const FPerceptionKnowledgeEntityId TimelineZeroPerceptionId =
+		Player->GetPerceptionKnowledgeSourceComponent()->GetEntityId();
+	TestTrue(
+		TEXT("Original timeline zero player has a valid Perception identity"),
+		TimelineZeroPerceptionId.IsValid());
 
 	const FParadoxTimeLoopOperationResult RewindResult =
 		TimeLoop->RequestTimeRewind();
@@ -490,6 +530,10 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		TestEqual(TEXT("Timeline index is stable"), Timelines[0].TemporalIndex, 0);
 		TestTrue(TEXT("Timeline retains a valid track"), Timelines[0].IsValid());
 		TestEqual(
+			TEXT("Timeline retains the original avatar Perception identity"),
+			Timelines[0].AvatarPerceptionEntityId,
+			TimelineZeroPerceptionId);
+		TestEqual(
 			TEXT("Empty finalized recordings remain valid"),
 			Timelines[0].ReplayTrack->GetEntryCount(),
 			0);
@@ -524,6 +568,17 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		TestNull(
 			TEXT("Player does not own clone-only temporal vision"),
 			Player->FindComponentByClass<UParadoxTemporalVisionComponent>());
+		if (const UPerceptionKnowledgeSourceComponent* CloneSource =
+			Clone->GetPerceptionKnowledgeSourceComponent())
+		{
+			TestEqual(
+				TEXT("Reconstructed clone inherits the original player Perception identity"),
+				CloneSource->GetEntityId(),
+				TimelineZeroPerceptionId);
+			TestTrue(
+				TEXT("Reconstructed clone registers the inherited Perception identity"),
+				CloneSource->IsSemanticallyRegistered());
+		}
 		if (Clone->GetController())
 		{
 			TestTrue(
@@ -639,6 +694,15 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		TEXT("Second player run receives temporal index one"),
 		Player->GetTemporalEntityComponent()->GetTemporalIndex(),
 		1);
+	const FPerceptionKnowledgeEntityId TimelineOnePerceptionId =
+		Player->GetPerceptionKnowledgeSourceComponent()->GetEntityId();
+	TestTrue(
+		TEXT("Second player run receives a valid fresh Perception identity"),
+		TimelineOnePerceptionId.IsValid());
+	TestNotEqual(
+		TEXT("Live player identity is distinct from reconstructed timeline zero"),
+		TimelineOnePerceptionId,
+		TimelineZeroPerceptionId);
 	TestEqual(
 		TEXT("Second run starts recording"),
 		Player->GetIntentReplayComponent()->GetRecordingState(),
@@ -658,10 +722,13 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		TEXT("Clone playback snapshot is available by temporal index"),
 		TimeLoop->GetClonePlaybackSnapshot(0, PlaybackSnapshot)))
 	{
-		TestEqual(
-			TEXT("Empty replay completes without blocking the player run"),
-			PlaybackSnapshot.State,
-			EParadoxClonePlaybackState::Completed);
+		TestTrue(
+			TEXT("Prepared empty replay does not block the player run while its Behavior Tree owns execution"),
+			PlaybackSnapshot.State == EParadoxClonePlaybackState::Ready
+				|| PlaybackSnapshot.State
+					== EParadoxClonePlaybackState::Playing
+				|| PlaybackSnapshot.State
+					== EParadoxClonePlaybackState::Completed);
 		TestEqual(
 			TEXT("Empty replay retains zero source entries"),
 			PlaybackSnapshot.TotalEntryCount,
@@ -705,12 +772,35 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 					*FString::Printf(TEXT("Clone %d owns its matching track"), Index),
 					Temporal->GetAssignedReplayTrack() == TwoTimelines[Index].ReplayTrack);
 			}
+			if (Clone)
+			{
+				const UPerceptionKnowledgeSourceComponent* CloneSource =
+					Clone->GetPerceptionKnowledgeSourceComponent();
+				TestNotNull(
+					*FString::Printf(
+						TEXT("Clone %d has a Perception Source"),
+						Index),
+					CloneSource);
+				if (CloneSource)
+				{
+					TestEqual(
+						*FString::Printf(
+							TEXT("Clone %d preserves its timeline Perception identity"),
+							Index),
+						CloneSource->GetEntityId(),
+						TwoTimelines[Index].AvatarPerceptionEntityId);
+				}
+			}
 			TestNull(
 				*FString::Printf(TEXT("Clone %d has no premature playback"), Index),
 				Clone
 					? Clone->GetIntentReplayComponent()->GetActivePlaybackSession()
 					: nullptr);
 		}
+		TestNotEqual(
+			TEXT("Timeline zero and timeline one retain distinct Perception identities"),
+			TwoTimelines[0].AvatarPerceptionEntityId,
+			TwoTimelines[1].AvatarPerceptionEntityId);
 	}
 
 	return true;
@@ -982,6 +1072,76 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 				.GetValue(),
 			EGridGoalContentionPolicy::Ignore);
 	}
+
+	Strategy->bOverrideGoalContentionPolicy = true;
+	RecipientCharacter->SetActorLocation(
+		Snapshot->Cells[1].WorldCenter,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	const FGameplayActionSubmissionResult DifferentStartSubmission =
+		Strategy->SubmitPreparedRequest(
+			ActionComponent,
+			Creation.Request);
+	if (!TestTrue(
+		TEXT("Replay movement from a different cell is accepted with a fresh exact path"),
+		DifferentStartSubmission.IsAccepted()))
+	{
+		AddError(DifferentStartSubmission.DiagnosticMessage);
+		return false;
+	}
+	const FGameplayActionEvent* DifferentStartAcceptedEvent =
+		EventObserver->ObservedEvents.FindByPredicate(
+			[&DifferentStartSubmission](const FGameplayActionEvent& Event)
+			{
+				return Event.Handle == DifferentStartSubmission.Handle
+					&& Event.EventType == EGameplayActionEventType::Accepted;
+			});
+	if (TestNotNull(
+		TEXT("Different-start recovery emits an accepted snapshot"),
+		DifferentStartAcceptedEvent))
+	{
+		const TValueOrError<FStructView, EPropertyBagResult>
+			DifferentStartPathValue =
+				DifferentStartAcceptedEvent->GetParameters().GetValueStruct(
+					GridMoveToCellActionParameters::InjectedPath,
+					FGridInjectedPath::StaticStruct());
+		const FGridInjectedPath* DifferentStartPath =
+			DifferentStartPathValue.HasValue()
+				? DifferentStartPathValue.GetValue()
+					.GetPtr<FGridInjectedPath>()
+				: nullptr;
+		if (TestNotNull(
+			TEXT("Different-start request contains a fresh ExactInjectedPath"),
+			DifferentStartPath))
+		{
+			TestEqual(
+				TEXT("Fresh exact path starts at the clone's current cell"),
+				DifferentStartPath->Cells[0],
+				Cells[1]);
+			TestEqual(
+				TEXT("Fresh exact path preserves the semantic requested goal"),
+				DifferentStartPath->RequestedGoalCell,
+				RecordedPath.RequestedGoalCell);
+			TestEqual(
+				TEXT("Fresh exact path preserves the filter class"),
+				DifferentStartPath->FilterClass,
+				RecordedPath.FilterClass);
+			TestEqual(
+				TEXT("Fresh exact path preserves invalidation policy"),
+				DifferentStartPath->InvalidationPolicy,
+				RecordedPath.InvalidationPolicy);
+			TestNotEqual(
+				TEXT("Fresh exact path discards the stale runtime identity"),
+				DifferentStartPath->PathInstanceId,
+				RecordedPath.PathInstanceId);
+		}
+	}
+	RecipientCharacter->SetActorLocation(
+		Snapshot->Cells[0].WorldCenter,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
 
 	FGridTrafficGoalClaimRequest BlockingGoalClaim;
 	BlockingGoalClaim.OwnerId = FGuid::NewGuid();

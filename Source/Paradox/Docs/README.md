@@ -9,6 +9,7 @@ responsibility and their implementations use the matching path under `Private`:
 
 - `Public/Characters` and `Private/Characters` contain the playable character;
 - `Public/Controllers` and `Private/Controllers` contain player controllers;
+- `Public/Actions` and `Private/Actions` contain project Gameplay Action definitions and instances;
 - `Public/GameModes` and `Private/GameModes` contain game modes;
 - `Public/Components` and `Private/Components` contain reusable project components;
 - `Public/Camera` and `Private/Camera` contain the independent orthographic rig, map bounds, and
@@ -17,6 +18,8 @@ responsibility and their implementations use the matching path under `Private`:
 - `Public/TimeLoop` and `Private/TimeLoop` contain Chrono Spawns, temporal identity, and the
   authoritative recording/reset/reconstruction coordinator;
 - `Public/Perception` and `Private/Perception` contain clone-owned physical temporal vision;
+- `Public/Behavior`, `Public/Investigation`, and their private mirrors contain authoritative clone
+  behavior, project response policy, replay recovery, and native Behavior Tree tasks;
 - `Public/Relations` and `Private/Relations` contain the project temporal-ordering policy;
 - `Public/Presentation` and `Private/Presentation` contain native, Blueprint-replaceable outcome
   presentation;
@@ -43,8 +46,10 @@ runtime roles:
 
 `AParadoxPlayerCharacter` keeps the character-mounted camera as a fallback for maps without a
 Paradox camera volume and adds `UTacticalPauseActionQueueComponent`. `AParadoxCloneCharacter`
-instead adds `UWorldStateParticipantComponent` and `UParadoxTemporalVisionComponent`; it has no
-player camera or tactical-planning adapter.
+instead adds `UWorldStateParticipantComponent`, `UParadoxTemporalVisionComponent`,
+`UParadoxCloneBehaviorCoordinatorComponent`, and `UParadoxCloneInvestigationComponent`; it has no
+player camera or tactical-planning adapter. Both roles inherit the synchronized
+`UIntentReplayObservationComponent`.
 
 The Top Down content uses these native parents:
 
@@ -64,8 +69,20 @@ phase begins and ends.
 
 Clone replay uses `UParadoxCloneReplayExecutionStrategy`. It re-stamps controller-bound exact
 GridWorld paths on a per-clone runtime request copy, while the consolidated Intent Replay track
-remains immutable. The time loop also removes occupancy and traffic parking for inactive temporal
-avatars, preventing hidden players or destroyed clones from blocking later timelines.
+remains immutable. When investigation displaced the clone, an InvalidStart recovery emits one
+warning and stamps a fresh exact path from the current cell to the original semantic goal. The time
+loop also removes occupancy and traffic parking for inactive temporal avatars, preventing hidden
+players or destroyed clones from blocking later timelines.
+
+Player and clone controllers own a semantic PerceptionKnowledge listener plus an event-driven
+Hearing Range renderer. Clone setup and policy are documented in:
+
+- [Clone behavior authority](CLONE_BEHAVIOR.md);
+- [Perception integration and priorities](PERCEPTION_INTEGRATION.md);
+- [Investigation and recovery](INVESTIGATION.md);
+- [Behavior Tree setup](BEHAVIOR_TREE_SETUP.md);
+- [Footsteps, semantic Hearing, and crouch](FOOTSTEPS.md);
+- [Automation and PIE verification](TESTING.md).
 
 ## Player movement
 
@@ -90,6 +107,14 @@ decision, not an arbitrary neighbor redirect; the effective predecessor is atomi
 Each newer player movement request receives a higher priority. This lets it preempt an older action
 holding the Movement lock while preserving action submission, interruption, and completion in the
 Intent Replay journal.
+
+Player crouch is also semantic rather than a direct Character call. `RequestSetCrouched` submits
+`GameplayAction.Character.SetCrouched` with the absolute `DesiredCrouched` parameter through
+`/Game/Data/GameplayActions/DA_ParadoxSetCrouched`. The action owns only
+`GameplayAction.Lock.Stance`; movement owns only `GameplayAction.Lock.Movement`. Exact lock
+matching therefore applies crouch or uncrouch immediately while an active movement remains
+`Running`. `BlockedPolicy=Queue` affects only another concurrent stance owner, not movement.
+Intent Replay records and reproduces both absolute stance transitions.
 
 The controller now owns inherited `UGridCellPointerComponent` and `UGridPathPreviewComponent`
 components. For a local mouse, `PlayerTick` continuously resolves the hovered cell and requests a

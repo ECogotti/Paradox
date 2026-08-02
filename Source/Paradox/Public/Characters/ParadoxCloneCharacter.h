@@ -5,6 +5,8 @@
 
 class UWorldStateParticipantComponent;
 class UParadoxTemporalVisionComponent;
+class UParadoxCloneBehaviorCoordinatorComponent;
+class UParadoxCloneInvestigationComponent;
 
 /** Loop-owned replay avatar with explicit World State participation and no player-only components. */
 UCLASS(Blueprintable)
@@ -27,6 +29,18 @@ public:
 		return TemporalVisionComponent.Get();
 	}
 
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxCloneBehaviorCoordinatorComponent* GetBehaviorCoordinator() const
+	{
+		return BehaviorCoordinator.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxCloneInvestigationComponent* GetInvestigationComponent() const
+	{
+		return InvestigationComponent.Get();
+	}
+
 private:
 	/**
 	 * Exposes clone state to World State while leaving existence and reconstruction under the
@@ -38,4 +52,12 @@ private:
 	/** Dynamic LineOfSight mesh used as the clone's authoritative temporal perception geometry. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParadoxTemporalVisionComponent> TemporalVisionComponent;
+
+	/** Sole authority for Replay, Investigating, and terminal future GOAP handoff. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxCloneBehaviorCoordinatorComponent> BehaviorCoordinator;
+
+	/** GameplayActions-only executor for movement, inspection, retarget, and recovery positioning. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxCloneInvestigationComponent> InvestigationComponent;
 };

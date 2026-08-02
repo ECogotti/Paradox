@@ -1,5 +1,9 @@
 # GameplayActionsGridWorld
 
+When an exact action resumes from another cell under `RecalculateToOriginalGoal`, it logs
+controller, recorded cell, current cell, and goal, then performs its controller-aware query.
+Filter, topology, traversal, link, and goal validation are not downgraded.
+
 `GameplayActionsGridWorld` is an optional bridge depending on `GameplayActions` and
 `GridWorldSystem`. Neither core plugin depends on the bridge.
 

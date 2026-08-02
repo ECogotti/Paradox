@@ -7,9 +7,13 @@
 #include "ParadoxCharacter.generated.h"
 
 class UGameplayActionComponent;
+class UFootstepComponent;
 class UIntentReplayComponent;
+class UIntentReplayObservationComponent;
 class UEntityIdentityComponent;
+class UParadoxFootstepNoiseComponent;
 class UParadoxTemporalEntityComponent;
+class UPerceptionKnowledgeSourceComponent;
 
 /**
  * Shared temporal-avatar foundation for player and clone characters.
@@ -32,6 +36,10 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UIntentReplayComponent> IntentReplayComponent;
 
+	/** Records/compares PerceptionKnowledge on the same authoritative IntentReplay clock. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UIntentReplayObservationComponent> ObservationReplayComponent;
+
 	/** Generic runtime identity used by Entity Relations. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UEntityIdentityComponent> EntityIdentityComponent;
@@ -39,6 +47,18 @@ private:
 	/** Project-specific role, index and immutable replay-track assignment. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParadoxTemporalEntityComponent> TemporalEntityComponent;
+
+	/** Generic animation-synchronized floor contact and cosmetic feedback. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UFootstepComponent> FootstepComponent;
+
+	/** Persistent semantic identity and native Hearing stimulus source for this character. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UPerceptionKnowledgeSourceComponent> PerceptionKnowledgeSourceComponent;
+
+	/** Converts neutral footstep events into project semantic Hearing noise. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxFootstepNoiseComponent> FootstepNoiseComponent;
 
 public:
 
@@ -54,10 +74,31 @@ public:
 	UIntentReplayComponent* GetIntentReplayComponent() const { return IntentReplayComponent.Get(); }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UIntentReplayObservationComponent* GetObservationReplayComponent() const
+	{
+		return ObservationReplayComponent.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
 	UEntityIdentityComponent* GetEntityIdentityComponent() const { return EntityIdentityComponent.Get(); }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
 	UParadoxTemporalEntityComponent* GetTemporalEntityComponent() const { return TemporalEntityComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UFootstepComponent* GetFootstepComponent() const { return FootstepComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UPerceptionKnowledgeSourceComponent* GetPerceptionKnowledgeSourceComponent() const
+	{
+		return PerceptionKnowledgeSourceComponent.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxFootstepNoiseComponent* GetFootstepNoiseComponent() const
+	{
+		return FootstepNoiseComponent.Get();
+	}
 
 };
 

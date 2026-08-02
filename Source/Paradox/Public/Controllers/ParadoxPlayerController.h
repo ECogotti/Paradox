@@ -20,6 +20,9 @@ class UGridPathPreviewComponent;
 class UTacticalPauseWorldSubsystem;
 class UParadoxTimeLoopComponent;
 class UParadoxOutcomePresentationComponent;
+class UPerceptionKnowledgeHearingRangeRendererComponent;
+class UPerceptionKnowledgeListenerComponent;
+class UPerceptionKnowledgeProfile;
 class AParadoxCameraBoundsVolume;
 class AParadoxCameraRig;
 struct FInputActionValue;
@@ -86,6 +89,10 @@ protected:
 	UPROPERTY(EditAnywhere, Category="Input")
 	TObjectPtr<UInputAction> RewindAction;
 
+	/** Toggle command that uses the possessed Character's authoritative crouch state. */
+	UPROPERTY(EditAnywhere, Category="Input")
+	TObjectPtr<UInputAction> CrouchAction;
+
 	/** Frame-rate independent free-camera pan input. Expected value type: Axis2D. */
 	UPROPERTY(EditAnywhere, Category = "Input|Camera")
 	TObjectPtr<UInputAction> CameraMoveAction;
@@ -105,6 +112,10 @@ protected:
 	/** Gameplay Action Definition submitted for every player movement request. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
 	TObjectPtr<UGameplayActionDefinition> MoveToGridCellActionDefinition;
+
+	/** Instant stance command. It owns Stance rather than Movement and therefore runs in parallel. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
+	TObjectPtr<UGameplayActionDefinition> SetCrouchedActionDefinition;
 
 	/** Project movement rejects an exact destination owned or claimed by another character. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
@@ -135,6 +146,10 @@ protected:
 
 	UPROPERTY(Transient)
 	FGridInjectedPath PendingInjectedPath;
+
+	/** Reflected source used for exact Property Bag assignment to the crouch request. */
+	UPROPERTY(Transient)
+	bool bPendingDesiredCrouched = false;
 
 	/** Prevents the cleared prediction from immediately reappearing under an unchanged cursor after commit. */
 	FGridCellId SuppressedPreviewGoalCell;
@@ -172,10 +187,41 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Paradox|Presentation")
 	TObjectPtr<UParadoxOutcomePresentationComponent> OutcomePresentationComponent;
 
+	/** Controller-owned semantic listener; its Body Actor follows the possessed player Pawn. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPerceptionKnowledgeListenerComponent> PerceptionKnowledgeListener;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UPerceptionKnowledgeHearingRangeRendererComponent> HearingRangeRenderer;
+
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Perception")
+	TObjectPtr<UPerceptionKnowledgeProfile> PerceptionProfile;
+
 public:
 
 	/** Constructor */
 	AParadoxPlayerController();
+
+	/**
+	 * Uses the possessed Pawn's physical facing for gameplay perception while the independent
+	 * top-down camera and Control Rotation remain free to point elsewhere.
+	 */
+	virtual void GetActorEyesViewPoint(
+		FVector& OutLocation,
+		FRotator& OutRotation) const override;
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Perception")
+	UPerceptionKnowledgeListenerComponent* GetPerceptionKnowledgeListener() const
+	{
+		return PerceptionKnowledgeListener.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Perception")
+	UPerceptionKnowledgeHearingRangeRendererComponent*
+	GetHearingRangeRenderer() const
+	{
+		return HearingRangeRenderer.Get();
+	}
 
 	/** Submits one semantic movement request through the possessed Paradox Character. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Movement")
@@ -184,6 +230,10 @@ public:
 	/** Submits an exact path exported by UGridPathPreviewComponent. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Movement")
 	FGameplayActionSubmissionResult RequestMoveAlongGridPath(const FGridInjectedPath& InjectedPath);
+
+	/** Requests an absolute stance without interrupting an active movement action. */
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Movement")
+	FGameplayActionSubmissionResult RequestSetCrouched(bool bDesiredCrouched);
 
 	/** Requests consolidation and rewind through the authoritative GameMode component. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
@@ -234,6 +284,7 @@ protected:
 	void OnTouchTriggered();
 	void OnTouchReleased();
 	void OnRewindTriggered();
+	void OnCrouchTriggered();
 	void OnCameraMoveTriggered(const FInputActionValue& Value);
 	void OnCameraMoveCompleted();
 	void OnCameraZoomTriggered(const FInputActionValue& Value);

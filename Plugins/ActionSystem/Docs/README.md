@@ -29,6 +29,8 @@ Il solo modulo runtime dipende da `Core`, `CoreUObject`, `Engine` e `GameplayTag
 - `UGameplayActionInstance`: esecuzione transient posseduta dal componente. I suoi snapshot sono privati e non mutabili dai consumer.
 - `UGameplayActionComponent`: unica autorità per scheduling, lock, transizioni, cleanup ed eventi.
 - `FGameplayActionHandle`: identificatore `int64`, crescente e mai riutilizzato durante la vita del componente.
+- `InterruptAction`: interruzione esplicita di sistema con reason preservato, distinta da cancel e
+  dalla preemption automatica per priorita.
 - `FGameplayActionEvent`: snapshot strutturato e indipendente destinato a observer e journal.
 - `UGameplayActionJournalSink`: contratto sincrono con un solo sink registrabile per componente.
 

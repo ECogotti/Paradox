@@ -45,6 +45,15 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions")
 	EGameplayActionOperationResult CancelAction(FGameplayActionHandle Handle, FGameplayTag ReasonTag);
 
+	/**
+	 * Force-interrupts one accepted queued, starting, running, or paused action.
+	 *
+	 * This is a system-authority operation, so it intentionally does not consult the scheduling-only
+	 * bInterruptible flag. The supplied reason is preserved in the terminal result and journal.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions")
+	EGameplayActionOperationResult InterruptAction(FGameplayActionHandle Handle, FGameplayTag ReasonTag);
+
 	/** Force-aborts every accepted non-terminal action in deterministic scheduler order. */
 	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions")
 	int32 AbortAllActions(FGameplayTag ReasonTag);

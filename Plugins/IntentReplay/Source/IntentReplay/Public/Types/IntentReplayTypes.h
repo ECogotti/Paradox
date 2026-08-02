@@ -33,6 +33,29 @@ private:
 	FGuid Value;
 };
 
+/** Stable identity of one mutable recording attempt, distinct from the track it may publish. */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentRecordingSessionId
+{
+	GENERATED_BODY()
+
+	FIntentRecordingSessionId() = default;
+	explicit FIntentRecordingSessionId(const FGuid& InValue) : Value(InValue) {}
+
+	static FIntentRecordingSessionId NewId() { return FIntentRecordingSessionId(FGuid::NewGuid()); }
+	bool IsValid() const { return Value.IsValid(); }
+	const FGuid& GetGuid() const { return Value; }
+	FString ToString() const { return Value.ToString(EGuidFormats::DigitsWithHyphensLower); }
+
+	friend bool operator==(const FIntentRecordingSessionId& Left, const FIntentRecordingSessionId& Right) { return Left.Value == Right.Value; }
+	friend bool operator!=(const FIntentRecordingSessionId& Left, const FIntentRecordingSessionId& Right) { return !(Left == Right); }
+	friend uint32 GetTypeHash(const FIntentRecordingSessionId& Id) { return GetTypeHash(Id.Value); }
+
+private:
+	UPROPERTY(VisibleAnywhere, Category = "Intent Replay", meta = (AllowPrivateAccess = "true"))
+	FGuid Value;
+};
+
 /** Stable identity of one accepted action snapshot inside a track. */
 USTRUCT(BlueprintType)
 struct INTENTREPLAY_API FRecordedIntentId
@@ -107,6 +130,27 @@ enum class EIntentReplayPlaybackState : uint8
 	Completed UMETA(ToolTip = "Every entry was processed and every action owned by this session reached a terminal state."),
 	Failed UMETA(ToolTip = "Playback terminated because its configured failure policy required a stop."),
 	Cancelled UMETA(ToolTip = "Playback was stopped intentionally before normal completion.")
+};
+
+/** Selects the authoritative IntentReplay timeline represented by a generic snapshot. */
+UENUM(BlueprintType)
+enum class EIntentReplayTimelineDomain : uint8
+{
+	Recording,
+	Playback
+};
+
+/** Result of atomically sampling a synchronized timeline and allocating its next sequence. */
+UENUM(BlueprintType)
+enum class EIntentReplayTimelineCaptureStatus : uint8
+{
+	Succeeded,
+	NoActiveSession,
+	SessionMismatch,
+	NotAccepting,
+	Paused,
+	WrongThread,
+	ShuttingDown
 };
 
 /** Behavior applied to Accepted journal events while no recording session is active. */
@@ -204,6 +248,9 @@ enum class EIntentReplayOperationStatus : uint8
 	CompatibilityFailure UMETA(ToolTip = "The recorded request is incompatible with its current Definition under the selected policy."),
 	SubmissionFailure UMETA(ToolTip = "GameplayActions rejected a prepared replay request."),
 	RejectedReentrant UMETA(ToolTip = "The command was called from inside the synchronous journal transaction and was rejected to preserve invariants."),
+	PendingExternalRecovery UMETA(ToolTip = "Replay cannot resume until every externally interrupted intent is reissued or resolved as already satisfied."),
+	RecordedIntentNotFound UMETA(ToolTip = "The requested recorded intent is not awaiting external recovery in this playback session."),
+	InterruptionFailure UMETA(ToolTip = "GameplayActions could not interrupt one of the replay-owned actions selected for external recovery."),
 	InternalFailure UMETA(ToolTip = "An unexpected internal invariant or allocation failed; inspect the structured diagnostic and LogIntentReplay.")
 };
 
@@ -300,11 +347,106 @@ struct INTENTREPLAY_API FIntentRecordingStartResult
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
 	FIntentReplayTrackId TrackId;
 
+	/** Identity of the mutable recording attempt that owns the new track builder. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
+	FIntentRecordingSessionId SessionId;
+
 	/** Populated when Status is not Succeeded. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
 	FIntentReplayFailure Failure;
 
 	bool Succeeded() const { return Status == EIntentReplayOperationStatus::Succeeded; }
+};
+
+/**
+ * Immutable view of one authoritative recording or playback clock.
+ *
+ * Irrelevant identity/state fields remain invalid/default according to Domain. The snapshot never
+ * exposes mutable session objects.
+ */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplayTimelineClockSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	bool bValid = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayTimelineDomain Domain = EIntentReplayTimelineDomain::Recording;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	FIntentRecordingSessionId RecordingSessionId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	FIntentReplayPlaybackSessionId PlaybackSessionId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	FIntentReplayTrackId TrackId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline", meta = (Units = "s"))
+	double RelativeTimeSeconds = 0.0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	int64 NextTimelineSequence = 0;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	bool bClockStarted = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	bool bPaused = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	bool bAcceptingTimelinePoints = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentRecordingState RecordingState = EIntentRecordingState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayPlaybackState PlaybackState = EIntentReplayPlaybackState::Created;
+};
+
+/** Atomic clock sample plus deterministic sequence allocated from the selected session. */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplayTimelinePointResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayTimelineCaptureStatus Status = EIntentReplayTimelineCaptureStatus::NoActiveSession;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelineClockSnapshot Clock;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	int64 TimelineSequence = INDEX_NONE;
+
+	bool Succeeded() const { return Status == EIntentReplayTimelineCaptureStatus::Succeeded; }
+};
+
+/** Immutable notification emitted after one authoritative session state transition. */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplayTimelineLifecycleEvent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayTimelineDomain Domain = EIntentReplayTimelineDomain::Recording;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentRecordingState PreviousRecordingState = EIntentRecordingState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentRecordingState NewRecordingState = EIntentRecordingState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayPlaybackState PreviousPlaybackState = EIntentReplayPlaybackState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	EIntentReplayPlaybackState NewPlaybackState = EIntentReplayPlaybackState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Timeline")
+	FIntentReplayTimelineClockSnapshot Clock;
 };
 
 /** Immediate PrepareReplay result; asynchronous completion is delivered by OnReplayPrepared. */
@@ -537,6 +679,10 @@ public:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
 	int32 TrackSequence = 0;
 
+	/** Ordering shared with synchronized external channels at the same relative timestamp. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
+	int64 TimelineSequence = 0;
+
 	/** Submission order assigned by the source GameplayActionComponent. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay")
 	int64 OriginalSubmissionSequence = 0;
@@ -560,6 +706,75 @@ private:
 
 	friend class UIntentReplayComponent;
 	friend class UIntentRecordingSession;
+};
+
+/**
+ * Immutable recovery snapshot captured before a replay-owned action is externally interrupted.
+ *
+ * The snapshot contains the finalized Recorded Intent rather than a mutable runtime request or
+ * action instance. Runtime state/result fields describe only the interrupted execution.
+ */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplaySuspendedIntent
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FRecordedIntent RecordedIntent;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FGameplayActionHandle InterruptedRuntimeHandle;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	EGameplayActionState InterruptedRuntimeState = EGameplayActionState::Created;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	bool bHasInterruptionResult = false;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery", meta = (EditCondition = "bHasInterruptionResult"))
+	FGameplayActionResult InterruptionResult;
+};
+
+/** Atomic result of pausing replay and interrupting its currently owned actions for recovery. */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplayExternalInterruptionResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	EIntentReplayOperationStatus Status = EIntentReplayOperationStatus::InternalFailure;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FIntentReplayPlaybackSessionId SessionId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	TArray<FIntentReplaySuspendedIntent> SuspendedIntents;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FIntentReplayFailure Failure;
+
+	bool Succeeded() const { return Status == EIntentReplayOperationStatus::Succeeded; }
+};
+
+/** Result of reconciling one externally interrupted intent by submitting it again. */
+USTRUCT(BlueprintType)
+struct INTENTREPLAY_API FIntentReplayRecoveryResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	EIntentReplayOperationStatus Status = EIntentReplayOperationStatus::InternalFailure;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FRecordedIntentId RecordedIntentId;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FGameplayActionSubmissionResult SubmissionResult;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Intent Replay|Recovery")
+	FIntentReplayFailure Failure;
+
+	bool Succeeded() const { return Status == EIntentReplayOperationStatus::Succeeded; }
 };
 
 /** One diagnostic lifecycle observation stored in an Execution Journal. */

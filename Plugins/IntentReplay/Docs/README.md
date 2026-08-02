@@ -1,5 +1,13 @@
 # IntentReplay
 
+## Interruzioni recuperabili
+
+Un'autorità esterna può sospendere atomicamente il replay con
+`BeginExternalReplayInterruption`. Gli intenti replay-owned vengono catturati come snapshot
+immutabili e interrotti con un reason esplicito; il Journal conserva l'evento senza classificarlo
+come fracture. Ogni intento deve essere rieseguito o risolto come già soddisfatto prima che
+`ResumeReplay` venga accettato.
+
 `IntentReplay` è un plugin runtime per Unreal Engine 5.8 che registra le richieste semantiche accettate da `GameplayActions`, le finalizza in track immutabili e le riproduce su un altro Actor.
 
 Il caso principale è il ciclo:
@@ -12,9 +20,12 @@ La dipendenza resta unidirezionale:
 
 ```text
 IntentReplay -> GameplayActions
+IntentReplayPerception -> IntentReplay + PerceptionKnowledge
 ```
 
-Il plugin non dipende da Behavior Tree, `AIModule`, GoalAgents, GridWorld o codice specifico di Paradox.
+`IntentReplay` resta il modulo core generico e non dipende da AI, `PerceptionKnowledge`,
+Behavior Tree, GoalAgents, GridWorld o codice specifico di Paradox. Il modulo runtime opzionale
+`IntentReplayPerception` contiene esclusivamente l'adapter percettivo della Milestone 2.
 
 ## Setup
 
@@ -68,7 +79,19 @@ Il precedente nome `DrainTrackedActions` è nascosto e deprecato, ma resta ricon
 rompere Blueprint già serializzati. Nei nuovi grafi usare `AsyncStop` quando serve conservare i
 risultati terminali originali.
 
-Una nuova chiamata a `StartRecording` crea sempre un nuovo Track ID, un nuovo clock e un nuovo storage. Non svuota né riutilizza il track precedentemente trasferito.
+Una nuova chiamata a `StartRecording` crea sempre un nuovo Track ID, un nuovo Recording Session ID,
+un nuovo clock e un nuovo storage. Non svuota né riutilizza il track precedentemente trasferito.
+
+Il formato core corrente è `2`: ogni `FRecordedIntent` conserva sia il `TrackSequence` locale sia il
+`TimelineSequence` condiviso con eventuali canali sincronizzati. L'ordinamento è timestamp relativo,
+timeline sequence, track sequence. I track legacy formato `1` restano validabili e riproducibili,
+usando `TrackSequence` come fallback; un bundle percettivo richiede invece il formato `2`.
+
+`GetRecordingClockSnapshot`, `GetPlaybackClockSnapshot`,
+`CaptureRecordingTimelinePoint` e `CapturePlaybackTimelinePoint` espongono snapshot per valore e
+un'allocazione atomica della sequence. I clock sono congelati durante la pausa e dopo gli stati
+terminali. `OnTimelineLifecycleChanged` e il corrispondente delegate native notificano una sola volta
+ogni transizione autorevole.
 
 ## Playback
 
@@ -103,4 +126,5 @@ Lo stesso `UIntentReplayTrack` può essere passato a più componenti e riprodott
 - [Workflow player → clone](PlayerCloneWorkflow.md)
 - [API Blueprint e C++](CppAPI.md)
 - [Compatibilità, failure e troubleshooting](Debugging.md)
+- [Modulo percettivo: setup e workflow](../Source/IntentReplayPerception/Docs/README.md)
 - [Report: replay di BP_TopDownCharacter](Reports/BP_TopDownCharacterReplayInvestigation.md)

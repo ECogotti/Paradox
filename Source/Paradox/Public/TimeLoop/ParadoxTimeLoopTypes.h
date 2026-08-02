@@ -4,11 +4,13 @@
 #include "Perception/ParadoxTemporalVisionTypes.h"
 #include "Types/EntityRelationTypes.h"
 #include "Types/IntentReplayTypes.h"
+#include "Types/PerceptionKnowledgeTypes.h"
 #include "ParadoxTimeLoopTypes.generated.h"
 
 class AParadoxCharacter;
 class AParadoxChronoSpawn;
 class UIntentReplayTrack;
+class UIntentReplayTimelineBundle;
 
 /** Authoritative phase of the Paradox time-loop coordinator. */
 UENUM(BlueprintType)
@@ -273,6 +275,17 @@ struct PARADOX_API FParadoxConsolidatedTimeline
 
 	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop")
 	TObjectPtr<UIntentReplayTrack> ReplayTrack = nullptr;
+
+	/** Full immutable action+observation bundle; null denotes an explicit legacy action-only run. */
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop")
+	TObjectPtr<UIntentReplayTimelineBundle> TimelineBundle = nullptr;
+
+	/**
+	 * Stable identity transferred from the original player avatar to every reconstruction of this
+	 * temporal clone. It is required whenever perceptual comparison is available.
+	 */
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop")
+	FPerceptionKnowledgeEntityId AvatarPerceptionEntityId;
 
 	bool IsValid() const;
 };

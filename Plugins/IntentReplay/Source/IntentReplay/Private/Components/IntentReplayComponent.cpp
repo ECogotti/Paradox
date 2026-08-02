@@ -316,6 +316,7 @@ FIntentRecordingStartResult UIntentReplayComponent::StartRecording(
 
 	UIntentRecordingSession* Session = NewObject<UIntentRecordingSession>(this, NAME_None, RF_Transient);
 	Session->TrackId = FIntentReplayTrackId::NewId();
+	Session->SessionId = FIntentRecordingSessionId::NewId();
 	Session->Options = Options;
 	Session->StartTimeSeconds = GetCurrentTimeSeconds();
 	Session->ExecutionJournal = NewObject<UIntentExecutionJournal>(Session, NAME_None, RF_Transient);
@@ -325,6 +326,7 @@ FIntentRecordingStartResult UIntentReplayComponent::StartRecording(
 
 	Result.Status = EIntentReplayOperationStatus::Succeeded;
 	Result.TrackId = Session->TrackId;
+	Result.SessionId = Session->SessionId;
 	OnRecordingStarted.Broadcast(Session->TrackId);
 	RecordDiagnostic(FString::Printf(TEXT("Started recording track %s."), *Session->TrackId.ToString()));
 	INTENTREPLAY_LOG_INFO(
@@ -414,6 +416,7 @@ FIntentReplayOperationResult UIntentReplayComponent::CancelRecording()
 	}
 
 	UIntentRecordingSession* Session = ActiveRecordingSession;
+	Session->FinalRecordedDurationSeconds = GetRecordingElapsedSeconds(*Session);
 	SetRecordingState(*Session, EIntentRecordingState::Cancelled);
 	LastRecordingSession = Session;
 	ActiveRecordingSession = nullptr;
@@ -606,6 +609,9 @@ FIntentReplayOperationResult UIntentReplayComponent::StartReplay()
 	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
 	Session.StartTimeSeconds = GetCurrentTimeSeconds();
 	Session.AccumulatedPausedSeconds = 0.0;
+	Session.FinalElapsedSeconds = 0.0;
+	Session.NextTimelineSequence = 0;
+	Session.bClockStarted = true;
 	Session.NextEntryIndex = 0;
 	Session.ProcessedEntryCount = 0;
 	Session.bAllEntriesSubmittedBroadcast = false;
@@ -661,6 +667,15 @@ FIntentReplayOperationResult UIntentReplayComponent::ResumeReplay()
 	}
 
 	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
+	if (!Session.PendingExternalRecoveryByIntent.IsEmpty())
+	{
+		return MakeOperationFailure(
+			EIntentReplayOperationStatus::PendingExternalRecovery,
+			IntentReplayTags::Failure_PendingExternalRecovery,
+			FString::Printf(
+				TEXT("Replay cannot resume while %d externally interrupted intent(s) remain unreconciled."),
+				Session.PendingExternalRecoveryByIntent.Num()));
+	}
 	Session.AccumulatedPausedSeconds += FMath::Max(
 		0.0,
 		GetCurrentTimeSeconds() - Session.PauseStartTimeSeconds);
@@ -678,6 +693,263 @@ FIntentReplayOperationResult UIntentReplayComponent::ResumeReplay()
 	return Result;
 }
 
+FIntentReplayExternalInterruptionResult
+UIntentReplayComponent::BeginExternalReplayInterruption(const FGameplayTag InterruptionReason)
+{
+	FIntentReplayExternalInterruptionResult Result;
+	if (!ActivePlaybackSession || ActivePlaybackSession->State != EIntentReplayPlaybackState::Playing)
+	{
+		Result.Status = EIntentReplayOperationStatus::InvalidState;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_InvalidTrack,
+			TEXT("External replay interruption can begin only from the Playing state."));
+		return Result;
+	}
+	if (!BoundActionComponent)
+	{
+		Result.Status = EIntentReplayOperationStatus::MissingActionComponent;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_NotInitialized,
+			TEXT("External replay interruption requires a bound GameplayActionComponent."));
+		return Result;
+	}
+
+	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
+	Result.SessionId = Session.SessionId;
+	if (!Session.PendingExternalRecoveryByIntent.IsEmpty())
+	{
+		Result.Status = EIntentReplayOperationStatus::PendingExternalRecovery;
+		Result.SuspendedIntents = Session.GetPendingExternalRecoveryIntents();
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_PendingExternalRecovery,
+			TEXT("This playback session already has externally interrupted intents awaiting recovery."));
+		return Result;
+	}
+
+	struct FPendingInterruption
+	{
+		FGameplayActionHandle Handle;
+		FRecordedIntent RecordedIntent;
+		EGameplayActionState RuntimeState = EGameplayActionState::Created;
+	};
+	TArray<FPendingInterruption> PendingInterruptions;
+	PendingInterruptions.Reserve(Session.ActiveReplayHandles.Num());
+	for (const FGameplayActionHandle Handle : Session.ActiveReplayHandles)
+	{
+		const FRecordedIntentId* RecordedIntentId = Session.RecordByRuntimeHandle.Find(Handle);
+		const FRecordedIntent* RecordedIntent = RecordedIntentId && Session.SourceTrack
+			? Session.SourceTrack->GetEntries().FindByPredicate(
+				[RecordedIntentId](const FRecordedIntent& Entry)
+				{
+					return Entry.RecordedIntentId == *RecordedIntentId;
+				})
+			: nullptr;
+		EGameplayActionState RuntimeState = EGameplayActionState::Created;
+		if (!RecordedIntent || !BoundActionComponent->GetActionState(Handle, RuntimeState))
+		{
+			Result.Status = EIntentReplayOperationStatus::InterruptionFailure;
+			Result.Failure = MakeFailure(
+				IntentReplayTags::Failure_ExternalInterruption,
+				FString::Printf(
+					TEXT("Replay-owned action %lld could not be resolved before external interruption."),
+					Handle.GetValue()),
+				RecordedIntentId ? *RecordedIntentId : FRecordedIntentId());
+			return Result;
+		}
+		FPendingInterruption& Pending = PendingInterruptions.AddDefaulted_GetRef();
+		Pending.Handle = Handle;
+		Pending.RecordedIntent = *RecordedIntent;
+		Pending.RuntimeState = RuntimeState;
+	}
+	PendingInterruptions.Sort(
+		[](const FPendingInterruption& Left, const FPendingInterruption& Right)
+		{
+			return Left.RecordedIntent.TrackSequence < Right.RecordedIntent.TrackSequence;
+		});
+
+	const FIntentReplayOperationResult PauseResult = PauseReplay();
+	if (!PauseResult.Succeeded())
+	{
+		Result.Status = PauseResult.Status;
+		Result.Failure = PauseResult.Failure;
+		return Result;
+	}
+
+	const FGameplayTag EffectiveReason = InterruptionReason.IsValid()
+		? InterruptionReason
+		: GameplayActionTags::Result_Interrupted_External;
+	for (const FPendingInterruption& Pending : PendingInterruptions)
+	{
+		FIntentReplaySuspendedIntent Snapshot;
+		Snapshot.RecordedIntent = Pending.RecordedIntent;
+		Snapshot.InterruptedRuntimeHandle = Pending.Handle;
+		Snapshot.InterruptedRuntimeState = Pending.RuntimeState;
+		Session.PendingExternalRecoveryByIntent.Add(
+			Pending.RecordedIntent.RecordedIntentId,
+			Snapshot);
+		Session.ExpectedExternalInterruptionReasons.Add(Pending.Handle, EffectiveReason);
+
+		const EGameplayActionOperationResult InterruptionResult =
+			BoundActionComponent->InterruptAction(Pending.Handle, InterruptionReason);
+		if (InterruptionResult != EGameplayActionOperationResult::Succeeded)
+		{
+			Session.ExpectedExternalInterruptionReasons.Remove(Pending.Handle);
+			Session.PendingExternalRecoveryByIntent.Remove(Pending.RecordedIntent.RecordedIntentId);
+			Result.Status = EIntentReplayOperationStatus::InterruptionFailure;
+			Result.SuspendedIntents = Session.GetPendingExternalRecoveryIntents();
+			Result.Failure = MakeFailure(
+				IntentReplayTags::Failure_ExternalInterruption,
+				FString::Printf(
+					TEXT("GameplayActions rejected external interruption of replay-owned action %lld (%s)."),
+					Pending.Handle.GetValue(),
+					*UEnum::GetValueAsString(InterruptionResult)),
+				Pending.RecordedIntent.RecordedIntentId);
+			return Result;
+		}
+	}
+
+	Result.Status = EIntentReplayOperationStatus::Succeeded;
+	Result.SuspendedIntents = Session.GetPendingExternalRecoveryIntents();
+	RecordDiagnostic(FString::Printf(
+		TEXT("Paused replay session %s with %d externally interrupted intent(s)."),
+		*Session.SessionId.ToString(),
+		Result.SuspendedIntents.Num()));
+	return Result;
+}
+
+FIntentReplayRecoveryResult UIntentReplayComponent::ReissueExternallyInterruptedIntent(
+	const FRecordedIntentId RecordedIntentId)
+{
+	FIntentReplayRecoveryResult Result;
+	Result.RecordedIntentId = RecordedIntentId;
+	if (!ActivePlaybackSession || ActivePlaybackSession->State != EIntentReplayPlaybackState::Paused)
+	{
+		Result.Status = EIntentReplayOperationStatus::InvalidState;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_InvalidTrack,
+			TEXT("An externally interrupted intent can be reissued only while replay is Paused."),
+			RecordedIntentId);
+		return Result;
+	}
+	if (!BoundActionComponent || !ExecutionStrategy)
+	{
+		Result.Status = EIntentReplayOperationStatus::MissingActionComponent;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_NotInitialized,
+			TEXT("Intent recovery requires initialized GameplayActions and execution strategy."),
+			RecordedIntentId);
+		return Result;
+	}
+
+	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
+	const FIntentReplaySuspendedIntent* Snapshot =
+		Session.PendingExternalRecoveryByIntent.Find(RecordedIntentId);
+	if (!Snapshot)
+	{
+		Result.Status = EIntentReplayOperationStatus::RecordedIntentNotFound;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_RecordedIntentNotFound,
+			TEXT("The requested Recorded Intent is not awaiting external recovery."),
+			RecordedIntentId);
+		return Result;
+	}
+	const int32 EntryIndex = Snapshot->RecordedIntent.TrackSequence;
+	if (!Session.PreparedRequests.IsValidIndex(EntryIndex))
+	{
+		Result.Status = EIntentReplayOperationStatus::InternalFailure;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_Compatibility,
+			TEXT("The suspended intent no longer maps to a prepared replay request."),
+			RecordedIntentId);
+		return Result;
+	}
+
+	const FIntentReplaySuspendedIntent SnapshotCopy = *Snapshot;
+	Session.PendingExternalRecoveryByIntent.Remove(RecordedIntentId);
+	Result.SubmissionResult = ExecutionStrategy->SubmitPreparedRequest(
+		BoundActionComponent,
+		Session.PreparedRequests[EntryIndex]);
+	if (!Result.SubmissionResult.IsAccepted())
+	{
+		Session.PendingExternalRecoveryByIntent.Add(RecordedIntentId, SnapshotCopy);
+		Result.Status = EIntentReplayOperationStatus::SubmissionFailure;
+		Result.Failure = MakeFailure(
+			IntentReplayTags::Failure_SubmissionRejected,
+			Result.SubmissionResult.DiagnosticMessage,
+			RecordedIntentId);
+		OnRecordedIntentSubmissionFailed.Broadcast(RecordedIntentId, Result.SubmissionResult);
+
+		FIntentExecutionEvent FailureEvent;
+		FailureEvent.ObservedRelativeTimeSeconds = FMath::Max(
+			0.0,
+			GetCurrentTimeSeconds() - Session.ExecutionJournal->GetStartTimeSeconds());
+		FailureEvent.TrackId = Session.SourceTrack
+			? Session.SourceTrack->GetTrackId()
+			: FIntentReplayTrackId();
+		FailureEvent.RecordedIntentId = RecordedIntentId;
+		FailureEvent.PlaybackSessionId = Session.SessionId;
+		FailureEvent.DiagnosticMessage = Result.SubmissionResult.DiagnosticMessage;
+		Session.ExecutionJournal->Append(MoveTemp(FailureEvent));
+		return Result;
+	}
+
+	Session.RecordByRuntimeHandle.Add(Result.SubmissionResult.Handle, RecordedIntentId);
+	FGameplayActionResult ExistingResult;
+	if (!BoundActionComponent->GetActionResult(Result.SubmissionResult.Handle, ExistingResult))
+	{
+		Session.ActiveReplayHandles.Add(Result.SubmissionResult.Handle);
+	}
+	OnRecordedIntentSubmitted.Broadcast(RecordedIntentId, Result.SubmissionResult);
+	Result.Status = EIntentReplayOperationStatus::Succeeded;
+	return Result;
+}
+
+FIntentReplayOperationResult UIntentReplayComponent::ResolveExternallyInterruptedIntentAsSatisfied(
+	const FRecordedIntentId RecordedIntentId)
+{
+	if (!ActivePlaybackSession || ActivePlaybackSession->State != EIntentReplayPlaybackState::Paused)
+	{
+		return MakeOperationFailure(
+			EIntentReplayOperationStatus::InvalidState,
+			IntentReplayTags::Failure_InvalidTrack,
+			TEXT("An externally interrupted intent can be resolved only while replay is Paused."),
+			RecordedIntentId);
+	}
+
+	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
+	if (Session.PendingExternalRecoveryByIntent.Remove(RecordedIntentId) == 0)
+	{
+		return MakeOperationFailure(
+			EIntentReplayOperationStatus::RecordedIntentNotFound,
+			IntentReplayTags::Failure_RecordedIntentNotFound,
+			TEXT("The requested Recorded Intent is not awaiting external recovery."),
+			RecordedIntentId);
+	}
+
+	FIntentExecutionEvent ResolutionEvent;
+	ResolutionEvent.ObservedRelativeTimeSeconds = FMath::Max(
+		0.0,
+		GetCurrentTimeSeconds() - Session.ExecutionJournal->GetStartTimeSeconds());
+	ResolutionEvent.TrackId = Session.SourceTrack
+		? Session.SourceTrack->GetTrackId()
+		: FIntentReplayTrackId();
+	ResolutionEvent.RecordedIntentId = RecordedIntentId;
+	ResolutionEvent.PlaybackSessionId = Session.SessionId;
+	ResolutionEvent.DiagnosticMessage =
+		TEXT("Externally interrupted intent resolved as already satisfied without reissue.");
+	Session.ExecutionJournal->Append(MoveTemp(ResolutionEvent));
+
+	FIntentReplayOperationResult Result;
+	Result.Status = EIntentReplayOperationStatus::Succeeded;
+	return Result;
+}
+
+bool UIntentReplayComponent::HasPendingExternalReplayRecovery() const
+{
+	return ActivePlaybackSession
+		&& !ActivePlaybackSession->PendingExternalRecoveryByIntent.IsEmpty();
+}
+
 FIntentReplayOperationResult UIntentReplayComponent::StopReplay()
 {
 	if (!ActivePlaybackSession || IsPlaybackTerminal(ActivePlaybackSession->State))
@@ -689,6 +961,7 @@ FIntentReplayOperationResult UIntentReplayComponent::StopReplay()
 	}
 
 	UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
+	Session.FinalElapsedSeconds = GetPlaybackElapsedSeconds(Session);
 	bStoppingPlayback = true;
 	SetPlaybackState(Session, EIntentReplayPlaybackState::Stopping);
 	ClearReplayScheduling();
@@ -698,6 +971,8 @@ FIntentReplayOperationResult UIntentReplayComponent::StopReplay()
 		Session.bPausedBoundActionsBySession = false;
 	}
 	CancelReplayOwnedActions(Session);
+	Session.PendingExternalRecoveryByIntent.Reset();
+	Session.ExpectedExternalInterruptionReasons.Reset();
 	bStoppingPlayback = false;
 	SetPlaybackState(Session, EIntentReplayPlaybackState::Cancelled);
 
@@ -723,6 +998,96 @@ EIntentReplayPlaybackState UIntentReplayComponent::GetPlaybackState() const
 	return ActivePlaybackSession
 		? ActivePlaybackSession->State
 		: EIntentReplayPlaybackState::Created;
+}
+
+FIntentReplayTimelineClockSnapshot UIntentReplayComponent::GetRecordingClockSnapshot() const
+{
+	if (ActiveRecordingSession)
+	{
+		return BuildRecordingClockSnapshot(*ActiveRecordingSession);
+	}
+	return LastRecordingSession
+		? BuildRecordingClockSnapshot(*LastRecordingSession)
+		: FIntentReplayTimelineClockSnapshot();
+}
+
+FIntentReplayTimelineClockSnapshot UIntentReplayComponent::GetPlaybackClockSnapshot() const
+{
+	return ActivePlaybackSession
+		? BuildPlaybackClockSnapshot(*ActivePlaybackSession)
+		: FIntentReplayTimelineClockSnapshot();
+}
+
+FIntentReplayTimelinePointResult UIntentReplayComponent::CaptureRecordingTimelinePoint(
+	const FIntentRecordingSessionId ExpectedSessionId)
+{
+	if (!IsInGameThread())
+	{
+		FIntentReplayTimelinePointResult Result;
+		Result.Status = EIntentReplayTimelineCaptureStatus::WrongThread;
+		return Result;
+	}
+	if (bShuttingDown)
+	{
+		FIntentReplayTimelinePointResult Result;
+		Result.Status = EIntentReplayTimelineCaptureStatus::ShuttingDown;
+		return Result;
+	}
+	if (!ActiveRecordingSession)
+	{
+		FIntentReplayTimelinePointResult Result;
+		Result.Status = EIntentReplayTimelineCaptureStatus::NoActiveSession;
+		return Result;
+	}
+	if (ActiveRecordingSession->SessionId != ExpectedSessionId)
+	{
+		FIntentReplayTimelinePointResult Result;
+		Result.Status = EIntentReplayTimelineCaptureStatus::SessionMismatch;
+		Result.Clock = BuildRecordingClockSnapshot(*ActiveRecordingSession);
+		return Result;
+	}
+	return CaptureRecordingTimelinePointInternal(*ActiveRecordingSession);
+}
+
+FIntentReplayTimelinePointResult UIntentReplayComponent::CapturePlaybackTimelinePoint(
+	const FIntentReplayPlaybackSessionId ExpectedSessionId)
+{
+	FIntentReplayTimelinePointResult Result;
+	if (!IsInGameThread())
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::WrongThread;
+		return Result;
+	}
+	if (bShuttingDown)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::ShuttingDown;
+		return Result;
+	}
+	if (!ActivePlaybackSession)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::NoActiveSession;
+		return Result;
+	}
+	Result.Clock = BuildPlaybackClockSnapshot(*ActivePlaybackSession);
+	if (ActivePlaybackSession->SessionId != ExpectedSessionId)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::SessionMismatch;
+		return Result;
+	}
+	if (ActivePlaybackSession->State == EIntentReplayPlaybackState::Paused)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::Paused;
+		return Result;
+	}
+	if (ActivePlaybackSession->State != EIntentReplayPlaybackState::Playing)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::NotAccepting;
+		return Result;
+	}
+	Result.Status = EIntentReplayTimelineCaptureStatus::Succeeded;
+	Result.TimelineSequence = ActivePlaybackSession->NextTimelineSequence++;
+	Result.Clock = BuildPlaybackClockSnapshot(*ActivePlaybackSession);
+	return Result;
 }
 
 FIntentReplayDebugSnapshot UIntentReplayComponent::GetDebugSnapshot() const
@@ -936,12 +1301,80 @@ double UIntentReplayComponent::GetRecordingElapsedSeconds(
 double UIntentReplayComponent::GetPlaybackElapsedSeconds(
 	const UIntentReplayPlaybackSession& Session) const
 {
+	if (Session.State == EIntentReplayPlaybackState::Completed
+		|| Session.State == EIntentReplayPlaybackState::Failed
+		|| Session.State == EIntentReplayPlaybackState::Cancelled
+		|| Session.State == EIntentReplayPlaybackState::Stopping)
+	{
+		return FMath::Max(0.0, Session.FinalElapsedSeconds);
+	}
+	if (!Session.bClockStarted)
+	{
+		return 0.0;
+	}
 	const double EndTime = Session.bClockPaused
 		? Session.PauseStartTimeSeconds
 		: GetCurrentTimeSeconds();
 	return FMath::Max(
 		0.0,
 		EndTime - Session.StartTimeSeconds - Session.AccumulatedPausedSeconds);
+}
+
+FIntentReplayTimelineClockSnapshot UIntentReplayComponent::BuildRecordingClockSnapshot(
+	const UIntentRecordingSession& Session) const
+{
+	FIntentReplayTimelineClockSnapshot Snapshot;
+	Snapshot.bValid = Session.SessionId.IsValid() && Session.TrackId.IsValid();
+	Snapshot.Domain = EIntentReplayTimelineDomain::Recording;
+	Snapshot.RecordingSessionId = Session.SessionId;
+	Snapshot.TrackId = Session.TrackId;
+	Snapshot.RelativeTimeSeconds = GetRecordingElapsedSeconds(Session);
+	Snapshot.NextTimelineSequence = Session.NextTimelineSequence;
+	Snapshot.bClockStarted = true;
+	Snapshot.bPaused = Session.State == EIntentRecordingState::Paused;
+	Snapshot.bAcceptingTimelinePoints = Session.State == EIntentRecordingState::Recording;
+	Snapshot.RecordingState = Session.State;
+	return Snapshot;
+}
+
+FIntentReplayTimelineClockSnapshot UIntentReplayComponent::BuildPlaybackClockSnapshot(
+	const UIntentReplayPlaybackSession& Session) const
+{
+	FIntentReplayTimelineClockSnapshot Snapshot;
+	Snapshot.bValid = Session.SessionId.IsValid() && IsValid(Session.SourceTrack);
+	Snapshot.Domain = EIntentReplayTimelineDomain::Playback;
+	Snapshot.PlaybackSessionId = Session.SessionId;
+	Snapshot.TrackId = Session.SourceTrack
+		? Session.SourceTrack->GetTrackId()
+		: FIntentReplayTrackId();
+	Snapshot.RelativeTimeSeconds = GetPlaybackElapsedSeconds(Session);
+	Snapshot.NextTimelineSequence = Session.NextTimelineSequence;
+	Snapshot.bClockStarted = Session.bClockStarted;
+	Snapshot.bPaused = Session.State == EIntentReplayPlaybackState::Paused;
+	Snapshot.bAcceptingTimelinePoints = Session.State == EIntentReplayPlaybackState::Playing;
+	Snapshot.PlaybackState = Session.State;
+	return Snapshot;
+}
+
+FIntentReplayTimelinePointResult UIntentReplayComponent::CaptureRecordingTimelinePointInternal(
+	UIntentRecordingSession& Session)
+{
+	FIntentReplayTimelinePointResult Result;
+	Result.Clock = BuildRecordingClockSnapshot(Session);
+	if (Session.State == EIntentRecordingState::Paused)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::Paused;
+		return Result;
+	}
+	if (Session.State != EIntentRecordingState::Recording)
+	{
+		Result.Status = EIntentReplayTimelineCaptureStatus::NotAccepting;
+		return Result;
+	}
+	Result.Status = EIntentReplayTimelineCaptureStatus::Succeeded;
+	Result.TimelineSequence = Session.NextTimelineSequence++;
+	Result.Clock = BuildRecordingClockSnapshot(Session);
+	return Result;
 }
 
 bool UIntentReplayComponent::IsReplayEvent(
@@ -1069,7 +1502,18 @@ FGameplayActionJournalResult UIntentReplayComponent::HandleAcceptedJournalEvent(
 		NewEntry.OriginalCorrelation = Event.Correlation;
 		NewEntry.TrackSequence = ActiveRecordingSession->MutableEntries.Num();
 		NewEntry.OriginalSubmissionSequence = Event.SubmissionSequence;
-		NewEntry.RelativeAcceptedTimeSeconds = GetRecordingElapsedSeconds(*ActiveRecordingSession);
+		const FIntentReplayTimelinePointResult TimelinePoint =
+			CaptureRecordingTimelinePointInternal(*ActiveRecordingSession);
+		if (!TimelinePoint.Succeeded())
+		{
+			FGameplayActionJournalResult Result;
+			Result.Status = EGameplayActionJournalWriteStatus::Rejected;
+			Result.ReasonTag = IntentReplayTags::Failure_NoRecordingSession;
+			Result.DiagnosticMessage = TEXT("The authoritative recording timeline stopped accepting points.");
+			return Result;
+		}
+		NewEntry.RelativeAcceptedTimeSeconds = TimelinePoint.Clock.RelativeTimeSeconds;
+		NewEntry.TimelineSequence = TimelinePoint.TimelineSequence;
 		bAppendToTrack = true;
 	}
 
@@ -1210,6 +1654,23 @@ void UIntentReplayComponent::ProcessLifecycleEvent(const FGameplayActionEvent& E
 		UIntentReplayPlaybackSession& Session = *ActivePlaybackSession;
 		Session.RecordByRuntimeHandle.Add(Event.Handle, ReplayRecordedIntentId);
 		Session.ActiveReplayHandles.Remove(Event.Handle);
+		const FGameplayTag ExpectedExternalReason =
+			Session.ExpectedExternalInterruptionReasons.FindRef(Event.Handle);
+		const bool bExpectedExternalInterruption =
+			ExpectedExternalReason.IsValid()
+			&& Event.bHasResult
+			&& Event.Result.TerminalState == EGameplayActionState::Interrupted
+			&& Event.Result.ReasonTag.MatchesTagExact(ExpectedExternalReason);
+		Session.ExpectedExternalInterruptionReasons.Remove(Event.Handle);
+		if (bExpectedExternalInterruption)
+		{
+			if (FIntentReplaySuspendedIntent* SuspendedIntent =
+				Session.PendingExternalRecoveryByIntent.Find(ReplayRecordedIntentId))
+			{
+				SuspendedIntent->bHasInterruptionResult = true;
+				SuspendedIntent->InterruptionResult = Event.Result;
+			}
+		}
 		const bool bExpectedSameSessionPreemption =
 			Event.bHasResult
 			&& Event.Result.TerminalState == EGameplayActionState::Interrupted
@@ -1222,6 +1683,7 @@ void UIntentReplayComponent::ProcessLifecycleEvent(const FGameplayActionEvent& E
 			&& Event.bHasResult
 			&& !IsSuccessfulTerminalAction(Event.Result)
 			&& !bExpectedSameSessionPreemption
+			&& !bExpectedExternalInterruption
 			&& Session.Options.TerminalFailurePolicy == EIntentReplayTerminalFailurePolicy::StopPlayback
 			&& !IsPlaybackTerminal(Session.State))
 		{
@@ -1305,6 +1767,13 @@ void UIntentReplayComponent::SetRecordingState(
 	const EIntentRecordingState PreviousState = Session.State;
 	Session.State = NewState;
 	OnRecordingStateChanged.Broadcast(PreviousState, NewState);
+	FIntentReplayTimelineLifecycleEvent Event;
+	Event.Domain = EIntentReplayTimelineDomain::Recording;
+	Event.PreviousRecordingState = PreviousState;
+	Event.NewRecordingState = NewState;
+	Event.Clock = BuildRecordingClockSnapshot(Session);
+	TimelineLifecycleChangedNative.Broadcast(Event);
+	OnTimelineLifecycleChanged.Broadcast(Event);
 }
 
 void UIntentReplayComponent::FinalizeRecordingSession(UIntentRecordingSession& Session)
@@ -1322,6 +1791,10 @@ void UIntentReplayComponent::FinalizeRecordingSession(UIntentRecordingSession& S
 			if (!FMath::IsNearlyEqual(Left.RelativeAcceptedTimeSeconds, Right.RelativeAcceptedTimeSeconds))
 			{
 				return Left.RelativeAcceptedTimeSeconds < Right.RelativeAcceptedTimeSeconds;
+			}
+			if (Left.TimelineSequence != Right.TimelineSequence)
+			{
+				return Left.TimelineSequence < Right.TimelineSequence;
 			}
 			return Left.TrackSequence < Right.TrackSequence;
 		});
@@ -1352,6 +1825,7 @@ void UIntentReplayComponent::FinalizeRecordingSession(UIntentRecordingSession& S
 	// readable only through const/copy accessors on the finalized track.
 	Track->InitializeFinalized(
 		Session.TrackId,
+		Session.SessionId,
 		MoveTemp(FinalizedEntries),
 		Duration,
 		Session.Options.SourceLabel,
@@ -1365,9 +1839,9 @@ void UIntentReplayComponent::FinalizeRecordingSession(UIntentRecordingSession& S
 		return;
 	}
 
-	SetRecordingState(Session, EIntentRecordingState::Finalized);
 	LastFinalizedTrack = Track;
 	LastRecordingSession = &Session;
+	SetRecordingState(Session, EIntentRecordingState::Finalized);
 	if (ActiveRecordingSession == &Session)
 	{
 		ActiveRecordingSession = nullptr;
@@ -1388,6 +1862,7 @@ void UIntentReplayComponent::FailRecordingSession(
 	UIntentRecordingSession& Session,
 	const FIntentReplayFailure& Failure)
 {
+	Session.FinalRecordedDurationSeconds = GetRecordingElapsedSeconds(Session);
 	SetRecordingState(Session, EIntentRecordingState::Failed);
 	LastRecordingSession = &Session;
 	if (ActiveRecordingSession == &Session)
@@ -1416,7 +1891,19 @@ void UIntentReplayComponent::SetPlaybackState(
 	UIntentReplayPlaybackSession& Session,
 	const EIntentReplayPlaybackState NewState)
 {
+	if (Session.State == NewState)
+	{
+		return;
+	}
+	const EIntentReplayPlaybackState PreviousState = Session.State;
 	Session.State = NewState;
+	FIntentReplayTimelineLifecycleEvent Event;
+	Event.Domain = EIntentReplayTimelineDomain::Playback;
+	Event.PreviousPlaybackState = PreviousState;
+	Event.NewPlaybackState = NewState;
+	Event.Clock = BuildPlaybackClockSnapshot(Session);
+	TimelineLifecycleChangedNative.Broadcast(Event);
+	OnTimelineLifecycleChanged.Broadcast(Event);
 }
 
 void UIntentReplayComponent::HandleReplayAssetsLoaded(
@@ -1755,10 +2242,12 @@ void UIntentReplayComponent::MarkAllEntriesSubmitted(UIntentReplayPlaybackSessio
 void UIntentReplayComponent::TryCompleteReplay(UIntentReplayPlaybackSession& Session)
 {
 	// Exhausting the timeline is not enough: Completed is emitted only after every session-owned
-	// action is terminal, preserving accurate lifecycle semantics for Behavior Tree coordinators.
+	// action is terminal and every recoverable external interruption has been reconciled, preserving
+	// accurate lifecycle semantics for Behavior Tree coordinators.
 	if (Session.State == EIntentReplayPlaybackState::Playing
 		&& Session.bAllEntriesSubmittedBroadcast
-		&& Session.ActiveReplayHandles.IsEmpty())
+		&& Session.ActiveReplayHandles.IsEmpty()
+		&& Session.PendingExternalRecoveryByIntent.IsEmpty())
 	{
 		CompleteReplay(Session);
 	}
@@ -1767,6 +2256,7 @@ void UIntentReplayComponent::TryCompleteReplay(UIntentReplayPlaybackSession& Ses
 void UIntentReplayComponent::CompleteReplay(UIntentReplayPlaybackSession& Session)
 {
 	ClearReplayScheduling();
+	Session.FinalElapsedSeconds = GetPlaybackElapsedSeconds(Session);
 	SetPlaybackState(Session, EIntentReplayPlaybackState::Completed);
 	FIntentReplayResult Result;
 	Result.Status = EIntentReplayTerminalStatus::Completed;
@@ -1786,10 +2276,13 @@ void UIntentReplayComponent::FailReplay(
 	{
 		return;
 	}
+	Session.FinalElapsedSeconds = GetPlaybackElapsedSeconds(Session);
 	bStoppingPlayback = true;
 	SetPlaybackState(Session, EIntentReplayPlaybackState::Stopping);
 	ClearReplayScheduling();
 	CancelReplayOwnedActions(Session);
+	Session.PendingExternalRecoveryByIntent.Reset();
+	Session.ExpectedExternalInterruptionReasons.Reset();
 	bStoppingPlayback = false;
 	SetPlaybackState(Session, EIntentReplayPlaybackState::Failed);
 
@@ -1902,14 +2395,20 @@ void UIntentReplayComponent::ShutdownIntentReplay()
 	ClearReplayScheduling();
 	if (ActivePlaybackSession && !IsPlaybackTerminal(ActivePlaybackSession->State))
 	{
+		ActivePlaybackSession->FinalElapsedSeconds =
+			GetPlaybackElapsedSeconds(*ActivePlaybackSession);
 		bStoppingPlayback = true;
 		CancelReplayOwnedActions(*ActivePlaybackSession);
+		ActivePlaybackSession->PendingExternalRecoveryByIntent.Reset();
+		ActivePlaybackSession->ExpectedExternalInterruptionReasons.Reset();
 		bStoppingPlayback = false;
-		ActivePlaybackSession->State = EIntentReplayPlaybackState::Cancelled;
+		SetPlaybackState(*ActivePlaybackSession, EIntentReplayPlaybackState::Cancelled);
 	}
 	if (ActiveRecordingSession && !IsRecordingTerminal(ActiveRecordingSession->State))
 	{
-		ActiveRecordingSession->State = EIntentRecordingState::Cancelled;
+		ActiveRecordingSession->FinalRecordedDurationSeconds =
+			GetRecordingElapsedSeconds(*ActiveRecordingSession);
+		SetRecordingState(*ActiveRecordingSession, EIntentRecordingState::Cancelled);
 		LastRecordingSession = ActiveRecordingSession;
 		ActiveRecordingSession = nullptr;
 	}

@@ -26,6 +26,9 @@ UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_ActionChanged, "GameplayActi
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_OriginPlayer, "GameplayAction.Origin.TestPlayer");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Correlation, "GameplayAction.Correlation.TestIntentReplay");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_MovementLock, "GameplayAction.Lock.Test.IntentReplayMovement");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(
+	TAG_IntentReplay_Test_ExternalRecovery,
+	"GameplayAction.Result.Interrupted.TestExternalRecovery");
 
 namespace IntentReplayTests
 {
@@ -146,6 +149,28 @@ namespace IntentReplayTests
 	}
 }
 
+struct FIntentReplayCoreTestAccessor
+{
+	static UIntentReplayTrack* MakeLegacyEmptyTrack()
+	{
+		UIntentReplayTrack* Track = NewObject<UIntentReplayTrack>(
+			GetTransientPackage(),
+			NAME_None,
+			RF_Transient);
+		TArray<FRecordedIntent> Entries;
+		Track->InitializeFinalized(
+			FIntentReplayTrackId::NewId(),
+			FIntentRecordingSessionId::NewId(),
+			MoveTemp(Entries),
+			0.0,
+			TEXT("LegacyCompatibility"),
+			FGameplayTagContainer());
+		Track->FormatVersion = 1;
+		Track->SourceRecordingSessionId = FIntentRecordingSessionId();
+		return Track;
+	}
+};
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FIntentReplayRecordingTest,
 	"IntentReplay.Recording.TransactionAsyncStopDeepCopyAndNewSession",
@@ -225,6 +250,150 @@ bool FIntentReplayRecordingTest::RunTest(const FString& Parameters)
 		Source.Replay->GetLastFinalizedTrack() == Track);
 	TestEqual(TEXT("Transferred track remains immutable"), Track ? Track->GetEntryCount() : 0, 1);
 	TestTrue(TEXT("Fresh recording can be cancelled"), Source.Replay->CancelRecording().Succeeded());
+
+	Source.Actor->Destroy();
+	DestroyWorld(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FIntentReplayAuthoritativeTimelineTest,
+	"IntentReplay.Timeline.SessionClockSequenceLifecycleAndLegacyFormat",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIntentReplayAuthoritativeTimelineTest::RunTest(const FString& Parameters)
+{
+	using namespace IntentReplayTests;
+	UWorld* World = MakeWorld(TEXT("IntentReplayAuthoritativeTimelineWorld"));
+	if (!TestNotNull(TEXT("Test world exists"), World))
+	{
+		return false;
+	}
+
+	const FEntity Source = MakeEntity(*World);
+	UGameplayActionDefinition* Definition = MakeWaitDefinition(2.0);
+	TArray<FIntentReplayTimelineLifecycleEvent> Lifecycle;
+	Source.Replay->OnTimelineLifecycleChangedNative().AddLambda(
+		[&Lifecycle](const FIntentReplayTimelineLifecycleEvent& Event)
+		{
+			Lifecycle.Add(Event);
+		});
+
+	const FIntentRecordingStartResult Start =
+		Source.Replay->StartRecording(FIntentRecordingOptions());
+	TestTrue(TEXT("Recording Session ID is valid"), Start.SessionId.IsValid());
+	const FIntentReplayTimelinePointResult ExternalPoint =
+		Source.Replay->CaptureRecordingTimelinePoint(Start.SessionId);
+	TestTrue(TEXT("External recording point is captured"), ExternalPoint.Succeeded());
+	TestEqual(TEXT("First shared sequence is zero"), ExternalPoint.TimelineSequence, int64(0));
+	TestTrue(
+		TEXT("Action accepted after external point"),
+		Source.Actions->SubmitAction(MakeRequest(*Definition)).IsAccepted());
+
+	Advance(*World, 0.25);
+	TestTrue(TEXT("Recording pauses"), Source.Replay->PauseRecording().Succeeded());
+	const FIntentReplayTimelineClockSnapshot Paused =
+		Source.Replay->GetRecordingClockSnapshot();
+	Advance(*World, 0.5);
+	const FIntentReplayTimelineClockSnapshot StillPaused =
+		Source.Replay->GetRecordingClockSnapshot();
+	TestTrue(
+		TEXT("Paused recording clock is frozen"),
+		FMath::IsNearlyEqual(
+			Paused.RelativeTimeSeconds,
+			StillPaused.RelativeTimeSeconds,
+			UE_SMALL_NUMBER));
+	TestEqual(
+		TEXT("Capture while paused is explicit"),
+		Source.Replay->CaptureRecordingTimelinePoint(Start.SessionId).Status,
+		EIntentReplayTimelineCaptureStatus::Paused);
+	TestTrue(TEXT("Recording resumes"), Source.Replay->ResumeRecording().Succeeded());
+	const FIntentReplayTimelinePointResult ResumedPoint =
+		Source.Replay->CaptureRecordingTimelinePoint(Start.SessionId);
+	TestEqual(TEXT("Shared allocator advanced past action"), ResumedPoint.TimelineSequence, int64(2));
+	TestTrue(
+		TEXT("Recording finalizes"),
+		Source.Replay->RequestStopRecording(EIntentRecordingFinalizeMode::Immediate).Succeeded());
+
+	UIntentReplayTrack* Track = Source.Replay->GetLastFinalizedTrack();
+	TestNotNull(TEXT("Format 2 track is published"), Track);
+	if (Track)
+	{
+		TestEqual(TEXT("Core track format is 2"), Track->GetFormatVersion(), 2);
+		TestTrue(
+			TEXT("Track carries recording session identity"),
+			Track->GetSourceRecordingSessionId() == Start.SessionId);
+		FRecordedIntent Entry;
+		TestTrue(TEXT("Recorded action is readable"), Track->GetEntryByIndex(0, Entry));
+		TestEqual(TEXT("Action uses shared sequence one"), Entry.TimelineSequence, int64(1));
+	}
+
+	const FIntentReplayTimelineClockSnapshot FinalClock =
+		Source.Replay->GetRecordingClockSnapshot();
+	Advance(*World, 1.0);
+	TestTrue(
+		TEXT("Terminal recording clock remains frozen"),
+		FMath::IsNearlyEqual(
+			FinalClock.RelativeTimeSeconds,
+			Source.Replay->GetRecordingClockSnapshot().RelativeTimeSeconds,
+			UE_SMALL_NUMBER));
+	TestEqual(TEXT("Four recording transitions emitted once"), Lifecycle.Num(), 4);
+	if (Lifecycle.Num() == 4)
+	{
+		TestEqual(TEXT("Transition 0"), Lifecycle[0].NewRecordingState, EIntentRecordingState::Recording);
+		TestEqual(TEXT("Transition 1"), Lifecycle[1].NewRecordingState, EIntentRecordingState::Paused);
+		TestEqual(TEXT("Transition 2"), Lifecycle[2].NewRecordingState, EIntentRecordingState::Recording);
+		TestEqual(TEXT("Transition 3"), Lifecycle[3].NewRecordingState, EIntentRecordingState::Finalized);
+	}
+
+	Lifecycle.Reset();
+	const FIntentReplayPrepareResult Prepare =
+		Source.Replay->PrepareReplay(Track, FIntentReplayPlaybackOptions());
+	TestTrue(TEXT("Playback preparation is accepted"), Prepare.WasAccepted());
+	TestEqual(
+		TEXT("Playback reaches Ready synchronously for loaded definitions"),
+		Source.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Ready);
+	TestTrue(TEXT("Playback starts"), Source.Replay->StartReplay().Succeeded());
+	const FIntentReplayTimelinePointResult PlaybackPoint =
+		Source.Replay->CapturePlaybackTimelinePoint(Prepare.SessionId);
+	TestEqual(TEXT("First playback sequence is zero"), PlaybackPoint.TimelineSequence, int64(0));
+	TestTrue(TEXT("Playback pauses"), Source.Replay->PauseReplay().Succeeded());
+	const FIntentReplayTimelineClockSnapshot PausedPlayback =
+		Source.Replay->GetPlaybackClockSnapshot();
+	Advance(*World, 0.5);
+	TestTrue(
+		TEXT("Paused playback clock is frozen"),
+		FMath::IsNearlyEqual(
+			PausedPlayback.RelativeTimeSeconds,
+			Source.Replay->GetPlaybackClockSnapshot().RelativeTimeSeconds,
+			UE_SMALL_NUMBER));
+	TestTrue(TEXT("Playback resumes"), Source.Replay->ResumeReplay().Succeeded());
+	TestEqual(
+		TEXT("Playback allocator resumes without reset"),
+		Source.Replay->CapturePlaybackTimelinePoint(Prepare.SessionId).TimelineSequence,
+		int64(1));
+	Advance(*World, 2.1);
+	TestEqual(
+		TEXT("Playback completes"),
+		Source.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Completed);
+	const FIntentReplayTimelineClockSnapshot CompletedPlayback =
+		Source.Replay->GetPlaybackClockSnapshot();
+	Advance(*World, 1.0);
+	TestTrue(
+		TEXT("Terminal playback clock remains frozen"),
+		FMath::IsNearlyEqual(
+			CompletedPlayback.RelativeTimeSeconds,
+			Source.Replay->GetPlaybackClockSnapshot().RelativeTimeSeconds,
+			UE_SMALL_NUMBER));
+	TestEqual(TEXT("Six playback transitions emitted once"), Lifecycle.Num(), 6);
+
+	UIntentReplayTrack* LegacyTrack =
+		FIntentReplayCoreTestAccessor::MakeLegacyEmptyTrack();
+	TestTrue(
+		TEXT("Legacy format 1 validation remains supported"),
+		LegacyTrack->ValidateTrack().bValid);
 
 	Source.Actor->Destroy();
 	DestroyWorld(World);
@@ -621,6 +790,165 @@ bool FIntentReplaySameSessionPreemptionTest::RunTest(const FString& Parameters)
 	Source.Actor->Destroy();
 	Clone.Actor->Destroy();
 	ExternallyPreemptedClone.Actor->Destroy();
+	DestroyWorld(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FIntentReplayExternalRecoveryTest,
+	"IntentReplay.Playback.ExternalInterruptionRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIntentReplayExternalRecoveryTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace IntentReplayTests;
+	UWorld* World =
+		MakeWorld(TEXT("IntentReplayExternalRecoveryTestWorld"));
+	if (!TestNotNull(TEXT("Test world exists"), World))
+	{
+		return false;
+	}
+
+	const FEntity Source = MakeEntity(*World);
+	UGameplayActionDefinition* Definition = MakeWaitDefinition(0.2);
+	TestTrue(
+		TEXT("Recovery source recording starts"),
+		Source.Replay->StartRecording(
+			FIntentRecordingOptions()).Succeeded());
+	TestTrue(
+		TEXT("Recovery source action starts"),
+		Source.Actions->SubmitAction(
+			MakeRequest(*Definition)).IsAccepted());
+	Advance(*World, 0.21);
+	TestTrue(
+		TEXT("Recovery source track finalizes"),
+		Source.Replay->RequestStopRecording(
+			EIntentRecordingFinalizeMode::Immediate).Succeeded());
+	UIntentReplayTrack* Track = Source.Replay->GetLastFinalizedTrack();
+	FRecordedIntent ImmutableEntryBefore;
+	TestTrue(
+		TEXT("Recovery track has one immutable entry"),
+		Track && Track->GetEntryByIndex(0, ImmutableEntryBefore));
+
+	const FEntity SatisfiedClone = MakeEntity(*World);
+	TestEqual(
+		TEXT("Satisfied clone prepares"),
+		SatisfiedClone.Replay
+			->PrepareReplay(Track, FIntentReplayPlaybackOptions())
+			.Status,
+		EIntentReplayPrepareStatus::Ready);
+	TestTrue(
+		TEXT("Satisfied clone starts"),
+		SatisfiedClone.Replay->StartReplay().Succeeded());
+	const FIntentReplayExternalInterruptionResult Interruption =
+		SatisfiedClone.Replay->BeginExternalReplayInterruption(
+			TAG_IntentReplay_Test_ExternalRecovery);
+	TestTrue(
+		TEXT("External interruption is atomic"),
+		Interruption.Succeeded());
+	TestEqual(
+		TEXT("Exactly one replay-owned intent is suspended"),
+		Interruption.SuspendedIntents.Num(),
+		1);
+	TestEqual(
+		TEXT("Replay is paused before interruption returns"),
+		SatisfiedClone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Paused);
+	TestTrue(
+		TEXT("Pending recovery is observable"),
+		SatisfiedClone.Replay->HasPendingExternalReplayRecovery());
+	if (Interruption.SuspendedIntents.Num() == 1)
+	{
+		const FIntentReplaySuspendedIntent& Suspended =
+			Interruption.SuspendedIntents[0];
+		FGameplayActionResult InterruptedResult;
+		TestTrue(
+			TEXT("Interrupted runtime handle retains terminal result"),
+			SatisfiedClone.Actions->GetActionResult(
+				Suspended.InterruptedRuntimeHandle,
+				InterruptedResult));
+		TestEqual(
+			TEXT("External recovery interruption is terminal Interrupted"),
+			InterruptedResult.TerminalState,
+			EGameplayActionState::Interrupted);
+		TestTrue(
+			TEXT("Journal reason remains the requested interruption reason"),
+			InterruptedResult.ReasonTag
+				== TAG_IntentReplay_Test_ExternalRecovery);
+		TestEqual(
+			TEXT("Resume is rejected until reconciliation"),
+			SatisfiedClone.Replay->ResumeReplay().Status,
+			EIntentReplayOperationStatus::PendingExternalRecovery);
+		TestTrue(
+			TEXT("Already-satisfied reconciliation succeeds"),
+			SatisfiedClone.Replay
+				->ResolveExternallyInterruptedIntentAsSatisfied(
+					Suspended.RecordedIntent.RecordedIntentId)
+				.Succeeded());
+	}
+	TestFalse(
+		TEXT("Satisfied reconciliation clears pending recovery"),
+		SatisfiedClone.Replay->HasPendingExternalReplayRecovery());
+	TestTrue(
+		TEXT("Replay resumes only after reconciliation"),
+		SatisfiedClone.Replay->ResumeReplay().Succeeded());
+
+	FRecordedIntent ImmutableEntryAfter;
+	TestTrue(
+		TEXT("Source track remains readable"),
+		Track->GetEntryByIndex(0, ImmutableEntryAfter));
+	TestTrue(
+		TEXT("External recovery does not mutate Recorded Intent identity"),
+		ImmutableEntryBefore.RecordedIntentId
+			== ImmutableEntryAfter.RecordedIntentId);
+	TestTrue(
+		TEXT("External recovery does not mutate original correlation"),
+		ImmutableEntryBefore.OriginalCorrelation.Id
+			== ImmutableEntryAfter.OriginalCorrelation.Id);
+
+	const FEntity ReissuedClone = MakeEntity(*World);
+	TestEqual(
+		TEXT("Reissued clone prepares"),
+		ReissuedClone.Replay
+			->PrepareReplay(Track, FIntentReplayPlaybackOptions())
+			.Status,
+		EIntentReplayPrepareStatus::Ready);
+	TestTrue(
+		TEXT("Reissued clone starts"),
+		ReissuedClone.Replay->StartReplay().Succeeded());
+	const FIntentReplayExternalInterruptionResult ReissueInterruption =
+		ReissuedClone.Replay->BeginExternalReplayInterruption(
+			TAG_IntentReplay_Test_ExternalRecovery);
+	if (TestEqual(
+		TEXT("Reissue captures exactly one intent"),
+		ReissueInterruption.SuspendedIntents.Num(),
+		1))
+	{
+		const FIntentReplayRecoveryResult Reissue =
+			ReissuedClone.Replay->ReissueExternallyInterruptedIntent(
+				ReissueInterruption.SuspendedIntents[0]
+					.RecordedIntent.RecordedIntentId);
+		TestTrue(
+			TEXT("Non-movement intent can be reissued immediately"),
+			Reissue.Succeeded());
+		TestTrue(
+			TEXT("Reissue receives a new runtime handle"),
+			Reissue.SubmissionResult.Handle.IsValid()
+				&& Reissue.SubmissionResult.Handle
+					!= ReissueInterruption.SuspendedIntents[0]
+						.InterruptedRuntimeHandle);
+	}
+	TestFalse(
+		TEXT("Successful reissue clears pending recovery"),
+		ReissuedClone.Replay->HasPendingExternalReplayRecovery());
+	TestTrue(
+		TEXT("Reissued replay resumes"),
+		ReissuedClone.Replay->ResumeReplay().Succeeded());
+
+	Source.Actor->Destroy();
+	SatisfiedClone.Actor->Destroy();
+	ReissuedClone.Actor->Destroy();
 	DestroyWorld(World);
 	return true;
 }
