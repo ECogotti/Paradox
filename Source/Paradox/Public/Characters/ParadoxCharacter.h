@@ -10,6 +10,7 @@ class UGameplayActionComponent;
 class UFootstepComponent;
 class UIntentReplayComponent;
 class UIntentReplayObservationComponent;
+class UNiagaraComponent;
 class UEntityIdentityComponent;
 class UParadoxFootstepNoiseComponent;
 class UParadoxTemporalEntityComponent;
@@ -60,6 +61,10 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParadoxFootstepNoiseComponent> FootstepNoiseComponent;
 
+	/** Character-local presentation used by the recorded time-travel action. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UNiagaraComponent> TimeTravelNiagaraComponent;
+
 public:
 
 	/** Constructor */
@@ -98,6 +103,13 @@ public:
 	UParadoxFootstepNoiseComponent* GetFootstepNoiseComponent() const
 	{
 		return FootstepNoiseComponent.Get();
+	}
+
+	/** Assign a non-looping Niagara System on the character Blueprint; null uses the immediate fallback. */
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UNiagaraComponent* GetTimeTravelNiagaraComponent() const
+	{
+		return TimeTravelNiagaraComponent.Get();
 	}
 
 };

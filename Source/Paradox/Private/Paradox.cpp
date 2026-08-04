@@ -29,6 +29,12 @@ namespace
 		0,
 		TEXT("Enables project footstep-perception diagnostics when the owning adapter local flag is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxPressurePlateDebug(
+		TEXT("Paradox.PressurePlate.Debug"),
+		0,
+		TEXT("Enables pressure-plate occupancy and movement diagnostics when the inherited local debug flag is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -46,6 +52,11 @@ bool IsParadoxFootstepDebugEnabled()
 	return CVarParadoxFootstepDebug.GetValueOnGameThread() != 0;
 }
 
+bool IsParadoxPressurePlateDebugEnabled()
+{
+	return CVarParadoxPressurePlateDebug.GetValueOnGameThread() != 0;
+}
+
 namespace ParadoxGameplayTags
 {
 	UE_DEFINE_GAMEPLAY_TAG(Origin_Player, "GameplayAction.Origin.Player");
@@ -53,6 +64,12 @@ namespace ParadoxGameplayTags
 		Action_SetCrouched,
 		"GameplayAction.Character.SetCrouched");
 	UE_DEFINE_GAMEPLAY_TAG(Lock_Stance, "GameplayAction.Lock.Stance");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Action_TimeTravel,
+		"GameplayAction.Paradox.TimeTravel");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Lock_TimeTravel,
+		"GameplayAction.Lock.TimeTravel");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Outcome_FutureObserved,
 		"Paradox.Relation.Outcome.FutureObserved");
@@ -89,4 +106,16 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(
 		Cause_CharacterMovement_Footstep,
 		"PerceptionKnowledge.Cause.CharacterMovement.Footstep");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Puzzle_Signal_Pressed,
+		"Puzzle.Signal.Pressed");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Event_Noise_PressurePlate_Press,
+		"PerceptionKnowledge.Event.Noise.PressurePlate.Press");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Event_Noise_PressurePlate_Release,
+		"PerceptionKnowledge.Event.Noise.PressurePlate.Release");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Cause_PressurePlate_Movement,
+		"PerceptionKnowledge.Cause.PressurePlate.Movement");
 }

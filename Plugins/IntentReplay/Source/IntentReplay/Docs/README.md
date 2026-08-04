@@ -11,6 +11,7 @@ Modulo runtime responsabile di:
 - validazione ricorsiva dei parametri;
 - preparazione asincrona e compatibilità;
 - scheduling one-shot del replay;
+- barriera di completamento sulla durata totale registrata, inclusa l'eventuale coda inattiva;
 - isolamento di sessioni, handle e journal.
 
 Il core pubblica inoltre:

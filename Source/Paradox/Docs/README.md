@@ -21,6 +21,8 @@ responsibility and their implementations use the matching path under `Private`:
 - `Public/Behavior`, `Public/Investigation`, and their private mirrors contain authoritative clone
   behavior, project response policy, replay recovery, and native Behavior Tree tasks;
 - `Public/Relations` and `Private/Relations` contain the project temporal-ordering policy;
+- `Public/Puzzles` and `Private/Puzzles` contain concrete project puzzle Actors built on the reusable
+  PuzzleSystem primitives;
 - `Public/Presentation` and `Private/Presentation` contain native, Blueprint-replaceable outcome
   presentation;
 - `Public/Paradox.h` exposes the module log category and native gameplay tags;
@@ -84,6 +86,9 @@ Hearing Range renderer. Clone setup and policy are documented in:
 - [Footsteps, semantic Hearing, and crouch](FOOTSTEPS.md);
 - [Automation and PIE verification](TESTING.md).
 
+Native tag ownership and registered strings are indexed in
+[Gameplay Tag declarations](GAMEPLAY_TAGS.md).
+
 ## Player movement
 
 `AParadoxPlayerController` no longer applies direct movement input or calls `SimpleMoveToLocation`.
@@ -115,6 +120,16 @@ Player crouch is also semantic rather than a direct Character call. `RequestSetC
 matching therefore applies crouch or uncrouch immediately while an active movement remains
 `Running`. `BlockedPolicy=Queue` affects only another concurrent stance owner, not movement.
 Intent Replay records and reproduces both absolute stance transitions.
+
+Time Travel is likewise semantic. `RequestTimeRewind` on the player controller submits
+`GameplayAction.Paradox.TimeTravel` through
+`/Game/Data/GameplayActions/DA_ParadoxTimeTravel`. Its high-priority exact locks for Movement,
+Stance and TimeTravel stop the current move and reject duplicate departure commands without
+affecting the immutable track. Every `AParadoxCharacter` owns an inherited, non-auto-activating
+`TimeTravelNiagaraComponent`; assign a finite Niagara System in the Character Blueprint. The
+player rewinds after the system finishes, while a replay clone is then hidden and removed from
+perception, collision and GridWorld occupancy. An empty Niagara component selects the immediate
+fallback for both roles.
 
 The controller now owns inherited `UGridCellPointerComponent` and `UGridPathPreviewComponent`
 components. For a local mouse, `PlayerTick` continuously resolves the hovered cell and requests a
@@ -202,3 +217,9 @@ waypoint acceptance.
 See [Paradox Time Loop V0](TimeLoop.md) for Chrono Spawn selection, semantic recording, World State
 reset, synchronized clone preparation/playback, authoritative temporal perception, paradox
 recovery, Game Over, Level Complete, presentation hooks, and Blueprint APIs.
+
+## Puzzles
+
+See [Pressure Plate](PRESSURE_PLATE.md) for the concrete Blueprint class, collision and tag setup,
+single-occupant behavior, movement feedback, semantic Hearing, WorldState restoration, extension
+events, and debug controls.

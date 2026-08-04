@@ -18,6 +18,7 @@ class UGridWorldPathFollowingComponent;
 class UGridCellPointerComponent;
 class UGridPathPreviewComponent;
 class UTacticalPauseWorldSubsystem;
+class UParadoxTimeTravelAction;
 class UParadoxTimeLoopComponent;
 class UParadoxOutcomePresentationComponent;
 class UPerceptionKnowledgeHearingRangeRendererComponent;
@@ -117,6 +118,10 @@ protected:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
 	TObjectPtr<UGameplayActionDefinition> SetCrouchedActionDefinition;
 
+	/** Terminal semantic command recorded before its Niagara-driven rewind is executed. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
+	TObjectPtr<UGameplayActionDefinition> TimeTravelActionDefinition;
+
 	/** Project movement rejects an exact destination owned or claimed by another character. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Gameplay Actions")
 	EGridGoalContentionPolicy MoveGoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied;
@@ -182,6 +187,8 @@ protected:
 	float CameraRecenterElapsed = 0.0f;
 	bool bCameraRecenterActive = false;
 	bool bWarnedRuntimeAspectConstraint = false;
+	bool bRecordedTimeTravelPending = false;
+	bool bRecordedTimeTravelExecutionScheduled = false;
 
 	/** Native complete, Blueprint-replaceable presentation for paradox and terminal outcomes. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Paradox|Presentation")
@@ -235,7 +242,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Movement")
 	FGameplayActionSubmissionResult RequestSetCrouched(bool bDesiredCrouched);
 
-	/** Requests consolidation and rewind through the authoritative GameMode component. */
+	/** Submits the recorded Time Travel action; rewind occurs after its Niagara system finishes. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult RequestTimeRewind();
 
@@ -302,6 +309,9 @@ protected:
 	void PresentPlannedMove(const FGridCellId& GoalCell);
 	void ClearPlannedMovePresentation(bool bSuppressCurrentGoal);
 	void HandleTacticalPauseResumed(const FTacticalPauseStateChange& Change);
+	void ScheduleRecordedTimeTravelExecution();
+	void ExecuteRecordedTimeTravel();
+	void ClearPendingRecordedTimeTravel();
 	void UpdateFreeCamera(float RealDeltaSeconds);
 	void UpdateFreeCameraPose(float AspectRatio);
 	float GetCameraAspectRatio() const;
@@ -326,6 +336,8 @@ protected:
 		EGridMovePathSource PathSource,
 		const FVector& Destination,
 		const FGridInjectedPath* InjectedPath);
+
+	friend class UParadoxTimeTravelAction;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	friend struct FParadoxCameraTestAccessor;

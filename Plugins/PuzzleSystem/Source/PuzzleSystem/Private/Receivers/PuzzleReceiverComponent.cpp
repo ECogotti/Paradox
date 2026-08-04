@@ -15,6 +15,7 @@ void UPuzzleReceiverComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	{
 		BroadcastReceiverStateChanged(false);
 	}
+	OnReceiverStateChangedNative.Clear();
 
 	Super::EndPlay(EndPlayReason);
 }
@@ -143,11 +144,20 @@ void UPuzzleReceiverComponent::BroadcastReceiverStateChanged(bool bNewActive)
 	if (bIsReceiverActive)
 	{
 		HandleReceiverActivated();
-		OnReceiverActivated.Broadcast(this);
 	}
 	else
 	{
 		HandleReceiverDeactivated();
+	}
+
+	OnReceiverStateChangedNative.Broadcast(this, bIsReceiverActive);
+
+	if (bIsReceiverActive)
+	{
+		OnReceiverActivated.Broadcast(this);
+	}
+	else
+	{
 		OnReceiverDeactivated.Broadcast(this);
 	}
 

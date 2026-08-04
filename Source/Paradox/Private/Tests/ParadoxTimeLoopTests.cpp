@@ -134,6 +134,15 @@ struct FParadoxTimeLoopTestAccessor
 	{
 		TimeLoop.SetTemporalAvatarGridPresence(Character, bEnabled);
 	}
+
+	static void ConfigureCloneDeparture(
+		UParadoxTimeLoopComponent& TimeLoop,
+		AParadoxCloneCharacter& Clone)
+	{
+		TimeLoop.bTimeLoopEnabled = true;
+		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::ActiveRun;
+		TimeLoop.RuntimeClones.Add(&Clone);
+	}
 };
 
 namespace UE::Paradox::TimeLoop::Tests
@@ -1749,6 +1758,76 @@ bool FParadoxExternalLevelCompleteTest::RunTest(const FString& Parameters)
 	TestTrue(
 		TEXT("Level Complete context has a stable event ID"),
 		TimeLoop->GetLastLevelCompleteContext().EventId.IsValid());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxCloneTimeTravelDepartureTest,
+	"Paradox.TimeLoop.CloneTimeTravelDepartureRetiresInPlace",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxCloneTimeTravelDepartureTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::TimeLoop::Tests;
+	FScopedTestWorld TestWorld(TEXT("ParadoxCloneTimeTravelDepartureWorld"));
+	if (!TestNotNull(TEXT("Transient clone-departure world exists"), TestWorld.World))
+	{
+		return false;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AParadoxCloneCharacter* Clone =
+		TestWorld.World->SpawnActor<AParadoxCloneCharacter>(
+			AParadoxCloneCharacter::StaticClass(),
+			FTransform::Identity,
+			SpawnParameters);
+	AActor* Authority = TestWorld.World->SpawnActor<AActor>();
+	if (!TestNotNull(TEXT("Clone exists"), Clone)
+		|| !TestNotNull(TEXT("Time-loop authority Actor exists"), Authority))
+	{
+		return false;
+	}
+	UParadoxTimeLoopComponent* TimeLoop =
+		NewObject<UParadoxTimeLoopComponent>(
+			Authority,
+			TEXT("CloneDepartureTimeLoop"),
+			RF_Transient);
+	Authority->AddInstanceComponent(TimeLoop);
+	TimeLoop->RegisterComponent();
+	TestWorld.StartPlay();
+	FParadoxTimeLoopTestAccessor::ConfigureCloneDeparture(*TimeLoop, *Clone);
+
+	FString Diagnostic;
+	TestTrue(
+		TEXT("Authoritative clone departure succeeds"),
+		TimeLoop->CompleteCloneTimeTravelDeparture(*Clone, Diagnostic));
+	TestTrue(TEXT("Departed clone is hidden"), Clone->IsHidden());
+	TestFalse(
+		TEXT("Departed clone has no collision"),
+		Clone->GetActorEnableCollision());
+	TestEqual(
+		TEXT("Departed clone movement is disabled"),
+		Clone->GetCharacterMovement()->MovementMode,
+		MOVE_None);
+	UPerceptionKnowledgeSourceComponent* Source =
+		Clone->GetPerceptionKnowledgeSourceComponent();
+	TestTrue(
+		TEXT("Departed clone semantic source is disabled"),
+		Source && !Source->IsSourceEnabled());
+	TestTrue(
+		TEXT("Departed clone source is unregistered"),
+		Source
+			&& !Source->IsSemanticallyRegistered()
+			&& !Source->IsNativeStimuliSourceRegistered());
+	UParadoxTemporalVisionComponent* TemporalVision =
+		Clone->GetTemporalVisionComponent();
+	TestNotNull(TEXT("Departed clone still owns temporal sight"), TemporalVision);
+	TestFalse(
+		TEXT("Departed clone temporal sight has no authority"),
+		TemporalVision && TemporalVision->IsTemporalDetectionAuthoritative());
 	return true;
 }
 

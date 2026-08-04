@@ -272,7 +272,7 @@ TObjectPtr<UPuzzleEmitterComponent> Emitter
 FGameplayTag SignalTag
 ```
 
-The serialized designer-facing form may reference an owning Actor and resolve exactly one `UPuzzleEmitterComponent` during controlled initialization if direct external component references are impractical in the editor. Do not use runtime world searches.
+The serialized designer-facing form may reference an owning Actor and resolve its first `UPuzzleEmitterComponent` during controlled initialization if direct external component references are impractical in the editor. An opt-in binding flag may instead select a specific component by name. Do not use runtime world searches.
 
 Optional editor-only validation data may be added when it provides real value.
 
@@ -434,7 +434,7 @@ RuntimeInputCache
 
 `RootCondition` is one instanced `UPuzzleCondition`.
 
-`Receivers` may contain one or more `UPuzzleReceiverComponent` targets. The serialized designer-facing form may use owning Actor references and resolve exactly one Receiver component during controlled initialization when that is the established editor workflow.
+`Receivers` may contain one or more `UPuzzleReceiverComponent` targets. The serialized designer-facing form may use owning Actor references and resolve the first Receiver component during controlled initialization, with an opt-in binding flag for selecting a specific component by name.
 
 One Controller produces one boolean output state.
 
@@ -1079,10 +1079,10 @@ Configuration errors should be detectable before they become mysterious runtime 
 Validate at least:
 
 - duplicate `InputId` values inside one Controller;
-- missing Emitter component references, or owning Actors that do not resolve to exactly one expected Emitter component;
+- missing Emitter components, or an explicitly requested Emitter component name that does not resolve;
 - invalid signal tags;
 - null root condition;
-- missing Receiver component references, or owning Actors that do not resolve to exactly one expected Receiver component;
+- missing Receiver components, or an explicitly requested Receiver component name that does not resolve;
 - condition references to unknown `InputId` values;
 - invalid child conditions inside composites;
 - impossible threshold values;

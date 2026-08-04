@@ -2239,18 +2239,58 @@ void UIntentReplayComponent::MarkAllEntriesSubmitted(UIntentReplayPlaybackSessio
 	}
 }
 
+void UIntentReplayComponent::HandleReplayTimelineDurationElapsed()
+{
+	if (!ActivePlaybackSession
+		|| ActivePlaybackSession->State != EIntentReplayPlaybackState::Playing)
+	{
+		return;
+	}
+
+	TryCompleteReplay(*ActivePlaybackSession);
+}
+
 void UIntentReplayComponent::TryCompleteReplay(UIntentReplayPlaybackSession& Session)
 {
-	// Exhausting the timeline is not enough: Completed is emitted only after every session-owned
-	// action is terminal and every recoverable external interruption has been reconciled, preserving
-	// accurate lifecycle semantics for Behavior Tree coordinators.
-	if (Session.State == EIntentReplayPlaybackState::Playing
-		&& Session.bAllEntriesSubmittedBroadcast
-		&& Session.ActiveReplayHandles.IsEmpty()
-		&& Session.PendingExternalRecoveryByIntent.IsEmpty())
+	// Exhausting the entries is not enough: the full recorded timeline (including an idle tail),
+	// every session-owned action, and every recoverable interruption must all be complete. Keeping
+	// Playing authoritative through RecordedDuration also keeps synchronized observation comparison
+	// alive when the source run ended with no further Gameplay Action.
+	if (Session.State != EIntentReplayPlaybackState::Playing
+		|| !Session.bAllEntriesSubmittedBroadcast
+		|| !Session.ActiveReplayHandles.IsEmpty()
+		|| !Session.PendingExternalRecoveryByIntent.IsEmpty())
 	{
-		CompleteReplay(Session);
+		return;
 	}
+
+	const double RecordedDuration = Session.SourceTrack
+		? Session.SourceTrack->GetRecordedDurationSeconds()
+		: 0.0;
+	const double RemainingDuration =
+		RecordedDuration - GetPlaybackElapsedSeconds(Session);
+	if (RemainingDuration > KINDA_SMALL_NUMBER)
+	{
+		if (UWorld* World = GetWorld())
+		{
+			World->GetTimerManager().SetTimer(
+				PlaybackTimerHandle,
+				this,
+				&UIntentReplayComponent::HandleReplayTimelineDurationElapsed,
+				static_cast<float>(RemainingDuration),
+				false);
+			return;
+		}
+
+		FailReplay(
+			Session,
+			MakeFailure(
+				IntentReplayTags::Failure_InvalidTrack,
+				TEXT("Replay duration scheduling requires a valid World.")));
+		return;
+	}
+
+	CompleteReplay(Session);
 }
 
 void UIntentReplayComponent::CompleteReplay(UIntentReplayPlaybackSession& Session)

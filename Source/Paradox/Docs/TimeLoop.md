@@ -74,9 +74,24 @@ Selection immediately:
 `OnChronoSpawnSelected` is immediate. `OnRunStarted` is delayed until the synchronized barrier
 actually releases.
 
-The default rewind action is `IA_Rewind`, currently mapped to Enter in `IMC_Default`.
-`RequestTimeRewind` is also available on the player controller and time-loop component for UI or
-alternative input.
+The default rewind input is `IA_Rewind`, currently mapped to Enter in `IMC_Default`. The player
+controller's `RequestTimeRewind` submits `/Game/Data/GameplayActions/DA_ParadoxTimeTravel`; it no
+longer invokes reset directly. UI and alternative input should use that controller command so Time
+Travel enters the immutable replay track. `UParadoxTimeLoopComponent::RequestTimeRewind` remains
+the internal authoritative consolidation/reset operation and is called only after the recorded
+action completes.
+
+Every `AParadoxCharacter` owns an inherited `TimeTravelNiagaraComponent`, disabled by default.
+Assign a non-looping Niagara System to this component in the player/clone Character Blueprint. A
+player Time Travel action preempts movement, blocks new movement/stance input, activates the
+component, and schedules the authoritative rewind on the next tick after `OnSystemFinished`. With
+no Niagara System it rewinds immediately through the same recorded path.
+
+The replay clone executes the same action and VFX. At completion the time loop retires the clone in
+place: listener, semantic Source and temporal detection are disabled; movement and GridWorld
+occupancy are released; collision is disabled; and the Actor is hidden. Retaining the Actor until
+the next reconstruction keeps playback delegate and runtime-array ownership stable. With no
+Niagara System the clone is retired immediately.
 
 ## Synchronized start barrier
 
@@ -179,6 +194,11 @@ Any prepared/active state ----------> Stopped
 
 Movement is enabled only for the clone whose replay starts. Completion, failure, and explicit stop
 freeze that clone's controller, Character Movement, and Gameplay Actions.
+
+Replay remains `Playing` through the track's full `RecordedDuration`, even when the last Gameplay
+Action ended earlier. This preserves a recorded idle tail: perception comparison and the Behavior
+Tree Replay branch remain authoritative during a final ten-second standstill instead of stopping
+at the last movement's completion.
 
 Exact GridWorld paths carry the query context of the controller that created them, including the
 requesting Pawn's occupancy identity. `UParadoxCloneReplayExecutionStrategy` therefore copies each
@@ -337,6 +357,10 @@ Events:
 
 No public API exposes the internal runtime arrays or a mutable replay track.
 
+The controller command named `Request Time Rewind` returns success when the Time Travel action is
+accepted; the actual phase change occurs after its Niagara component finishes. A second request is
+rejected while that action is pending.
+
 ## Camera dependency
 
 An enabled time loop requires exactly one valid `AParadoxCameraBoundsVolume`. Camera setup failure
@@ -398,6 +422,10 @@ second World State participant in `BP_CloneCharacter`.
 - `CloneSpawnFailed`: configure classes derived from `AParadoxCloneCharacter` and
   `AParadoxCloneController`.
 - Movement rejected outside `ActiveRun` and a duplicate rewind during transition are intentional.
+- `Time Travel Action Definition is not configured`: confirm
+  `/Game/Data/GameplayActions/DA_ParadoxTimeTravel` is assigned on the player controller.
+- A Time Travel VFX that never rewinds is normally a looping Niagara System. Use a finite system;
+  an unassigned system deliberately selects the immediate fallback.
 
 All module diagnostics use `LogParadox`; hover, camera tick, and replay polling do not emit
 high-frequency logs.

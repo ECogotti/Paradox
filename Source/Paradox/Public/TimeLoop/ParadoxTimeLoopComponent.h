@@ -115,6 +115,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult RequestTimeRewind();
 
+	/** Retires a replay clone in place after its recorded Time Travel VFX completes. */
+	bool CompleteCloneTimeTravelDeparture(
+		AParadoxCloneCharacter& Clone,
+		FString& OutDiagnostic);
+
 	/** Presentation acknowledgement that authorizes reset after the fade reached black. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult ContinueParadoxRecovery(FGuid ParadoxEventId);

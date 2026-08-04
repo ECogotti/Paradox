@@ -11,6 +11,7 @@
 #include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Footsteps/ParadoxFootstepNoiseComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "NiagaraComponent.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
 
 AParadoxCharacter::AParadoxCharacter()
@@ -51,4 +52,9 @@ AParadoxCharacter::AParadoxCharacter()
 	FootstepNoiseComponent =
 		CreateDefaultSubobject<UParadoxFootstepNoiseComponent>(
 			TEXT("ParadoxFootstepNoiseComponent"));
+	TimeTravelNiagaraComponent =
+		CreateDefaultSubobject<UNiagaraComponent>(
+			TEXT("TimeTravelNiagaraComponent"));
+	TimeTravelNiagaraComponent->SetupAttachment(GetRootComponent());
+	TimeTravelNiagaraComponent->SetAutoActivate(false);
 }

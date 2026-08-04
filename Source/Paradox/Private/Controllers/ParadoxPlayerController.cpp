@@ -2,6 +2,7 @@
 
 #include "Controllers/ParadoxPlayerController.h"
 #include "Actions/ParadoxSetCrouchedActionDefinition.h"
+#include "Actions/ParadoxTimeTravelActionDefinition.h"
 #include "Actions/GameplayActionDefinition.h"
 #include "Actions/GridMoveToCellActionDefinition.h"
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
@@ -9,6 +10,7 @@
 #include "Camera/ParadoxCameraBoundsVolume.h"
 #include "Camera/ParadoxCameraRig.h"
 #include "Components/GameplayActionComponent.h"
+#include "Components/IntentReplayComponent.h"
 #include "Components/PerceptionKnowledgeHearingRangeRendererComponent.h"
 #include "Components/PerceptionKnowledgeListenerComponent.h"
 #include "Data/PerceptionKnowledgeProfile.h"
@@ -40,6 +42,7 @@
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
+#include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
 #include "UObject/UnrealType.h"
 
@@ -101,6 +104,12 @@ AParadoxPlayerController::AParadoxPlayerController()
 	if (SetCrouchedDefinitionFinder.Succeeded())
 	{
 		SetCrouchedActionDefinition = SetCrouchedDefinitionFinder.Object;
+	}
+	static ConstructorHelpers::FObjectFinder<UGameplayActionDefinition> TimeTravelDefinitionFinder(
+		TEXT("/Game/Data/GameplayActions/DA_ParadoxTimeTravel.DA_ParadoxTimeTravel"));
+	if (TimeTravelDefinitionFinder.Succeeded())
+	{
+		TimeTravelActionDefinition = TimeTravelDefinitionFinder.Object;
 	}
 	GridPathPreviewComponent->GoalContentionPolicy = MoveGoalContentionPolicy;
 }
@@ -203,6 +212,8 @@ void AParadoxPlayerController::BeginPlay()
 
 void AParadoxPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	bRecordedTimeTravelPending = false;
+	bRecordedTimeTravelExecutionScheduled = false;
 	if (TacticalPauseSubsystem)
 	{
 		TacticalPauseSubsystem->OnResumedNative().RemoveAll(this);
@@ -745,7 +756,8 @@ bool AParadoxPlayerController::IsChronoSpawnSelectionActive() const
 bool AParadoxPlayerController::IsMovementInputAllowed() const
 {
 	const UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
-	return !TimeLoop || TimeLoop->IsMovementAllowed();
+	return !bRecordedTimeTravelPending
+		&& (!TimeLoop || TimeLoop->IsMovementAllowed());
 }
 
 bool AParadoxPlayerController::IsTacticalPlanningActive() const
@@ -1396,17 +1408,152 @@ FGameplayActionSubmissionResult AParadoxPlayerController::RequestSetCrouched(
 
 FParadoxTimeLoopOperationResult AParadoxPlayerController::RequestTimeRewind()
 {
-	if (UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent())
+	UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
+	FParadoxTimeLoopOperationResult Result;
+	Result.Phase = TimeLoop
+		? TimeLoop->GetCurrentPhase()
+		: EParadoxTimeLoopPhase::Disabled;
+	if (!TimeLoop || !TimeLoop->IsTimeLoopEnabled())
 	{
-		return TimeLoop->RequestTimeRewind();
+		Result.Status = EParadoxTimeLoopOperationStatus::RejectedDisabled;
+		Result.DiagnosticMessage =
+			TEXT("The current authoritative GameMode has no enabled Paradox time-loop authority.");
+		return Result;
+	}
+	if (TimeLoop->GetCurrentPhase() != EParadoxTimeLoopPhase::ActiveRun)
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::RejectedInvalidPhase;
+		Result.DiagnosticMessage =
+			TEXT("Recorded Time Travel can be submitted only during ActiveRun.");
+		return Result;
+	}
+	if (bRecordedTimeTravelPending)
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::RejectedInvalidPhase;
+		Result.DiagnosticMessage =
+			TEXT("A recorded Time Travel action is already pending for this player.");
+		return Result;
 	}
 
-	FParadoxTimeLoopOperationResult Result;
-	Result.Status = EParadoxTimeLoopOperationStatus::RejectedDisabled;
-	Result.Phase = EParadoxTimeLoopPhase::Disabled;
+	AParadoxPlayerCharacter* ParadoxCharacter =
+		Cast<AParadoxPlayerCharacter>(GetPawn());
+	UGameplayActionComponent* ActionComponent = ParadoxCharacter
+		? ParadoxCharacter->GetGameplayActionComponent()
+		: nullptr;
+	UIntentReplayComponent* ReplayComponent = ParadoxCharacter
+		? ParadoxCharacter->GetIntentReplayComponent()
+		: nullptr;
+	if (!ActionComponent || !ReplayComponent || !TimeTravelActionDefinition)
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::MissingComponent;
+		Result.DiagnosticMessage = !ActionComponent
+			? TEXT("The possessed Paradox Player Character has no Gameplay Action Component.")
+			: !ReplayComponent
+				? TEXT("The possessed Paradox Player Character has no Intent Replay Component.")
+				: TEXT("Time Travel Action Definition is not configured.");
+		return Result;
+	}
+	if (ReplayComponent->GetRecordingState()
+		!= EIntentRecordingState::Recording)
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::RecordingFailed;
+		Result.DiagnosticMessage =
+			TEXT("Recorded Time Travel requires an active Intent Replay recording session.");
+		return Result;
+	}
+
+	FGameplayActionRequestCreationResult Creation =
+		UGameplayActionBlueprintLibrary::CreateActionRequest(
+			TimeTravelActionDefinition);
+	if (!Creation.WasCreated())
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::InvalidConfiguration;
+		Result.DiagnosticMessage = Creation.DiagnosticMessage;
+		return Result;
+	}
+	UGameplayActionBlueprintLibrary::SetRequestContext(
+		Creation.Request,
+		ParadoxGameplayTags::Origin_Player,
+		this,
+		FGameplayActionCorrelationData());
+
+	// Set before submission because a no-asset fallback may finish synchronously inside Start.
+	bRecordedTimeTravelPending = true;
+	const FGameplayActionSubmissionResult Submission =
+		ActionComponent->SubmitAction(Creation.Request);
+	if (!Submission.IsAccepted())
+	{
+		bRecordedTimeTravelPending = false;
+		Result.Status = EParadoxTimeLoopOperationStatus::RecordingFailed;
+		Result.DiagnosticMessage = Submission.DiagnosticMessage;
+		return Result;
+	}
+
+	FGameplayActionResult ImmediateActionResult;
+	if (ActionComponent->GetActionResult(
+			Submission.Handle,
+			ImmediateActionResult)
+		&& ImmediateActionResult.TerminalState != EGameplayActionState::Succeeded)
+	{
+		bRecordedTimeTravelPending = false;
+		Result.Status = EParadoxTimeLoopOperationStatus::InternalFailure;
+		Result.DiagnosticMessage = ImmediateActionResult.DiagnosticMessage;
+		return Result;
+	}
+
+	Result.Status = EParadoxTimeLoopOperationStatus::Succeeded;
 	Result.DiagnosticMessage =
-		TEXT("The current authoritative GameMode has no Paradox time-loop authority.");
+		TEXT("Recorded Time Travel action accepted; rewind waits for the character Niagara system to finish.");
 	return Result;
+}
+
+void AParadoxPlayerController::ScheduleRecordedTimeTravelExecution()
+{
+	if (bRecordedTimeTravelExecutionScheduled)
+	{
+		return;
+	}
+	bRecordedTimeTravelExecutionScheduled = true;
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimerForNextTick(
+			this,
+			&AParadoxPlayerController::ExecuteRecordedTimeTravel);
+		return;
+	}
+
+	ExecuteRecordedTimeTravel();
+}
+
+void AParadoxPlayerController::ExecuteRecordedTimeTravel()
+{
+	bRecordedTimeTravelExecutionScheduled = false;
+	bRecordedTimeTravelPending = false;
+	UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
+	if (!TimeLoop)
+	{
+		PARADOX_LOG_ERROR(
+			TEXT("Recorded Time Travel completed for controller '%s', but the authoritative GameMode has no time-loop component."),
+			*GetNameSafe(this));
+		return;
+	}
+	const FParadoxTimeLoopOperationResult Result =
+		TimeLoop->RequestTimeRewind();
+	if (!Result.IsSuccess())
+	{
+		PARADOX_LOG_ERROR(
+			TEXT("Recorded Time Travel completed for controller '%s', but authoritative rewind failed: %s"),
+			*GetNameSafe(this),
+			*Result.DiagnosticMessage);
+	}
+}
+
+void AParadoxPlayerController::ClearPendingRecordedTimeTravel()
+{
+	if (!bRecordedTimeTravelExecutionScheduled)
+	{
+		bRecordedTimeTravelPending = false;
+	}
 }
 
 FGameplayActionSubmissionResult AParadoxPlayerController::SubmitGridMoveRequest(

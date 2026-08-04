@@ -27,6 +27,20 @@ IntentReplayPerception -> IntentReplay + PerceptionKnowledge
 Behavior Tree, GoalAgents, GridWorld o codice specifico di Paradox. Il modulo runtime opzionale
 `IntentReplayPerception` contiene esclusivamente l'adapter percettivo della Milestone 2.
 
+## Durata completa della timeline
+
+Il completamento del replay richiede contemporaneamente:
+
+- tutte le entry inviate;
+- tutte le Gameplay Action replay-owned terminali;
+- tutte le interruzioni esterne riconciliate;
+- il raggiungimento di `UIntentReplayTrack::RecordedDuration`.
+
+L'ultimo requisito conserva anche una coda inattiva registrata dopo l'ultima action. Durante quel
+tratto la sessione resta `Playing`, il clock continua ad avanzare e gli adapter sincronizzati, come
+`IntentReplayPerception`, continuano il confronto. `PauseReplay` congela anche questa attesa finale;
+`ResumeReplay` la ripianifica usando il tempo residuo, senza polling o wait action sintetiche.
+
 ## Setup
 
 Ogni entità coinvolta deve possedere:

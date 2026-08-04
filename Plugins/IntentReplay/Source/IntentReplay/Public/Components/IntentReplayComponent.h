@@ -387,6 +387,7 @@ private:
 	UGameplayActionDefinition* ResolveDefinition(const FRecordedIntent& RecordedIntent) const;
 	void ScheduleNextReplayEntry();
 	void SubmitDueReplayEntries();
+	void HandleReplayTimelineDurationElapsed();
 	void MarkAllEntriesSubmitted(UIntentReplayPlaybackSession& Session);
 	void TryCompleteReplay(UIntentReplayPlaybackSession& Session);
 	void CompleteReplay(UIntentReplayPlaybackSession& Session);

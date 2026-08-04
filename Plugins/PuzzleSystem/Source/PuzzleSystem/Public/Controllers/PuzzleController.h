@@ -26,8 +26,12 @@ struct PUZZLESYSTEM_API FPuzzleInputBinding
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
 	TObjectPtr<AActor> EmitterActor = nullptr;
 
-	/** Optional emitter component name; required when `EmitterActor` owns multiple emitters. */
+	/** When enabled, resolves the emitter by `EmitterComponentName`; otherwise uses the first available emitter. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
+	bool bSpecifyEmitterComponent = false;
+
+	/** Emitter component name used only when `bSpecifyEmitterComponent` is enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle", meta = (EditCondition = "bSpecifyEmitterComponent", EditConditionHides))
 	FName EmitterComponentName;
 
 	/** Gameplay tag identifying the signal channel on the resolved emitter. */
@@ -45,8 +49,12 @@ struct PUZZLESYSTEM_API FPuzzleReceiverBinding
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
 	TObjectPtr<AActor> ReceiverActor = nullptr;
 
-	/** Optional receiver component name; required when `ReceiverActor` owns multiple receivers. */
+	/** When enabled, resolves the receiver by `ReceiverComponentName`; otherwise uses the first available receiver. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
+	bool bSpecifyReceiverComponent = false;
+
+	/** Receiver component name used only when `bSpecifyReceiverComponent` is enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle", meta = (EditCondition = "bSpecifyReceiverComponent", EditConditionHides))
 	FName ReceiverComponentName;
 };
 
@@ -286,20 +294,20 @@ private:
 	bool ValidateAndResolveConfiguration();
 
 	/**
-	 * Resolves one input binding to exactly one emitter component.
+	 * Resolves one input binding to the first emitter or the explicitly named emitter.
 	 *
 	 * @param Binding Designer-facing binding to resolve.
 	 * @param OutEmitter Receives the resolved component on success.
-	 * @return True when exactly one valid emitter was resolved.
+	 * @return True when a valid emitter was resolved.
 	 */
 	bool ResolveEmitterComponent(const FPuzzleInputBinding& Binding, UPuzzleEmitterComponent*& OutEmitter) const;
 
 	/**
-	 * Resolves one receiver binding to exactly one receiver component.
+	 * Resolves one receiver binding to the first receiver or the explicitly named receiver.
 	 *
 	 * @param Binding Designer-facing binding to resolve.
 	 * @param OutReceiver Receives the resolved component on success.
-	 * @return True when exactly one valid receiver was resolved.
+	 * @return True when a valid receiver was resolved.
 	 */
 	bool ResolveReceiverComponent(const FPuzzleReceiverBinding& Binding, UPuzzleReceiverComponent*& OutReceiver) const;
 

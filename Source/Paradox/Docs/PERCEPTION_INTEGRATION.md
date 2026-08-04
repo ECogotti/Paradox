@@ -152,3 +152,10 @@ State Tag and Sense remain strict; an unobserved snapshot only expires when comp
 Every successful transition into `Investigating` emits one `LogParadox` warning containing result,
 mismatch reason, Source ID, semantic tag, current/expected time and location, causal intent,
 priority, rule and revision. This is transition-driven diagnostics, not a per-frame log.
+
+Observation comparison follows the full Action Track `RecordedDuration`, not merely the lifetime
+of its last action. A clone that reaches its final cell and replays a recorded ten-second idle tail
+therefore continues receiving unexpected Hearing/Sight comparisons for all ten seconds. When the
+recorded Time Travel action begins, a clone disables its listener and temporal-vision authority so
+a late stimulus cannot divert the terminal departure VFX; its semantic Source remains visible to
+other listeners until the VFX completes and the time loop retires it.

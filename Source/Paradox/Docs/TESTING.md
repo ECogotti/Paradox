@@ -5,7 +5,7 @@
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -16,6 +16,21 @@ instant crouch/uncrouch alongside a running Movement lock, stance replay, and st
 Perception Entity IDs. `Paradox.Perception.PlayerSightUsesPawnFacing` deliberately separates
 Player Controller `ControlRotation` from Pawn rotation and verifies that both gameplay eyes and the
 native listener direction follow the Pawn immediately after it turns.
+
+## Idle tail and recorded Time Travel
+
+1. In T0 move to a destination, remain still for ten seconds, then trigger Time Travel.
+2. In T1 enter T0's Hearing range during that final standstill. T0 must enter `Investigating`;
+   replay/comparison must not complete when the movement action ends.
+3. Assign a finite Niagara System to the inherited `TimeTravelNiagaraComponent`. Trigger rewind
+   while moving: movement must be interrupted, the VFX must play, and reset must occur only after
+   `OnSystemFinished`.
+4. Remove the Niagara System and repeat. The player must rewind immediately.
+5. Let T0 replay the recorded Time Travel in T1. Its VFX must play and, at completion, T0 must be
+   hidden, non-collidable, absent from GridWorld occupancy, and unregistered as perception Source.
+6. Run `IntentReplay.Playback.PreservesRecordedIdleTail`,
+   `Paradox.TimeTravel.RecordedActionPreemptsMovementAndSupportsNoVfx`, and
+   `Paradox.TimeLoop.CloneTimeTravelDepartureRetiresInPlace`.
 
 ## Crouch and perceptual identity
 

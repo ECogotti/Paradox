@@ -690,6 +690,73 @@ bool FIntentReplayCompatibilityTimingTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FIntentReplayIdleTailCompletionTest,
+	"IntentReplay.Playback.PreservesRecordedIdleTail",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIntentReplayIdleTailCompletionTest::RunTest(const FString& Parameters)
+{
+	using namespace IntentReplayTests;
+	UWorld* World = MakeWorld(TEXT("IntentReplayIdleTailCompletionTestWorld"));
+	if (!TestNotNull(TEXT("Test world exists"), World))
+	{
+		return false;
+	}
+
+	const FEntity Source = MakeEntity(*World);
+	UGameplayActionDefinition* Definition = MakeWaitDefinition(0.01);
+	TestTrue(
+		TEXT("Recording starts"),
+		Source.Replay->StartRecording(FIntentRecordingOptions()).Succeeded());
+	TestTrue(
+		TEXT("Short action is accepted"),
+		Source.Actions->SubmitAction(MakeRequest(*Definition)).IsAccepted());
+	Advance(*World, 0.02);
+	Advance(*World, 1.0);
+	TestTrue(
+		TEXT("Recording finalizes after an idle tail"),
+		Source.Replay->RequestStopRecording(EIntentRecordingFinalizeMode::Immediate).Succeeded());
+	UIntentReplayTrack* Track = Source.Replay->GetLastFinalizedTrack();
+	TestNotNull(TEXT("Idle-tail track exists"), Track);
+	TestTrue(
+		TEXT("Recorded duration includes the idle tail"),
+		Track && Track->GetRecordedDurationSeconds() >= 1.0);
+
+	const FEntity Clone = MakeEntity(*World);
+	const FIntentReplayPrepareResult Prepare =
+		Clone.Replay->PrepareReplay(Track, FIntentReplayPlaybackOptions());
+	TestEqual(TEXT("Idle-tail replay prepares"), Prepare.Status, EIntentReplayPrepareStatus::Ready);
+	TestTrue(TEXT("Idle-tail replay starts"), Clone.Replay->StartReplay().Succeeded());
+	Advance(*World, 0.02);
+	TestEqual(
+		TEXT("Replay remains Playing after its last action ends"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Playing);
+	Advance(*World, 0.5);
+	TestEqual(
+		TEXT("Replay remains Playing throughout the recorded idle tail"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Playing);
+	TestTrue(TEXT("Idle-tail replay pauses"), Clone.Replay->PauseReplay().Succeeded());
+	Advance(*World, 1.0);
+	TestEqual(
+		TEXT("Paused idle-tail clock does not complete replay"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Paused);
+	TestTrue(TEXT("Idle-tail replay resumes"), Clone.Replay->ResumeReplay().Succeeded());
+	Advance(*World, 0.51);
+	TestEqual(
+		TEXT("Replay completes only after the full active recorded duration"),
+		Clone.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Completed);
+
+	Source.Actor->Destroy();
+	Clone.Actor->Destroy();
+	DestroyWorld(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FIntentReplaySameSessionPreemptionTest,
 	"IntentReplay.Playback.SameSessionPreemptionContinues",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

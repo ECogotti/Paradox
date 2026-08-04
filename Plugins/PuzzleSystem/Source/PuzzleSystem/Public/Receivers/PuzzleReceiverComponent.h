@@ -9,6 +9,7 @@ class UPuzzleReceiverComponent;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPuzzleReceiverTransitionDelegate, UPuzzleReceiverComponent*, Receiver);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(FPuzzleReceiverStateChangedDelegate, UPuzzleReceiverComponent*, Receiver, bool, bIsActive);
+DECLARE_MULTICAST_DELEGATE_TwoParams(FPuzzleReceiverNativeStateChangedDelegate, UPuzzleReceiverComponent*, bool);
 
 /** Actor component that aggregates controller activation requests into one effective receiver state. */
 UCLASS(ClassGroup = (Puzzle), Blueprintable, meta = (BlueprintSpawnableComponent))
@@ -37,6 +38,9 @@ public:
 	/** Blueprint event fired after any effective receiver state transition. */
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Receiver")
 	FPuzzleReceiverStateChangedDelegate OnReceiverStateChanged;
+
+	/** Native C++ notification fired after Receiver virtual hooks and before Blueprint-assignable delegates. */
+	FPuzzleReceiverNativeStateChangedDelegate OnReceiverStateChangedNative;
 
 	/**
 	 * Adds or updates one controller's activation request.

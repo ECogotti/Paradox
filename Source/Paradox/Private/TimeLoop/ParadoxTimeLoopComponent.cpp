@@ -446,6 +446,93 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 	return ResetResult;
 }
 
+bool UParadoxTimeLoopComponent::CompleteCloneTimeTravelDeparture(
+	AParadoxCloneCharacter& Clone,
+	FString& OutDiagnostic)
+{
+	if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
+	{
+		OutDiagnostic = FString::Printf(
+			TEXT("Clone '%s' cannot complete Time Travel outside ActiveRun (phase %s)."),
+			*GetNameSafe(&Clone),
+			*UEnum::GetValueAsString(CurrentPhase));
+		return false;
+	}
+	if (!RuntimeClones.Contains(&Clone))
+	{
+		OutDiagnostic = FString::Printf(
+			TEXT("Clone '%s' is not owned by the current time-loop reconstruction."),
+			*GetNameSafe(&Clone));
+		return false;
+	}
+
+	bool bPerceptionDisabled = true;
+	FString PerceptionFailure;
+	if (AParadoxCloneController* Controller =
+		Cast<AParadoxCloneController>(Clone.GetController()))
+	{
+		Controller->StopMovement();
+		if (UPerceptionKnowledgeListenerComponent* Listener =
+			Controller->GetPerceptionKnowledgeListener())
+		{
+			const FPerceptionKnowledgeOperationResult ListenerResult =
+				Listener->SetListenerEnabled(false);
+			if (!ListenerResult.IsSuccess())
+			{
+				bPerceptionDisabled = false;
+				PerceptionFailure += FString::Printf(
+					TEXT("listener='%s' "),
+					*ListenerResult.Message);
+			}
+		}
+	}
+	if (UPerceptionKnowledgeSourceComponent* Source =
+		Clone.GetPerceptionKnowledgeSourceComponent())
+	{
+		const FPerceptionKnowledgeOperationResult SourceResult =
+			Source->SetSourceEnabled(false);
+		if (!SourceResult.IsSuccess()
+			|| Source->IsSemanticallyRegistered()
+			|| Source->IsNativeStimuliSourceRegistered())
+		{
+			bPerceptionDisabled = false;
+			PerceptionFailure += FString::Printf(
+				TEXT("source='%s' "),
+				*SourceResult.Message);
+		}
+	}
+	if (UParadoxTemporalVisionComponent* Vision =
+		Clone.GetTemporalVisionComponent())
+	{
+		Vision->DisableTemporalDetection(true);
+	}
+
+	if (UCharacterMovementComponent* Movement = Clone.GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		Movement->DisableMovement();
+	}
+	SetTemporalAvatarGridPresence(Clone, false);
+	Clone.SetActorEnableCollision(false);
+	Clone.SetActorHiddenInGame(true);
+
+	if (!bPerceptionDisabled)
+	{
+		OutDiagnostic = FString::Printf(
+			TEXT("Clone '%s' was hidden and removed from GridWorld, but perceptual retirement failed: %s"),
+			*GetNameSafe(&Clone),
+			*PerceptionFailure);
+		PARADOX_LOG_ERROR(TEXT("%s"), *OutDiagnostic);
+		return false;
+	}
+
+	OutDiagnostic = FString::Printf(
+		TEXT("Clone '%s' completed recorded Time Travel and was retired in place."),
+		*GetNameSafe(&Clone));
+	PARADOX_LOG_INFO(TEXT("%s"), *OutDiagnostic);
+	return true;
+}
+
 FParadoxTimeLoopOperationResult
 UParadoxTimeLoopComponent::ContinueParadoxRecovery(
 	const FGuid ParadoxEventId)

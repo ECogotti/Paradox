@@ -28,6 +28,7 @@ public class Paradox : ModuleRules
 			"PerceptionKnowledge",
 			"PhysicsCore",
 			"ProceduralMeshComponent",
+			"PuzzleSystem",
 			"EntityRelations",
 			"WorldState",
 			"TacticalPause",

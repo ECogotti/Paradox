@@ -351,29 +351,53 @@ bool APuzzleController::ResolveEmitterComponent(const FPuzzleInputBinding& Bindi
 
 	TArray<UPuzzleEmitterComponent*> Components;
 	Binding.EmitterActor->GetComponents<UPuzzleEmitterComponent>(Components);
-
-	if (!Binding.EmitterComponentName.IsNone())
+	Components.RemoveAll([](const UPuzzleEmitterComponent* Component)
 	{
-		Components.RemoveAll([&Binding](const UPuzzleEmitterComponent* Component)
-		{
-			return !Component || Component->GetFName() != Binding.EmitterComponentName;
-		});
-	}
+		return !IsValid(Component);
+	});
 
-	if (Components.Num() != 1)
+	if (Components.IsEmpty())
 	{
 		PUZZLESYSTEM_LOG_ERROR(
-			"Puzzle Controller '%s' input '%s' expected exactly one Emitter on Actor '%s' using component name '%s' but found %d.",
+			"Puzzle Controller '%s' input '%s' found no Emitter components on Actor '%s'.",
 			*GetNameSafe(this),
 			*Binding.InputId.ToString(),
-			*GetNameSafe(Binding.EmitterActor),
-			*Binding.EmitterComponentName.ToString(),
-			Components.Num());
+			*GetNameSafe(Binding.EmitterActor));
 		return false;
 	}
 
-	OutEmitter = Components[0];
-	return IsValid(OutEmitter);
+	if (!Binding.bSpecifyEmitterComponent)
+	{
+		OutEmitter = Components[0];
+		return true;
+	}
+
+	if (Binding.EmitterComponentName.IsNone())
+	{
+		PUZZLESYSTEM_LOG_ERROR(
+			"Puzzle Controller '%s' input '%s' is configured to specify an Emitter component on Actor '%s' but has no component name.",
+			*GetNameSafe(this),
+			*Binding.InputId.ToString(),
+			*GetNameSafe(Binding.EmitterActor));
+		return false;
+	}
+
+	for (UPuzzleEmitterComponent* Component : Components)
+	{
+		if (Component->GetFName() == Binding.EmitterComponentName)
+		{
+			OutEmitter = Component;
+			return true;
+		}
+	}
+
+	PUZZLESYSTEM_LOG_ERROR(
+		"Puzzle Controller '%s' input '%s' could not find Emitter component '%s' on Actor '%s'.",
+		*GetNameSafe(this),
+		*Binding.InputId.ToString(),
+		*Binding.EmitterComponentName.ToString(),
+		*GetNameSafe(Binding.EmitterActor));
+	return false;
 }
 
 bool APuzzleController::ResolveReceiverComponent(const FPuzzleReceiverBinding& Binding, UPuzzleReceiverComponent*& OutReceiver) const
@@ -388,28 +412,50 @@ bool APuzzleController::ResolveReceiverComponent(const FPuzzleReceiverBinding& B
 
 	TArray<UPuzzleReceiverComponent*> Components;
 	Binding.ReceiverActor->GetComponents<UPuzzleReceiverComponent>(Components);
-
-	if (!Binding.ReceiverComponentName.IsNone())
+	Components.RemoveAll([](const UPuzzleReceiverComponent* Component)
 	{
-		Components.RemoveAll([&Binding](const UPuzzleReceiverComponent* Component)
-		{
-			return !Component || Component->GetFName() != Binding.ReceiverComponentName;
-		});
-	}
+		return !IsValid(Component);
+	});
 
-	if (Components.Num() != 1)
+	if (Components.IsEmpty())
 	{
 		PUZZLESYSTEM_LOG_ERROR(
-			"Puzzle Controller '%s' expected exactly one Receiver on Actor '%s' using component name '%s' but found %d.",
+			"Puzzle Controller '%s' found no Receiver components on Actor '%s'.",
 			*GetNameSafe(this),
-			*GetNameSafe(Binding.ReceiverActor),
-			*Binding.ReceiverComponentName.ToString(),
-			Components.Num());
+			*GetNameSafe(Binding.ReceiverActor));
 		return false;
 	}
 
-	OutReceiver = Components[0];
-	return IsValid(OutReceiver);
+	if (!Binding.bSpecifyReceiverComponent)
+	{
+		OutReceiver = Components[0];
+		return true;
+	}
+
+	if (Binding.ReceiverComponentName.IsNone())
+	{
+		PUZZLESYSTEM_LOG_ERROR(
+			"Puzzle Controller '%s' is configured to specify a Receiver component on Actor '%s' but has no component name.",
+			*GetNameSafe(this),
+			*GetNameSafe(Binding.ReceiverActor));
+		return false;
+	}
+
+	for (UPuzzleReceiverComponent* Component : Components)
+	{
+		if (Component->GetFName() == Binding.ReceiverComponentName)
+		{
+			OutReceiver = Component;
+			return true;
+		}
+	}
+
+	PUZZLESYSTEM_LOG_ERROR(
+		"Puzzle Controller '%s' could not find Receiver component '%s' on Actor '%s'.",
+		*GetNameSafe(this),
+		*Binding.ReceiverComponentName.ToString(),
+		*GetNameSafe(Binding.ReceiverActor));
+	return false;
 }
 
 void APuzzleController::BindEmitters()
