@@ -91,6 +91,17 @@ bool FPuzzleTransformMoverCompositionAndStopTest::RunTest(const FString& Paramet
 		return false;
 	}
 
+#if WITH_EDITOR
+	TestTrue(
+		TEXT("Persistent class defaults remain eligible for data validation"),
+		GetDefault<APuzzleTransformMoverTestActor>()->ShouldValidateMoverDataForTest());
+	Mover->SetFlags(RF_Transient);
+	TestFalse(
+		TEXT("Transient Blueprint compilation objects are excluded from asset validation"),
+		Mover->ShouldValidateMoverDataForTest());
+	Mover->ClearFlags(RF_Transient);
+#endif
+
 	TestTrue(TEXT("Billboard is the Actor root"), Mover->GetRootComponent() == Mover->BillboardRoot);
 	TestTrue(TEXT("Start marker is attached to the billboard"), Mover->StartArrow->GetAttachParent() == Mover->BillboardRoot);
 	TestTrue(TEXT("End marker is attached to the billboard"), Mover->EndArrow->GetAttachParent() == Mover->BillboardRoot);
@@ -315,6 +326,53 @@ bool FPuzzleTransformMoverTimingAndReplacementTest::RunTest(const FString& Param
 	TestTrue(TEXT("Non-animated initial synchronization snaps to End"), InitiallyActiveMover->IsAtEnd());
 	TestEqual(TEXT("Initial snap emits no movement-start hook"), InitiallyActiveMover->MovementStartedHookCount, 0);
 	TestEqual(TEXT("Initial snap emits no endpoint-arrival hook"), InitiallyActiveMover->ReachedEndHookCount, 0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPuzzleTransformMoverGateAndRuntimeStateTest,
+	"PuzzleSystem.TransformMover.RequestGateAndRuntimeState",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleTransformMoverGateAndRuntimeStateTest::RunTest(const FString& Parameters)
+{
+	PuzzleTransformMoverTest::FScopedWorld ScopedWorld;
+	if (!TestNotNull(TEXT("Gate test world exists"), ScopedWorld.World))
+	{
+		return false;
+	}
+
+	APuzzleTransformMoverTestActor* Mover = PuzzleTransformMoverTest::SpawnMover(ScopedWorld);
+	Mover->ForwardMovementTime = 1.0f;
+	TestTrue(TEXT("Gate fixture initializes"), Mover->InitializeForTest());
+	Mover->RequestDecision = EPuzzleTransformMoverRequestDecision::Defer;
+	TestFalse(TEXT("Deferred request does not report movement start"), Mover->RequestEndForTest());
+	TestTrue(TEXT("Deferred request preserves Start"), Mover->IsAtStart());
+	TestEqual(TEXT("Deferred request preserves alpha"), Mover->GetMovementAlpha(), 0.0f);
+	TestFalse(TEXT("Deferred request leaves Tick disabled"), Mover->IsActorTickEnabled());
+	TestEqual(TEXT("Deferred request emits no start hook"), Mover->MovementStartedHookCount, 0);
+
+	Mover->RequestDecision = EPuzzleTransformMoverRequestDecision::Accept;
+	TestTrue(TEXT("Accepted request begins movement"), Mover->RequestEndForTest());
+	Mover->Tick(0.35f);
+	TestTrue(TEXT("Movement pauses for snapshot"), Mover->PauseForTest());
+	const FPuzzleTransformMoverRuntimeState Snapshot = Mover->CaptureRuntimeState();
+	TestEqual(TEXT("Snapshot preserves direction"), Snapshot.MoverState, EPuzzleTransformMoverState::MovingTowardEnd);
+	TestTrue(TEXT("Snapshot preserves pause"), Snapshot.bIsMovementPaused);
+	TestEqual(TEXT("Snapshot preserves alpha"), Snapshot.MovementAlpha, 0.35f);
+
+	Mover->ResetMover();
+	TestTrue(TEXT("Reset changes fixture before restore"), Mover->IsAtStart());
+	TestTrue(TEXT("Runtime snapshot restores without presentation events"), Mover->RestoreRuntimeState(Snapshot));
+	TestEqual(TEXT("Restored mover direction matches snapshot"), Mover->GetMoverState(), EPuzzleTransformMoverState::MovingTowardEnd);
+	TestTrue(TEXT("Restored pause matches snapshot"), Mover->IsMovementPaused());
+	TestEqual(TEXT("Restored alpha matches snapshot"), Mover->GetMovementAlpha(), 0.35f);
+	const FVector ExpectedLocation = FMath::Lerp(
+		Mover->GetStartTransform().GetLocation(),
+		Mover->GetEndTransform().GetLocation(),
+		Mover->GetEasedAlpha());
+	TestTrue(TEXT("Restored transform is derived from eased alpha"),
+		Mover->GetMovedComponent()->GetComponentLocation().Equals(ExpectedLocation, 0.01f));
 	return true;
 }
 

@@ -20,6 +20,11 @@ public:
 		uint32 TopologyGeneration,
 		TArray<FString>& OutErrors);
 
+	/** Adds collision primitives explicitly excluded from navigation to topology sampling ignores. */
+	static void AddNavigationIrrelevantComponentsToQuery(
+		UWorld& World,
+		FCollisionQueryParams& QueryParams);
+
 	/**
 	 * Tests the complete upright agent capsule at a sampled floor.
 	 * When the base pose is blocked, deterministic lifted poses up to MaxStepHeight distinguish

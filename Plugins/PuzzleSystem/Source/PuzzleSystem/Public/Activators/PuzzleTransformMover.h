@@ -91,6 +91,42 @@ enum class EPuzzleTransformMoverInitialPosition : uint8
 	End
 };
 
+/** Endpoint selected by one semantic movement request. */
+UENUM(BlueprintType)
+enum class EPuzzleTransformMoverTarget : uint8
+{
+	Start,
+	End
+};
+
+/** Result returned by a native specialization before a request changes mover state. */
+UENUM(BlueprintType)
+enum class EPuzzleTransformMoverRequestDecision : uint8
+{
+	Accept,
+	Defer,
+	Reject
+};
+
+/** Serializable authoritative runtime state; visible transforms are rebuilt from this data. */
+USTRUCT(BlueprintType)
+struct PUZZLESYSTEM_API FPuzzleTransformMoverRuntimeState
+{
+	GENERATED_BODY()
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Mover|State")
+	EPuzzleTransformMoverState MoverState = EPuzzleTransformMoverState::AtStart;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Mover|State")
+	bool bIsMovementPaused = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Mover|State")
+	bool bLatchCompleted = false;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Mover|State", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	float MovementAlpha = 0.0f;
+};
+
 /** Blueprint-observable notification emitted by one transform mover. */
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPuzzleTransformMoverEventDelegate, APuzzleTransformMover*, PuzzleTransformMover);
 
@@ -303,11 +339,49 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Puzzle|Mover|State")
 	bool GetRemainingMovementTime(float& OutRemainingSeconds) const;
 
+	/** Captures only authoritative mover state; component transforms and presentation are derived. */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Mover|State")
+	FPuzzleTransformMoverRuntimeState CaptureRuntimeState() const;
+
+	/** Restores authoritative mover state and rebuilds the moved component without emitting presentation events. */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle|Mover|State")
+	bool RestoreRuntimeState(const FPuzzleTransformMoverRuntimeState& RuntimeState);
+
 	/** Changes only the local debug flag; Tick remains movement-driven and is never enabled solely for debug. */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle|Mover|Debug")
 	void SetMoverDebugEnabled(bool bInEnableDebug);
 
 protected:
+#if WITH_EDITOR
+	/** Excludes transient Blueprint compilation/reinstancing objects from asset validation. */
+	bool ShouldValidateMoverData() const;
+#endif
+
+	/** Called for every semantic target request, including an otherwise deduplicated request. */
+	virtual void OnMovementTargetRequestedNative(EPuzzleTransformMoverTarget RequestedTarget);
+
+	/** Dependency-free request gate evaluated before mover state, alpha, Tick, latch, or events change. */
+	virtual EPuzzleTransformMoverRequestDecision EvaluateMovementRequestNative(
+		EPuzzleTransformMoverTarget RequestedTarget);
+
+	/** Lets a specialization suppress Receiver-driven policy during an authoritative lifecycle operation. */
+	virtual bool ShouldProcessReceiverStateNative(bool bReceiverActive);
+
+	/** Native correctness hooks always execute before their Blueprint hook and public delegate. */
+	virtual void OnMovementStartedNative();
+	virtual void OnMovementResumedNative();
+	virtual void OnMovementReversedNative();
+	virtual void OnMovementPausedNative();
+	virtual void OnMovementUpdatedNative(float CurrentMovementAlpha, float CurrentEasedAlpha);
+	virtual void OnReachedStartNative();
+	virtual void OnReachedEndNative();
+	virtual void OnMovedComponentChangingNative(USceneComponent* PreviousComponent, USceneComponent* NewComponent);
+	virtual void OnMovedComponentChangedNative(USceneComponent* PreviousComponent, USceneComponent* NewComponent);
+	virtual void OnMoverResetNative();
+
+	/** Re-evaluates movement-driven Tick after a native specialization changes relevant state. */
+	void RefreshMovementTickState();
+
 	/** Starts or deduplicates movement toward Start while preserving reversal progress. */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle|Mover|Control", meta = (BlueprintProtected = "true"))
 	bool RequestMoveTowardStart();

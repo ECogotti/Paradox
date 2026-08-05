@@ -5,7 +5,7 @@
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -16,6 +16,14 @@ instant crouch/uncrouch alongside a running Movement lock, stance replay, and st
 Perception Entity IDs. `Paradox.Perception.PlayerSightUsesPawnFacing` deliberately separates
 Player Controller `ControlRotation` from Pawn rotation and verifies that both gameplay eyes and the
 native listener direction follow the Pawn immediately after it turns.
+
+`PuzzleSystem.TransformMover.RequestGateAndRuntimeState` covers dependency-free defer semantics and
+event-free whole-state reconstruction. `GameplayActions.Locks.SourceOwnedExternalAuthority` covers
+conflicting-action interruption, new-request rejection, and independent lock owners.
+`Paradox.VerticalBarrier.*` covers native composition, shared bounds, distinct-Actor occupancy,
+safe defer/retry, safety return, navigation ordering, attachment persistence after EndOverlap,
+Paradox Character Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport,
+and endpoint cleanup.
 
 ## Idle tail and recorded Time Travel
 

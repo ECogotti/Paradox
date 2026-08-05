@@ -116,6 +116,18 @@ Return:   reverse immediately toward the logical origin endpoint without snappin
 Continue: ignore this deactivation and finish; no automatic reversal is queued at the endpoint
 ```
 
+Native specializations can validate a target before state changes through
+`EvaluateMovementRequestNative`. Returning `Defer` or `Reject` preserves state, alpha, latch
+completion, Tick, and presentation events. `OnMovementTargetRequestedNative` observes the semantic
+request even when it is otherwise deduplicated. Core native lifecycle hooks run before the matching
+`BlueprintNativeEvent`, which in turn runs before the public multicast delegate.
+
+`CaptureRuntimeState()` returns the generic state, alpha, pause, and latch authority.
+`RestoreRuntimeState()` validates that whole snapshot, rebuilds easing and the moved-component
+transform, and emits no movement presentation events. Project actors can therefore select one
+complete `FPuzzleTransformMoverRuntimeState` property in a save/world-state system without storing
+the derived mesh transform as a competing authority.
+
 The explicit state is `AtStart`, `MovingTowardEnd`, `AtEnd`, or `MovingTowardStart`. A separate paused
 flag preserves direction during `Stop`. Tick is enabled only while a valid component is actively
 interpolating; stable endpoints, paused movement, invalid components, and shutdown disable Tick.
@@ -163,6 +175,10 @@ delegate; keep Blueprint work in it small.
 Enable local `bEnableDebug` together with `PuzzleSystem.Debug.Visual` to draw the active path, direction,
 current progress, Receiver state, mode, timing, easing source, and remaining time. Debug does not enable a
 separate idle Tick; the green/red editor arrows remain the passive authoring visualization at endpoints.
+
+Editor data validation skips transient Actor objects created while Blueprint classes are compiled or
+reinstanced. Persistent Blueprint defaults and placed map Actors still receive the complete native
+component, endpoint, timing, and moved-component validation.
 
 Current limitations are intentional: cross-Actor component control, physics-driven movement, networking,
 multi-point paths, and obstacle resolution are not part of the base. Movement currently uses deterministic

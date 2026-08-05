@@ -75,6 +75,27 @@ nel journal e non consulta il flag di preemption `bInterruptible`. Un reason non
 `GameplayAction.Result.Interrupted.External`. `CancelAction` mantiene invece la semantica distinta
 `Cancelled`.
 
+## Lock esterni posseduti da una sorgente
+
+Un sistema autorevole che deve sospendere temporaneamente una risorsa usa
+`AcquireExternalExecutionLocks(Source, Locks, InterruptionReason)`. Ogni tag deve appartenere a
+`GameplayAction.Lock`. L'acquisizione registra prima il lock, poi interrompe in ordine deterministico
+tutte le action attive o queued in conflitto; nuove request e preflight exact-match ricevono
+`RejectedBlocked` finche almeno una sorgente trattiene il lock.
+
+`ReleaseExternalExecutionLocks(Source)` rimuove esclusivamente i lock di quella sorgente. Piu
+sistemi possono quindi trattenere `GameplayAction.Lock.Movement` contemporaneamente senza che il
+cleanup di uno riabiliti prematuramente il movimento. Le sorgenti sono weak e il componente elimina
+i record invalidi; shutdown e distruzione svuotano comunque tutta la tabella locale.
+
+```cpp
+FGameplayTagContainer Locks;
+Locks.AddTag(GameplayActionTags::Lock_Movement);
+Actions->AcquireExternalExecutionLocks(this, Locks, BarrierInterruptionReason);
+// ... autorita temporanea ...
+Actions->ReleaseExternalExecutionLocks(this);
+```
+
 ## Estendere un'azione
 
 Derivare da `UGameplayActionInstance` e specializzare soltanto gli hook necessari:

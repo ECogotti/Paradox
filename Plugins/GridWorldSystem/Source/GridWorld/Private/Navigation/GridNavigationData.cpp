@@ -28,7 +28,7 @@
 namespace UE::GridWorld::Serialization
 {
 	static constexpr uint32 Magic = 0x47575244; // GWRD
-	static constexpr int32 CurrentVersion = 7;
+	static constexpr int32 CurrentVersion = 8;
 
 	bool CanConsumeVersion(int32 Version)
 	{

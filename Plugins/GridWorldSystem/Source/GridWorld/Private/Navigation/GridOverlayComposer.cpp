@@ -19,7 +19,9 @@ namespace UE::GridWorld::Private
 			TInlineComponentArray<ComponentType*> ActorComponents(*It);
 			for (ComponentType* Component : ActorComponents)
 			{
-				if (IsValid(Component) && Component->IsRegistered() && Component->IsActive())
+				if (IsValid(Component)
+					&& Component->IsRegistered()
+					&& IGridNavigationContributor::Execute_IsGridContributionEnabled(Component))
 				{
 					OutComponents.Add(Component);
 				}

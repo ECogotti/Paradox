@@ -69,6 +69,8 @@ public:
 	virtual void PostLoad() override;
 	virtual void OnComponentCreated() override;
 	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
+	virtual void Activate(bool bReset = false) override;
+	virtual void Deactivate() override;
 	virtual void OnRegister() override;
 	virtual void OnUnregister() override;
 #if WITH_EDITOR

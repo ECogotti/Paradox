@@ -1085,4 +1085,59 @@ bool FGameplayActionsNativeEndedObserverTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGameplayActionsExternalExecutionLocksTest,
+	"GameplayActions.Locks.SourceOwnedExternalAuthority",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGameplayActionsExternalExecutionLocksTest::RunTest(const FString& Parameters)
+{
+	using namespace GameplayActionsTests;
+
+	UGameplayActionDefinition* Definition = MakeDefinition();
+	AddLock(*Definition, GameplayActionTags::Lock_Movement);
+	UGameplayActionComponent* Component = MakeComponent();
+	UGameplayActionComponent* BarrierA = NewObject<UGameplayActionComponent>();
+	UGameplayActionComponent* BarrierB = NewObject<UGameplayActionComponent>();
+
+	const FGameplayActionSubmissionResult Running = Component->SubmitAction(MakeRequest(*Definition));
+	TestEqual(TEXT("Movement action starts before external locking"), Running.Status, EGameplayActionSubmissionStatus::AcceptedStarted);
+
+	FGameplayTagContainer MovementLocks;
+	MovementLocks.AddTag(GameplayActionTags::Lock_Movement);
+	TestEqual(
+		TEXT("First source acquires Movement"),
+		Component->AcquireExternalExecutionLocks(BarrierA, MovementLocks, GameplayActionTags::Result_Interrupted_External),
+		EGameplayActionOperationResult::Succeeded);
+	FGameplayActionResult InterruptedResult;
+	TestTrue(TEXT("Conflicting running action has a terminal result"), Component->GetActionResult(Running.Handle, InterruptedResult));
+	TestEqual(TEXT("External lock interrupts the conflicting action"), InterruptedResult.TerminalState, EGameplayActionState::Interrupted);
+	TestTrue(TEXT("Interruption reason is preserved"), InterruptedResult.ReasonTag.MatchesTagExact(GameplayActionTags::Result_Interrupted_External));
+	TestTrue(TEXT("Movement lock is externally held"), Component->IsExternalExecutionLockHeld(GameplayActionTags::Lock_Movement));
+	TestEqual(
+		TEXT("New conflicting submission is rejected while held"),
+		Component->SubmitAction(MakeRequest(*Definition)).Status,
+		EGameplayActionSubmissionStatus::RejectedBlocked);
+
+	TestEqual(
+		TEXT("Second source independently acquires Movement"),
+		Component->AcquireExternalExecutionLocks(BarrierB, MovementLocks, GameplayActionTags::Result_Interrupted_External),
+		EGameplayActionOperationResult::Succeeded);
+	TestEqual(
+		TEXT("First source releases only its own lock"),
+		Component->ReleaseExternalExecutionLocks(BarrierA),
+		EGameplayActionOperationResult::Succeeded);
+	TestTrue(TEXT("Second source still retains Movement"), Component->IsExternalExecutionLockHeld(GameplayActionTags::Lock_Movement));
+	TestEqual(
+		TEXT("Second source releases its lock"),
+		Component->ReleaseExternalExecutionLocks(BarrierB),
+		EGameplayActionOperationResult::Succeeded);
+	TestFalse(TEXT("Movement is unlocked after all owners release"), Component->IsExternalExecutionLockHeld(GameplayActionTags::Lock_Movement));
+	TestEqual(
+		TEXT("Movement action can start after release"),
+		Component->SubmitAction(MakeRequest(*Definition)).Status,
+		EGameplayActionSubmissionStatus::AcceptedStarted);
+	return true;
+}
+
 #endif

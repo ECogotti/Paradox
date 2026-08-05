@@ -223,3 +223,7 @@ recovery, Game Over, Level Complete, presentation hooks, and Blueprint APIs.
 See [Pressure Plate](PRESSURE_PLATE.md) for the concrete Blueprint class, collision and tag setup,
 single-occupant behavior, movement feedback, semantic Hearing, WorldState restoration, extension
 events, and debug controls.
+
+See [Vertical Barrier](PARADOX_VERTICAL_BARRIER.md) for the concrete Receiver-driven rising barrier,
+GridWorld passage bounds, safe/lift occupant policies, locomotion lock ownership, WorldState restore,
+PerceptionKnowledge state, Blueprint events, and PIE validation.

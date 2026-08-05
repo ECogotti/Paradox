@@ -46,7 +46,9 @@ GridWorld is generated for ordinary world-up walking. Floor normals are stored p
 1. Enable the `GridWorldSystem` plugin.
 2. Under **Project Settings > Navigation System > Supported Agents**, configure one `GridWorld` agent with radius **42 cm**, height **192 cm**, and both **Navigation Data Class** and **Preferred Nav Data** set to `GridNavigationData`. Paradox stores this in `Config/DefaultEngine.ini`. Without it, Unreal falls back to `RecastNavMesh-Default` and GridWorld movement tasks cannot resolve their Navigation Data.
 3. Add a `GridNavigationBoundsVolume`, then position, rotate, and scale the Actor to cover the desired area. Translation and scale change coverage only; cell `(0,0,0)` remains centered on the world origin. Rotation still defines the grid orientation, and cells remain 100 x 100 x 50 cm unless explicitly configured otherwise.
-4. Ensure navigable floors block the bounds volume's collision profile, `Pawn` by default.
+4. Ensure navigable floors block the bounds volume's collision profile, `Pawn` by default. Components
+   with **Can Ever Affect Navigation** disabled are excluded from both floor and clearance sampling even
+   when their gameplay collision still blocks that profile.
 5. Select **Build > Grid World > Build Grid World** for the first build. Later Transform edits and changes to generation properties such as Movement Mode rebuild automatically when the edit is committed.
 6. Leave **Auto Rebuild On Geometry Changes** enabled on a bounds volume when adding, removing, moving, or changing collision on navigation-relevant meshes should rebuild its affected chunks automatically.
 7. Enable **Show > Navigation** in the viewport.
@@ -73,7 +75,7 @@ Completed Transform edits on a `GridNavigationBoundsVolume` rebuild automaticall
 
 **Auto Rebuild On Geometry Changes** is enabled by default per volume. UE's native navigation dirty areas detect navigation-relevant Static Mesh collision when an Actor or component is added, removed, moved, or changes collision. GridWorld rebuilds only enabled intersecting regions and their chunk halo. Disabled volumes retain their last built topology until a bounds Transform/property change, **Build Grid World**, or **Rebuild Grid World for Selection**. The project-wide Editor preference **Update Navigation Automatically** must also be enabled; the per-volume option filters the native pipeline and does not override that global preference.
 
-In Game and PIE, `AGridNavigationData` uses Unreal's **Dynamic** runtime generation. A Movable collider can therefore add, remove, or relocate generated cells through the existing native dirty-area pipeline when it has **Can Ever Affect Navigation** enabled, blocks the Grid bounds collision profile, intersects a `GridNavigationBoundsVolume`, and that volume keeps **Auto Rebuild On Geometry Changes** enabled. A moving platform is considered only after regeneration at its current position; GridWorld does not attach local cells to a platform or promise navigation while the platform is in motion. For authored obstacles that only block or price existing cells, `GridNavigationModifierComponent` remains the cheaper alternative because it does not resample geometry.
+In Game and PIE, `AGridNavigationData` uses Unreal's **Dynamic** runtime generation. A Movable collider can therefore add, remove, or relocate generated cells through the existing native dirty-area pipeline when it has **Can Ever Affect Navigation** enabled, blocks the Grid bounds collision profile, intersects a `GridNavigationBoundsVolume`, and that volume keeps **Auto Rebuild On Geometry Changes** enabled. Components with that flag disabled are explicitly ignored by GridWorld's physical topology traces. A moving platform is considered only after regeneration at its current position; GridWorld does not attach local cells to a platform or promise navigation while the platform is in motion. For authored obstacles that only block or price existing cells, `GridNavigationModifierComponent` remains the cheaper alternative because it does not resample geometry.
 
 Runtime changes use components:
 
@@ -81,7 +83,14 @@ Runtime changes use components:
 - `GridNavigationOccupancyComponent` contributes optional cost, blocking and reservation information;
 - `GridNavigationLinkComponent` creates directed or bidirectional explicit links, including links between different grids.
 
-These components listen to `TransformUpdated`; they do not Tick. Use their Blueprint refresh functions after changing several exposed fields at runtime. Occupancy is ignored by navigation filters unless `AddCost` or `Block` is selected.
+These components listen to `TransformUpdated`; they do not Tick. Modifiers auto-activate by default.
+Before Begin Play, the editor overlay treats a registered auto-activating modifier as enabled so
+**Show Navigation** previews the authored state; clearing **Auto Activate** explicitly opts that
+contribution out. During Game/PIE, normal component activation is authoritative. Use their
+Blueprint refresh functions after changing several exposed fields at runtime. Occupancy is ignored by
+navigation filters unless `AddCost` or `Block` is selected. Modifier activation and deactivation
+immediately recompose the overlay; initial auto-activation therefore cannot leave a topology snapshot
+published before the blocker became active.
 
 ## Runtime cell visualization
 
@@ -270,7 +279,7 @@ Serialization has an explicit format magic and version. It stores generated topo
 
 Every successful editor topology build, incremental geometry rebuild, and clear operation marks the package containing `AGridNavigationData` dirty. Save the level (or use **Save All** when External Actors/sublevels are involved) after the build. The versioned topology then reloads when the editor restarts or the level is closed and reopened; no automatic rebuild is required. Closing without saving still discards the build, like any other level change.
 
-Format version 7 retains compact floor normals and marks topology generated with the world-anchored lattice, step-adjusted clearance and penetration-safe surface sampling rules. Version 2–6 payloads are consumed to their correct serialized end but deliberately rejected, because they may contain volume-relative coordinates, low-step holes or stacked cells generated inside solid collision. The level therefore loads without stale navigation and logs that a rebuild is required. Run **Build Grid World** once and save the level to persist version 7.
+Format version 8 retains compact floor normals and marks topology generated with the world-anchored lattice, step-adjusted clearance, penetration-safe surface sampling, and navigation-relevance filtering rules. Version 2–7 payloads are consumed to their correct serialized end but deliberately rejected, because they may contain volume-relative coordinates, low-step holes, stacked cells generated inside solid collision, or cells/holes baked from navigation-irrelevant collision. The level therefore loads without stale navigation and logs that a rebuild is required. Run **Build Grid World** once and save the level to persist version 8.
 
 ## Verification
 

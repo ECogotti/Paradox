@@ -2,12 +2,14 @@
 
 #include "Components/GridNavigationModifierComponent.h"
 
+#include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Navigation/GridNavigationData.h"
 
 UGridNavigationModifierComponent::UGridNavigationModifierComponent()
 {
 	PrimaryComponentTick.bCanEverTick = false;
+	bAutoActivate = true;
 }
 
 bool UGridNavigationModifierComponent::AffectsPoint(const FVector& WorldPoint) const
@@ -37,7 +39,13 @@ FBox UGridNavigationModifierComponent::GetGridContributionBounds_Implementation(
 
 bool UGridNavigationModifierComponent::IsGridContributionEnabled_Implementation() const
 {
-	return IsActive() && IsRegistered();
+	if (!IsRegistered())
+	{
+		return false;
+	}
+
+	const UWorld* World = GetWorld();
+	return IsActive() || (bAutoActivate && World != nullptr && !World->IsGameWorld());
 }
 
 void UGridNavigationModifierComponent::EnsureStableId(bool bForceNewId)
@@ -51,6 +59,26 @@ void UGridNavigationModifierComponent::EnsureStableId(bool bForceNewId)
 void UGridNavigationModifierComponent::PostLoad() { Super::PostLoad(); EnsureStableId(); }
 void UGridNavigationModifierComponent::OnComponentCreated() { Super::OnComponentCreated(); EnsureStableId(); }
 void UGridNavigationModifierComponent::PostDuplicate(EDuplicateMode::Type DuplicateMode) { Super::PostDuplicate(DuplicateMode); EnsureStableId(DuplicateMode != EDuplicateMode::PIE); }
+
+void UGridNavigationModifierComponent::Activate(const bool bReset)
+{
+	const bool bWasActive = IsActive();
+	Super::Activate(bReset);
+	if (!bWasActive && IsActive())
+	{
+		NotifyNavigationData();
+	}
+}
+
+void UGridNavigationModifierComponent::Deactivate()
+{
+	const bool bWasActive = IsActive();
+	Super::Deactivate();
+	if (bWasActive && !IsActive())
+	{
+		NotifyNavigationData();
+	}
+}
 
 void UGridNavigationModifierComponent::OnRegister()
 {

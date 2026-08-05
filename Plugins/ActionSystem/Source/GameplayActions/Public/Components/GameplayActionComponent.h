@@ -72,6 +72,28 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
 	bool IsAcceptingSubmissions() const { return bAcceptingSubmissions && !bShuttingDown; }
 
+	/**
+	 * Acquires source-owned execution locks and interrupts every accepted conflicting action.
+	 * Reacquiring from the same source replaces only that source's lock set.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions|External Locks")
+	EGameplayActionOperationResult AcquireExternalExecutionLocks(
+		UObject* LockSource,
+		const FGameplayTagContainer& ExecutionLocks,
+		FGameplayTag InterruptionReason);
+
+	/** Releases only the execution locks owned by LockSource. */
+	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions|External Locks")
+	EGameplayActionOperationResult ReleaseExternalExecutionLocks(UObject* LockSource);
+
+	/** Returns true when any live external source owns this exact execution lock. */
+	UFUNCTION(BlueprintPure, Category = "Gameplay Actions|External Locks")
+	bool IsExternalExecutionLockHeld(FGameplayTag ExecutionLock) const;
+
+	/** Returns true when LockSource currently owns at least one execution lock. */
+	UFUNCTION(BlueprintPure, Category = "Gameplay Actions|External Locks")
+	bool HasExternalExecutionLocksFrom(UObject* LockSource) const;
+
 	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
 	bool GetActionState(FGameplayActionHandle Handle, EGameplayActionState& OutState) const;
 
@@ -171,6 +193,8 @@ private:
 	FGameplayActionSubmissionResult EvaluateSchedule(const UGameplayActionInstance& Incoming, TArray<FGameplayActionHandle>& OutConflicts) const;
 	TArray<FGameplayActionHandle> FindConflicts(const UGameplayActionInstance& Incoming) const;
 	bool CanPreemptAll(const UGameplayActionInstance& Incoming, const TArray<FGameplayActionHandle>& Conflicts) const;
+	bool HasExternalExecutionLockConflict(const FGameplayTagContainer& ExecutionLocks) const;
+	void PruneInvalidExternalExecutionLockSources();
 	void SortHandlesBySchedulerOrder(TArray<FGameplayActionHandle>& Handles) const;
 
 	void InitializeAcceptedAction(UGameplayActionInstance& Instance);
@@ -221,6 +245,10 @@ private:
 
 	UPROPERTY(Transient)
 	TMap<FGameplayActionHandle, FGameplayActionResult> TerminalResults;
+
+	/** Execution locks retained by weak, independently releasable system authorities. */
+	UPROPERTY(Transient)
+	TMap<TWeakObjectPtr<UObject>, FGameplayTagContainer> ExternalExecutionLocksBySource;
 
 	UPROPERTY(Transient)
 	TArray<FGameplayActionEvent> PendingEvents;

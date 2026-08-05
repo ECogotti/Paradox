@@ -9,6 +9,7 @@
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Actor.h"
+#include "Navigation/GridNavigationData.h"
 #include "Navigation/GridOverlayComposer.h"
 #include "Navigation/GridWorldSnapshot.h"
 
@@ -116,6 +117,116 @@ bool FGridOverlayCompositionTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Moving a non-blocking agent does not change blocking occupancy"), AgentMoveChangeSet.ChangedBlockingOccupancyCells.IsEmpty());
 	TestTrue(TEXT("Moving a zero-cost agent does not change occupancy cost"), AgentMoveChangeSet.ChangedOccupancyCostCells.IsEmpty());
 	TestEqual(TEXT("Agent move still increments only occupancy"), AgentMoveOverlay->Revisions.Traversal, OccupancyOverlay->Revisions.Traversal);
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridOverlayEditorAutoActivationTest,
+	"GridWorld.Overlay.EditorAutoActivation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridOverlayEditorAutoActivationTest::RunTest(const FString& Parameters)
+{
+	TestTrue(
+		TEXT("Modifiers contribute automatically by default"),
+		GetDefault<UGridNavigationModifierComponent>()->bAutoActivate);
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Editor,
+		false,
+		MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldEditorOverlayTest")));
+	if (!TestNotNull(TEXT("Transient editor world"), World))
+	{
+		return false;
+	}
+	AActor* Owner = World->SpawnActor<AActor>();
+	if (!TestNotNull(TEXT("Editor overlay owner"), Owner))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> Base = MakeShared<FGridWorldSnapshot, ESPMode::ThreadSafe>();
+	Base->GridId = FGuid::NewGuid();
+	Base->Revisions.Topology = 1;
+	Base->Revisions.Traversal = 1;
+	Base->Revisions.Occupancy = 1;
+	Base->Cells.AddDefaulted();
+	FString FinalizeError;
+	TestTrue(TEXT("Editor base snapshot finalizes"), Base->Finalize(&FinalizeError));
+
+	UGridNavigationModifierComponent* Modifier = NewObject<UGridNavigationModifierComponent>(Owner);
+	Owner->AddInstanceComponent(Modifier);
+	Modifier->SetRelativeLocation(Base->Cells[0].WorldCenter);
+	Modifier->BoxExtent = FVector(20.0);
+	Modifier->bBlockCells = true;
+	Modifier->RegisterComponent();
+	Modifier->Deactivate();
+	TestFalse(TEXT("Test modifier is inactive after explicit deactivation"), Modifier->IsActive());
+
+	FGridChangeSet EnabledChangeSet;
+	const TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> EnabledOverlay =
+		FGridOverlayComposer::Compose(*World, *Base, &Base.Get(), false, EnabledChangeSet);
+	TestFalse(TEXT("Auto-activated editor modifier invalidates its cell"), EnabledOverlay->Cells[0].bWalkable);
+
+	Modifier->bAutoActivate = false;
+	FGridChangeSet DisabledChangeSet;
+	const TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> DisabledOverlay =
+		FGridOverlayComposer::Compose(*World, *Base, &EnabledOverlay.Get(), false, DisabledChangeSet);
+	TestTrue(TEXT("Opted-out editor modifier no longer invalidates its cell"), DisabledOverlay->Cells[0].bWalkable);
+
+	World->DestroyWorld(false);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridOverlayActivationRefreshTest,
+	"GridWorld.Overlay.ActivationRefresh",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridOverlayActivationRefreshTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Game,
+		false,
+		MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldActivationOverlayTest")));
+	if (!TestNotNull(TEXT("Transient game world"), World))
+	{
+		return false;
+	}
+	AActor* Owner = World->SpawnActor<AActor>();
+	AGridNavigationData* NavigationData = World->SpawnActor<AGridNavigationData>();
+	if (!TestNotNull(TEXT("Activation overlay owner"), Owner)
+		|| !TestNotNull(TEXT("Activation overlay navigation data"), NavigationData))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	UGridNavigationModifierComponent* Modifier = NewObject<UGridNavigationModifierComponent>(Owner);
+	Owner->AddInstanceComponent(Modifier);
+	Modifier->bAutoActivate = false;
+	Modifier->BoxExtent = FVector(20.0);
+	Modifier->bBlockCells = true;
+	Modifier->RegisterComponent();
+	TestFalse(TEXT("Modifier starts inactive"), Modifier->IsActive());
+
+	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> Base = MakeShared<FGridWorldSnapshot, ESPMode::ThreadSafe>();
+	Base->GridId = FGuid::NewGuid();
+	Base->Revisions.Topology = 1;
+	Base->Revisions.Traversal = 1;
+	Base->Revisions.Occupancy = 1;
+	Base->Cells.AddDefaulted();
+	FString PublishError;
+	TestTrue(TEXT("Base topology publishes before activation"), NavigationData->PublishSnapshot(Base, &PublishError));
+	Modifier->SetWorldLocation(Base->Cells[0].WorldCenter);
+	TestTrue(TEXT("Inactive modifier leaves the initial cell valid"), NavigationData->GetSnapshot()->Cells[0].bWalkable);
+
+	Modifier->Activate(true);
+	TestFalse(TEXT("Activation immediately invalidates the affected cell"), NavigationData->GetSnapshot()->Cells[0].bWalkable);
+	Modifier->Deactivate();
+	TestTrue(TEXT("Deactivation immediately restores the base cell"), NavigationData->GetSnapshot()->Cells[0].bWalkable);
 
 	World->DestroyWorld(false);
 	return true;

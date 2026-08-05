@@ -35,6 +35,12 @@ namespace
 		0,
 		TEXT("Enables pressure-plate occupancy and movement diagnostics when the inherited local debug flag is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxVerticalBarrierDebug(
+		TEXT("Paradox.VerticalBarrier.Debug"),
+		0,
+		TEXT("Enables vertical-barrier passage, passenger, and movement diagnostics when local debug is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -55,6 +61,11 @@ bool IsParadoxFootstepDebugEnabled()
 bool IsParadoxPressurePlateDebugEnabled()
 {
 	return CVarParadoxPressurePlateDebug.GetValueOnGameThread() != 0;
+}
+
+bool IsParadoxVerticalBarrierDebugEnabled()
+{
+	return CVarParadoxVerticalBarrierDebug.GetValueOnGameThread() != 0;
 }
 
 namespace ParadoxGameplayTags
@@ -118,4 +129,16 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(
 		Cause_PressurePlate_Movement,
 		"PerceptionKnowledge.Cause.PressurePlate.Movement");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Interrupted_ByBarrierLift,
+		"GameplayAction.Result.Interrupted.ByBarrierLift");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Open, "Barrier.State.Open");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_BlockingPassage, "Barrier.State.BlockingPassage");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Moving, "Barrier.State.Moving");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_WaitingForClearance, "Barrier.State.WaitingForClearance");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_TransportingOccupants, "Barrier.State.TransportingOccupants");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Raise, "PerceptionKnowledge.Event.Noise.Barrier.Raise");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Lower, "PerceptionKnowledge.Event.Noise.Barrier.Lower");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Impact, "PerceptionKnowledge.Event.Noise.Barrier.Impact");
+	UE_DEFINE_GAMEPLAY_TAG(Cause_Barrier_Movement, "PerceptionKnowledge.Cause.Barrier.Movement");
 }

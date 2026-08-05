@@ -13,6 +13,7 @@
 #include "UObject/ConstructorHelpers.h"
 
 #if WITH_EDITOR
+#include "Engine/Blueprint.h"
 #include "Misc/DataValidation.h"
 #endif
 
@@ -115,6 +116,10 @@ void APuzzleTransformMover::Tick(float DeltaSeconds)
 EDataValidationResult APuzzleTransformMover::IsDataValid(FDataValidationContext& Context) const
 {
 	EDataValidationResult Result = Super::IsDataValid(Context);
+	if (!ShouldValidateMoverData())
+	{
+		return Result;
+	}
 	if (Result == EDataValidationResult::NotValidated)
 	{
 		Result = EDataValidationResult::Valid;
@@ -199,6 +204,21 @@ EDataValidationResult APuzzleTransformMover::IsDataValid(FDataValidationContext&
 
 	return Result;
 }
+
+bool APuzzleTransformMover::ShouldValidateMoverData() const
+{
+	const UClass* ObjectClass = GetClass();
+	const UBlueprint* GeneratingBlueprint = ObjectClass != nullptr
+		? Cast<UBlueprint>(ObjectClass->ClassGeneratedBy)
+		: nullptr;
+	const bool bIsSkeletonClass = GeneratingBlueprint != nullptr
+		&& GeneratingBlueprint->SkeletonGeneratedClass == ObjectClass;
+	return GetOutermost() != GetTransientPackage()
+		&& !HasAnyFlags(RF_Transient | RF_BeginDestroyed | RF_FinishDestroyed)
+		&& ObjectClass != nullptr
+		&& !ObjectClass->HasAnyClassFlags(CLASS_NewerVersionExists)
+		&& !bIsSkeletonClass;
+}
 #endif
 
 bool APuzzleTransformMover::SetMovedComponent(USceneComponent* NewComponent)
@@ -214,6 +234,7 @@ bool APuzzleTransformMover::SetMovedComponent(USceneComponent* NewComponent)
 	}
 
 	USceneComponent* PreviousComponent = MovedComponent;
+	OnMovedComponentChangingNative(PreviousComponent, NewComponent);
 	MovedComponent = NewComponent;
 	if (!UpdateEasedAlpha(true) || !SynchronizeMovedComponent(true))
 	{
@@ -225,6 +246,7 @@ bool APuzzleTransformMover::SetMovedComponent(USceneComponent* NewComponent)
 	bConfigurationValid = ValidateMoverConfiguration(true);
 	UpdateMovementTickState();
 
+	OnMovedComponentChangedNative(PreviousComponent, NewComponent);
 	HandleMovedComponentChanged();
 	OnMovedComponentChanged.Broadcast(this);
 	return true;
@@ -266,6 +288,7 @@ void APuzzleTransformMover::ResetMover()
 			*GetNameSafe(this));
 	}
 
+	OnMoverResetNative();
 	HandleMoverReset();
 	OnMoverReset.Broadcast(this);
 }
@@ -409,9 +432,118 @@ bool APuzzleTransformMover::GetRemainingMovementTime(float& OutRemainingSeconds)
 	return FMath::IsFinite(OutRemainingSeconds);
 }
 
+FPuzzleTransformMoverRuntimeState APuzzleTransformMover::CaptureRuntimeState() const
+{
+	FPuzzleTransformMoverRuntimeState Result;
+	Result.MoverState = MoverState;
+	Result.bIsMovementPaused = bIsMovementPaused;
+	Result.bLatchCompleted = bLatchCompleted;
+	Result.MovementAlpha = MovementAlpha;
+	return Result;
+}
+
+bool APuzzleTransformMover::RestoreRuntimeState(const FPuzzleTransformMoverRuntimeState& RuntimeState)
+{
+	if (!bIsRuntimeInitialized || !FMath::IsFinite(RuntimeState.MovementAlpha)
+		|| RuntimeState.MovementAlpha < 0.0f || RuntimeState.MovementAlpha > 1.0f
+		|| (RuntimeState.bIsMovementPaused
+			&& RuntimeState.MoverState != EPuzzleTransformMoverState::MovingTowardStart
+			&& RuntimeState.MoverState != EPuzzleTransformMoverState::MovingTowardEnd)
+		|| (RuntimeState.MoverState == EPuzzleTransformMoverState::AtStart
+			&& !FMath::IsNearlyZero(RuntimeState.MovementAlpha))
+		|| (RuntimeState.MoverState == EPuzzleTransformMoverState::AtEnd
+			&& !FMath::IsNearlyEqual(RuntimeState.MovementAlpha, 1.0f)))
+	{
+		PUZZLESYSTEM_LOG_WARNING(
+			"Puzzle Transform Mover '%s' rejected an inconsistent runtime-state snapshot.",
+			*GetNameSafe(this));
+		return false;
+	}
+
+	MoverState = RuntimeState.MoverState;
+	bIsMovementPaused = RuntimeState.bIsMovementPaused;
+	bLatchCompleted = RuntimeState.bLatchCompleted;
+	MovementAlpha = RuntimeState.MovementAlpha;
+	bInvalidMovedComponentWarningEmitted = false;
+	bConfigurationValid = ValidateMoverConfiguration(true);
+	const bool bRestored = bConfigurationValid
+		&& UpdateEasedAlpha(true)
+		&& SynchronizeMovedComponent(true);
+	if (!bRestored)
+	{
+		bConfigurationValid = false;
+	}
+	UpdateMovementTickState();
+	return bRestored;
+}
+
 void APuzzleTransformMover::SetMoverDebugEnabled(bool bInEnableDebug)
 {
 	bEnableDebug = bInEnableDebug;
+}
+
+void APuzzleTransformMover::OnMovementTargetRequestedNative(EPuzzleTransformMoverTarget RequestedTarget)
+{
+}
+
+EPuzzleTransformMoverRequestDecision APuzzleTransformMover::EvaluateMovementRequestNative(
+	EPuzzleTransformMoverTarget RequestedTarget)
+{
+	return EPuzzleTransformMoverRequestDecision::Accept;
+}
+
+bool APuzzleTransformMover::ShouldProcessReceiverStateNative(bool bReceiverActive)
+{
+	return true;
+}
+
+void APuzzleTransformMover::OnMovementStartedNative()
+{
+}
+
+void APuzzleTransformMover::OnMovementResumedNative()
+{
+}
+
+void APuzzleTransformMover::OnMovementReversedNative()
+{
+}
+
+void APuzzleTransformMover::OnMovementPausedNative()
+{
+}
+
+void APuzzleTransformMover::OnMovementUpdatedNative(float CurrentMovementAlpha, float CurrentEasedAlpha)
+{
+}
+
+void APuzzleTransformMover::OnReachedStartNative()
+{
+}
+
+void APuzzleTransformMover::OnReachedEndNative()
+{
+}
+
+void APuzzleTransformMover::OnMovedComponentChangingNative(
+	USceneComponent* PreviousComponent,
+	USceneComponent* NewComponent)
+{
+}
+
+void APuzzleTransformMover::OnMovedComponentChangedNative(
+	USceneComponent* PreviousComponent,
+	USceneComponent* NewComponent)
+{
+}
+
+void APuzzleTransformMover::OnMoverResetNative()
+{
+}
+
+void APuzzleTransformMover::RefreshMovementTickState()
+{
+	UpdateMovementTickState();
 }
 
 bool APuzzleTransformMover::RequestMoveTowardStart()
@@ -421,6 +553,7 @@ bool APuzzleTransformMover::RequestMoveTowardStart()
 		return false;
 	}
 
+	OnMovementTargetRequestedNative(EPuzzleTransformMoverTarget::Start);
 	if (MoverState == EPuzzleTransformMoverState::AtStart)
 	{
 		return false;
@@ -434,6 +567,11 @@ bool APuzzleTransformMover::RequestMoveTowardStart()
 		HandleMovedComponentInvalidation();
 		return false;
 	}
+	if (EvaluateMovementRequestNative(EPuzzleTransformMoverTarget::Start)
+		!= EPuzzleTransformMoverRequestDecision::Accept)
+	{
+		return false;
+	}
 
 	const bool bWasMoving = IsMoving();
 	MoverState = EPuzzleTransformMoverState::MovingTowardStart;
@@ -443,11 +581,13 @@ bool APuzzleTransformMover::RequestMoveTowardStart()
 
 	if (bWasMoving)
 	{
+		OnMovementReversedNative();
 		HandleMovementReversed();
 		OnMovementReversed.Broadcast(this);
 	}
 	else
 	{
+		OnMovementStartedNative();
 		HandleMovementStarted();
 		OnMovementStarted.Broadcast(this);
 	}
@@ -461,6 +601,7 @@ bool APuzzleTransformMover::RequestMoveTowardEnd()
 		return false;
 	}
 
+	OnMovementTargetRequestedNative(EPuzzleTransformMoverTarget::End);
 	if (MoverState == EPuzzleTransformMoverState::AtEnd)
 	{
 		return false;
@@ -474,6 +615,11 @@ bool APuzzleTransformMover::RequestMoveTowardEnd()
 		HandleMovedComponentInvalidation();
 		return false;
 	}
+	if (EvaluateMovementRequestNative(EPuzzleTransformMoverTarget::End)
+		!= EPuzzleTransformMoverRequestDecision::Accept)
+	{
+		return false;
+	}
 
 	const bool bWasMoving = IsMoving();
 	MoverState = EPuzzleTransformMoverState::MovingTowardEnd;
@@ -483,11 +629,13 @@ bool APuzzleTransformMover::RequestMoveTowardEnd()
 
 	if (bWasMoving)
 	{
+		OnMovementReversedNative();
 		HandleMovementReversed();
 		OnMovementReversed.Broadcast(this);
 	}
 	else
 	{
+		OnMovementStartedNative();
 		HandleMovementStarted();
 		OnMovementStarted.Broadcast(this);
 	}
@@ -503,6 +651,7 @@ bool APuzzleTransformMover::PauseMovement()
 
 	bIsMovementPaused = true;
 	UpdateMovementTickState();
+	OnMovementPausedNative();
 	HandleMovementPaused();
 	OnMovementPaused.Broadcast(this);
 	return true;
@@ -528,6 +677,7 @@ bool APuzzleTransformMover::ResumeMovement()
 	bIsMovementPaused = false;
 	bInvalidMovedComponentWarningEmitted = false;
 	UpdateMovementTickState();
+	OnMovementResumedNative();
 	HandleMovementResumed();
 	OnMovementResumed.Broadcast(this);
 	return true;
@@ -772,6 +922,11 @@ bool APuzzleTransformMover::CanProcessMovementRequest(const TCHAR* OperationName
 
 void APuzzleTransformMover::ProcessReceiverActivated()
 {
+	if (!ShouldProcessReceiverStateNative(true))
+	{
+		return;
+	}
+
 	if (bIsMovementPaused)
 	{
 		ResumeMovement();
@@ -807,6 +962,11 @@ void APuzzleTransformMover::ProcessReceiverActivated()
 
 void APuzzleTransformMover::ProcessReceiverDeactivated()
 {
+	if (!ShouldProcessReceiverStateNative(false))
+	{
+		return;
+	}
+
 	if (IsMoving())
 	{
 		switch (DeactivationBehavior)
@@ -1005,6 +1165,7 @@ void APuzzleTransformMover::AdvanceMovement(float DeltaSeconds)
 		return;
 	}
 
+	OnMovementUpdatedNative(MovementAlpha, EasedAlpha);
 	HandleMovementUpdated(MovementAlpha, EasedAlpha);
 
 	if (MovementAlpha >= 1.0f)
@@ -1090,11 +1251,13 @@ void APuzzleTransformMover::CompleteMovementAtEndpoint(bool bReachedEnd)
 	UpdateMovementTickState();
 	if (bReachedEnd)
 	{
+		OnReachedEndNative();
 		HandleReachedEnd();
 		OnReachedEnd.Broadcast(this);
 	}
 	else
 	{
+		OnReachedStartNative();
 		HandleReachedStart();
 		OnReachedStart.Broadcast(this);
 	}

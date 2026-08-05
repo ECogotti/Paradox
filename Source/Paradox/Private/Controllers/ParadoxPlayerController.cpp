@@ -756,8 +756,13 @@ bool AParadoxPlayerController::IsChronoSpawnSelectionActive() const
 bool AParadoxPlayerController::IsMovementInputAllowed() const
 {
 	const UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
+	const AParadoxCharacter* ParadoxCharacter = Cast<AParadoxCharacter>(GetPawn());
+	const UGameplayActionComponent* Actions = ParadoxCharacter
+		? ParadoxCharacter->GetGameplayActionComponent()
+		: nullptr;
 	return !bRecordedTimeTravelPending
-		&& (!TimeLoop || TimeLoop->IsMovementAllowed());
+		&& (!TimeLoop || TimeLoop->IsMovementAllowed())
+		&& (!Actions || !Actions->IsExternalExecutionLockHeld(GameplayActionTags::Lock_Movement));
 }
 
 bool AParadoxPlayerController::IsTacticalPlanningActive() const

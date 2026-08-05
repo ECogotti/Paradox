@@ -20,6 +20,8 @@ PARADOX_API bool IsParadoxCloneBehaviorDebugEnabled();
 PARADOX_API bool IsParadoxFootstepDebugEnabled();
 /** Global half of the project pressure-plate debug gate. */
 PARADOX_API bool IsParadoxPressurePlateDebugEnabled();
+/** Global half of the vertical-barrier visual debug gate. */
+PARADOX_API bool IsParadoxVerticalBarrierDebugEnabled();
 
 namespace ParadoxGameplayTags
 {
@@ -44,4 +46,14 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_PressurePlate_Press);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_PressurePlate_Release);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cause_PressurePlate_Movement);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Interrupted_ByBarrierLift);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_Open);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_BlockingPassage);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_Moving);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_WaitingForClearance);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_TransportingOccupants);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Raise);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Lower);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Impact);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cause_Barrier_Movement);
 }

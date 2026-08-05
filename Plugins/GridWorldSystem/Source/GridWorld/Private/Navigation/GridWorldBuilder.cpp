@@ -3,8 +3,10 @@
 #include "Navigation/GridWorldBuilder.h"
 
 #include "CollisionQueryParams.h"
+#include "Components/PrimitiveComponent.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
+#include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
 #include "GridWorldModule.h"
 #include "Navigation/GridNavigationBoundsVolume.h"
@@ -138,6 +140,30 @@ bool FGridWorldBuilder::ValidateVolumes(const TArray<AGridNavigationBoundsVolume
 	return OutErrors.IsEmpty();
 }
 
+void FGridWorldBuilder::AddNavigationIrrelevantComponentsToQuery(
+	UWorld& World,
+	FCollisionQueryParams& QueryParams)
+{
+	for (TActorIterator<AActor> ActorIt(&World); ActorIt; ++ActorIt)
+	{
+		AActor* Actor = *ActorIt;
+		if (!IsValid(Actor) || Actor->IsActorBeingDestroyed())
+		{
+			continue;
+		}
+
+		TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+		Actor->GetComponents(PrimitiveComponents);
+		for (const UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+		{
+			if (IsValid(PrimitiveComponent) && !PrimitiveComponent->CanEverAffectNavigation())
+			{
+				QueryParams.AddIgnoredComponent(PrimitiveComponent);
+			}
+		}
+	}
+}
+
 void FGridWorldBuilder::SampleVolume(UWorld& World, const AGridNavigationBoundsVolume& Volume, FGridWorldSnapshot& Snapshot)
 {
 	const FGridTransform GridTransform = Volume.GetGridTransform();
@@ -160,6 +186,10 @@ void FGridWorldBuilder::SampleVolume(UWorld& World, const AGridNavigationBoundsV
 			QueryParams.AddIgnoredActor(*PawnIt);
 		}
 	}
+	// GridWorld uses physical collision queries for topology generation, so mirror Unreal's
+	// navigation-relevance contract explicitly instead of baking opt-out components as floors
+	// or permanent clearance obstacles.
+	AddNavigationIrrelevantComponentsToQuery(World, QueryParams);
 
 	for (int32 Y = MinY; Y <= MaxY; ++Y)
 	{

@@ -47,6 +47,21 @@ public:
 		return RequestMoveTowardEnd();
 	}
 
+	bool PauseForTest()
+	{
+		return PauseMovement();
+	}
+
+#if WITH_EDITOR
+	bool ShouldValidateMoverDataForTest() const
+	{
+		return ShouldValidateMoverData();
+	}
+#endif
+
+	EPuzzleTransformMoverRequestDecision RequestDecision = EPuzzleTransformMoverRequestDecision::Accept;
+	int32 RequestEvaluationCount = 0;
+
 	int32 MovementStartedHookCount = 0;
 	int32 MovementResumedHookCount = 0;
 	int32 MovementReversedHookCount = 0;
@@ -58,6 +73,13 @@ public:
 	int32 MoverResetHookCount = 0;
 
 protected:
+	virtual EPuzzleTransformMoverRequestDecision EvaluateMovementRequestNative(
+		EPuzzleTransformMoverTarget RequestedTarget) override
+	{
+		++RequestEvaluationCount;
+		return RequestDecision;
+	}
+
 	virtual void HandleMovementStarted_Implementation() override
 	{
 		++MovementStartedHookCount;

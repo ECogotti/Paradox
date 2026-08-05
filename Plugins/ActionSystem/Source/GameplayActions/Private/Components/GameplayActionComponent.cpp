@@ -339,6 +339,113 @@ EGameplayActionOperationResult UGameplayActionComponent::InterruptAction(
 	return EGameplayActionOperationResult::Succeeded;
 }
 
+EGameplayActionOperationResult UGameplayActionComponent::AcquireExternalExecutionLocks(
+	UObject* LockSource,
+	const FGameplayTagContainer& ExecutionLocks,
+	FGameplayTag InterruptionReason)
+{
+	if (!IsInGameThread() || !IsValid(LockSource) || ExecutionLocks.IsEmpty())
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+	if (bInInitialJournalTransaction || bInValidationCallback || bInInitCallback)
+	{
+		return EGameplayActionOperationResult::RejectedReentrant;
+	}
+	if (!bAcceptingSubmissions || bShuttingDown)
+	{
+		return EGameplayActionOperationResult::NotAccepting;
+	}
+	for (const FGameplayTag Lock : ExecutionLocks)
+	{
+		if (!Lock.IsValid() || !Lock.MatchesTag(GameplayActionTags::Lock_Root))
+		{
+			GAMEPLAYACTIONS_LOG_WARNING(
+				TEXT("%s rejected external lock '%s' from '%s' because it is outside GameplayAction.Lock."),
+				*GetNameSafe(this), *Lock.ToString(), *GetNameSafe(LockSource));
+			return EGameplayActionOperationResult::InvalidState;
+		}
+	}
+
+	PruneInvalidExternalExecutionLockSources();
+	ExternalExecutionLocksBySource.FindOrAdd(LockSource) = ExecutionLocks;
+	const FGameplayTag EffectiveReason = InterruptionReason.IsValid()
+		? InterruptionReason
+		: GameplayActionTags::Result_Interrupted_External;
+
+	TArray<FGameplayActionHandle> ConflictingHandles;
+	ActionsByHandle.GetKeys(ConflictingHandles);
+	ConflictingHandles.RemoveAll([this, &ExecutionLocks](const FGameplayActionHandle Handle)
+	{
+		const UGameplayActionInstance* Instance = GetActionInstance(Handle);
+		return !Instance || !IsRuntimeState(Instance->State)
+			|| Instance->State == EGameplayActionState::Ending
+			|| !Instance->ExecutionLocks.HasAnyExact(ExecutionLocks);
+	});
+	SortHandlesBySchedulerOrder(ConflictingHandles);
+	for (const FGameplayActionHandle Handle : ConflictingHandles)
+	{
+		if (UGameplayActionInstance* Instance = GetActionInstance(Handle))
+		{
+			FinishActionInternal(
+				*Instance,
+				EGameplayActionState::Interrupted,
+				EffectiveReason,
+				FString::Printf(TEXT("Interrupted by external lock source '%s'."), *GetNameSafe(LockSource)),
+				false);
+		}
+	}
+
+	EvaluateQueuedActions();
+	FlushEventQueue();
+	return EGameplayActionOperationResult::Succeeded;
+}
+
+EGameplayActionOperationResult UGameplayActionComponent::ReleaseExternalExecutionLocks(UObject* LockSource)
+{
+	if (!IsInGameThread() || !LockSource)
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+	if (bInInitialJournalTransaction || bInValidationCallback || bInInitCallback)
+	{
+		return EGameplayActionOperationResult::RejectedReentrant;
+	}
+
+	PruneInvalidExternalExecutionLockSources();
+	if (ExternalExecutionLocksBySource.Remove(LockSource) == 0)
+	{
+		return EGameplayActionOperationResult::HandleNotFound;
+	}
+	if (!bShuttingDown)
+	{
+		EvaluateQueuedActions();
+	}
+	FlushEventQueue();
+	return EGameplayActionOperationResult::Succeeded;
+}
+
+bool UGameplayActionComponent::IsExternalExecutionLockHeld(const FGameplayTag ExecutionLock) const
+{
+	if (!ExecutionLock.IsValid())
+	{
+		return false;
+	}
+	for (const TPair<TWeakObjectPtr<UObject>, FGameplayTagContainer>& Entry : ExternalExecutionLocksBySource)
+	{
+		if (Entry.Key.IsValid() && Entry.Value.HasTagExact(ExecutionLock))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+bool UGameplayActionComponent::HasExternalExecutionLocksFrom(UObject* LockSource) const
+{
+	return IsValid(LockSource) && ExternalExecutionLocksBySource.Contains(LockSource);
+}
+
 int32 UGameplayActionComponent::AbortAllActions(FGameplayTag ReasonTag)
 {
 	if (!IsInGameThread())
@@ -637,6 +744,7 @@ void UGameplayActionComponent::BeginDestroy()
 	ActionsByHandle.Reset();
 	ActiveHandles.Reset();
 	QueuedHandles.Reset();
+	ExternalExecutionLocksBySource.Reset();
 	Super::BeginDestroy();
 }
 
@@ -707,6 +815,13 @@ FGameplayActionSubmissionResult UGameplayActionComponent::EvaluateSchedule(
 	TArray<FGameplayActionHandle>& OutConflicts) const
 {
 	FGameplayActionSubmissionResult Result;
+	if (HasExternalExecutionLockConflict(Incoming.ExecutionLocks))
+	{
+		return MakeRejectedResult(
+			EGameplayActionSubmissionStatus::RejectedBlocked,
+			GameplayActionTags::Result_Failure_CannotStart,
+			TEXT("One or more execution locks are retained by an external system authority."));
+	}
 	if (bActionsPaused)
 	{
 		Result.Status = EGameplayActionSubmissionStatus::AcceptedQueued;
@@ -729,6 +844,30 @@ FGameplayActionSubmissionResult UGameplayActionComponent::EvaluateSchedule(
 
 	return MakeRejectedResult(EGameplayActionSubmissionStatus::RejectedBlocked,
 		GameplayActionTags::Result_Failure_CannotStart, TEXT("Execution locks are held by actions that cannot be preempted."));
+}
+
+bool UGameplayActionComponent::HasExternalExecutionLockConflict(
+	const FGameplayTagContainer& ExecutionLocks) const
+{
+	for (const TPair<TWeakObjectPtr<UObject>, FGameplayTagContainer>& Entry : ExternalExecutionLocksBySource)
+	{
+		if (Entry.Key.IsValid() && Entry.Value.HasAnyExact(ExecutionLocks))
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+void UGameplayActionComponent::PruneInvalidExternalExecutionLockSources()
+{
+	for (auto It = ExternalExecutionLocksBySource.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid())
+		{
+			It.RemoveCurrent();
+		}
+	}
 }
 
 TArray<FGameplayActionHandle> UGameplayActionComponent::FindConflicts(const UGameplayActionInstance& Incoming) const
@@ -1224,6 +1363,7 @@ void UGameplayActionComponent::ShutdownActions(const FGameplayTag ReasonTag)
 	ActionsByHandle.Reset();
 	ActiveHandles.Reset();
 	QueuedHandles.Reset();
+	ExternalExecutionLocksBySource.Reset();
 }
 
 void UGameplayActionComponent::ReleaseInstanceAfterEndedEvent(const FGameplayActionHandle Handle)

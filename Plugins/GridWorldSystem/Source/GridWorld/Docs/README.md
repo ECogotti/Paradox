@@ -30,13 +30,22 @@ Zero is always invalid.
 
 Adjacency is slope-aware and deterministic. The normals at both endpoints predict the continuous height change along the horizontal segment; their average is subtracted from the real world-Z delta. `MaxStepHeight` and `MaxDropHeight` apply only to the remaining discontinuity. This connects continuous ramps even when their per-cell rise exceeds the step limit while preserving actual stairs and ledges. Adjacency never crosses a `GridId` without an explicit link.
 
-Collision queries ignore every `APawn` in the world. Pawns consume navigation and may move at runtime, so baking them into floor or clearance sampling would invalidate their own start cells. Dynamic blocking and reservation remain the responsibility of occupancy/modifier overlays.
+Collision queries ignore every `APawn` in the world. Pawns consume navigation and may move at runtime, so baking them into floor or clearance sampling would invalidate their own start cells. They also ignore every `UPrimitiveComponent` whose **Can Ever Affect Navigation** flag is disabled, for both surface and clearance queries. Gameplay collision remains active, but such a component cannot create a floating cell or a permanent hole in the base topology. Dynamic blocking and reservation remain the responsibility of occupancy/modifier overlays.
 
 Dirty navigation areas map to 16 x 16 chunks with a one-chunk horizontal halo. Navigation-bounds changes and explicit builds always apply. Native geometry dirty areas apply only to intersecting regions whose bounds volume has **Auto Rebuild On Geometry Changes** enabled; the default is enabled. This covers navigation-relevant geometry addition, removal, Transform, and collision changes when the Editor's global **Update Navigation Automatically** preference is active. A candidate topology is validated before dirty chunks are merged, so a failed build preserves the published snapshot.
 
 `AGridNavigationData` is configured with `RuntimeGeneration = Dynamic`, so the same native dirty-area path also rebuilds Game/PIE topology for Movable geometry. The moved component must be navigation-relevant, block the bounds collision profile, intersect an enabled `GridNavigationBoundsVolume`, and that volume must allow automatic geometry rebuilds. A platform contributes cells only after generation has sampled its current pose; no cell frame follows it continuously while it moves. Prefer `UGridNavigationModifierComponent` when an authored obstacle only needs to change existing cells and does not introduce a new walkable surface.
 
 Successful editor topology publication and clear operations mark the package containing `AGridNavigationData` dirty. Saving that package persists the versioned base snapshot across editor restarts and level unload/reload. Runtime overlays, occupancy, and reservations never dirty or serialize generated topology.
+
+`UGridNavigationModifierComponent` auto-activates by default. In Game/PIE its ordinary
+`UActorComponent` active state decides whether it is composed. Editor worlds do not always execute
+the gameplay activation phase, so a registered modifier with **Auto Activate** enabled participates
+in the editor overlay even while `IsActive()` remains false. This keeps **Show Navigation** faithful
+to construction-time blocker state without simulating Begin Play. Disable **Auto Activate** to opt a
+placed modifier out of the editor overlay as well. `Activate` and `Deactivate` both publish an
+overlay refresh when the effective component state changes. This closes the initialization-order
+case where runtime topology exists before an auto-activating blocker enters its active state.
 
 ## Query behavior
 
@@ -328,7 +337,9 @@ The query filter resolves every `AController` type, not only AI controllers, and
 
 - No cells: confirm the floor blocks the selected collision profile and the capsule has clearance.
 - Duplicate cells inside a thick or inclined platform: rebuild Grid World with the current plugin version. Only non-penetrating floor hits may publish layers; real vertically separated floors remain supported.
-- A low step still removes a cell: verify both GridWorld **Max Step Height** and the Character Movement value accept that rise, then rebuild and save format version 7 data. Full-height collision or insufficient headroom is intentionally still blocking.
+- A low step still removes a cell: verify both GridWorld **Max Step Height** and the Character Movement value accept that rise, then rebuild and save format version 8 data. Full-height collision or insufficient headroom is intentionally still blocking.
+- A modifier-controlled door leaves floating cells or a permanent hole: disable **Can Ever Affect Navigation** on the moving collision, rebuild Grid World once, and save the level. The modifier then owns only the runtime blocked/unblocked state of the existing floor cells.
+- A closed modifier-controlled door still shows walkable cells: keep **Auto Activate** enabled on its modifier and confirm the owner sets `bBlockCells` through `SetBlockingEnabled`. The editor preview composes that state without requiring Begin Play.
 - A generated ramp is disconnected: verify `Max Slope Degrees` accepts its floor normal. Continuous ramp rise is slope-aware; `Max Step Height` applies only to residual discontinuities.
 - A path exists but the Character stops on a ramp: set Character Movement **Walkable Floor Angle** at least as high as the path slope reported by `LogGridWorld`. GridWorld intentionally does not override it.
 - Build rejected: run **Build > Grid World > Validate Grid World** and inspect `LogGridWorld`; scale components must be finite and non-zero.
@@ -352,4 +363,4 @@ The query filter resolves every `AController` type, not only AI controllers, and
 - Runtime presentation is not visible or uses Unreal's default material: call **Enable Visualization** in a Game/PIE world. Show Navigation and the debug CVar do not control gameplay presentation. Verify the selected `Grid Cell Visual Style` has both mesh and material assigned, assign the material on the style rather than only on the mesh, and enable **Used with Instanced Static Meshes** on custom materials. Blocked cells are intentionally transparent in the default style.
 - Pointer does not find a cell: confirm world geometry blocks the component's trace channel. The runtime HISM deliberately has no collision; pointer projection starts from the geometry hit, not from the visual plane.
 - Stale handle/node ref: resolve the persistent `FGridCellId` again after a topology rebuild.
-- Serialized version 2–6 rejected after upgrading: rebuild Grid World once and save the level. Version 7 is required for world-anchored coordinates, step-adjusted clearance and penetration-safe surface sampling.
+- Serialized version 2–7 rejected after upgrading: rebuild Grid World once and save the level. Version 8 is required for world-anchored coordinates, step-adjusted clearance, penetration-safe surface sampling, and navigation-relevance filtering.

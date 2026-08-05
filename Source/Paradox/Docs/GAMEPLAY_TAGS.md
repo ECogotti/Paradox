@@ -29,6 +29,16 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `Event_Noise_PressurePlate_Press` | `PerceptionKnowledge.Event.Noise.PressurePlate.Press` |
 | `Event_Noise_PressurePlate_Release` | `PerceptionKnowledge.Event.Noise.PressurePlate.Release` |
 | `Cause_PressurePlate_Movement` | `PerceptionKnowledge.Cause.PressurePlate.Movement` |
+| `Result_Interrupted_ByBarrierLift` | `GameplayAction.Result.Interrupted.ByBarrierLift` |
+| `State_Barrier_Open` | `Barrier.State.Open` |
+| `State_Barrier_BlockingPassage` | `Barrier.State.BlockingPassage` |
+| `State_Barrier_Moving` | `Barrier.State.Moving` |
+| `State_Barrier_WaitingForClearance` | `Barrier.State.WaitingForClearance` |
+| `State_Barrier_TransportingOccupants` | `Barrier.State.TransportingOccupants` |
+| `Event_Noise_Barrier_Raise` | `PerceptionKnowledge.Event.Noise.Barrier.Raise` |
+| `Event_Noise_Barrier_Lower` | `PerceptionKnowledge.Event.Noise.Barrier.Lower` |
+| `Event_Noise_Barrier_Impact` | `PerceptionKnowledge.Event.Noise.Barrier.Impact` |
+| `Cause_Barrier_Movement` | `PerceptionKnowledge.Cause.Barrier.Movement` |
 
 ## PuzzleSystem plugin
 
@@ -55,3 +65,4 @@ existing serialized assets while all current declarations and new selections use
 
 Pressure Plate occupant filters are not Gameplay Tags. `RequiredOccupantActorTags` compares ordinary
 `AActor::Tags` (`FName`) configured under **Actor → Tags**, so those names have no central registry.
+`AParadoxVerticalBarrier::RequiredOccupantActorTags` uses the same ordinary Actor Tag convention.

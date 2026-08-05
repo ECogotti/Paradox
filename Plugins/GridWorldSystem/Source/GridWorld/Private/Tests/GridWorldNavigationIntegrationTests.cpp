@@ -547,6 +547,91 @@ bool FGridSurfaceSamplingTest::RunTest(const FString& Parameters)
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGridNavigationIrrelevantGeometryTest,
+	"GridWorld.Navigation.IgnoresNavigationIrrelevantGeometry",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGridNavigationIrrelevantGeometryTest::RunTest(const FString& Parameters)
+{
+	UWorld* World = UWorld::CreateWorld(
+		EWorldType::Game,
+		false,
+		MakeUniqueObjectName(GetTransientPackage(), UWorld::StaticClass(), TEXT("GridWorldNavigationIrrelevantGeometryTest")));
+	if (!TestNotNull(TEXT("Transient navigation-relevance world"), World))
+	{
+		return false;
+	}
+
+	auto AddBlockingBox = [World](const FVector& Location, const FVector& Extent, bool bCanAffectNavigation)
+	{
+		AActor* Actor = World->SpawnActor<AActor>();
+		if (Actor == nullptr)
+		{
+			return static_cast<UBoxComponent*>(nullptr);
+		}
+		UBoxComponent* Box = NewObject<UBoxComponent>(Actor);
+		Actor->AddInstanceComponent(Box);
+		Actor->SetRootComponent(Box);
+		Box->SetBoxExtent(Extent);
+		Box->SetCollisionProfileName(FName(TEXT("BlockAll")));
+		Box->SetCanEverAffectNavigation(bCanAffectNavigation);
+		Box->RegisterComponent();
+		Actor->SetActorLocation(Location);
+		return Box;
+	};
+
+	UBoxComponent* Floor = AddBlockingBox(FVector(0.0, 0.0, -10.0), FVector(100.0, 100.0, 10.0), true);
+	UBoxComponent* MovableBarrier = AddBlockingBox(FVector(0.0, 0.0, 80.0), FVector(40.0, 40.0, 40.0), false);
+	if (!TestNotNull(TEXT("Navigation-relevant floor"), Floor)
+		|| !TestNotNull(TEXT("Navigation-irrelevant colliding barrier"), MovableBarrier))
+	{
+		World->DestroyWorld(false);
+		return false;
+	}
+
+	FGridTransform GridTransform;
+	GridTransform.Origin = FVector::ZeroVector;
+	GridTransform.Rotation = FRotator::ZeroRotator;
+	GridTransform.CellSize = FVector(100.0, 100.0, 50.0);
+	FCollisionQueryParams QueryParams(SCENE_QUERY_STAT(GridWorldNavigationIrrelevantGeometryTest), false);
+	QueryParams.bFindInitialOverlaps = true;
+	FGridWorldBuilder::AddNavigationIrrelevantComponentsToQuery(*World, QueryParams);
+
+	TArray<FHitResult> Hits;
+	FGridWorldBuilder::GatherSurfaceHits(
+		*World,
+		GridTransform,
+		0.0,
+		0.0,
+		200.0,
+		-50.0,
+		50.0,
+		45.0,
+		42.0,
+		FName(TEXT("Pawn")),
+		QueryParams,
+		Hits);
+	if (TestEqual(TEXT("Only navigation-relevant geometry contributes a surface"), Hits.Num(), 1))
+	{
+		TestTrue(TEXT("The retained surface is the authored floor"), Hits[0].GetComponent() == Floor);
+	}
+	TestTrue(
+		TEXT("Navigation-irrelevant collision does not remove floor clearance"),
+		FGridWorldBuilder::HasAgentClearance(
+			*World,
+			FVector::ZeroVector,
+			1.0,
+			42.0,
+			96.0,
+			45.0,
+			FName(TEXT("Pawn")),
+			QueryParams));
+
+	World->DestroyWorld(false);
+	return true;
+}
+
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridMoveToCellApiTest, "GridWorld.Navigation.MoveToCellApi", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 {
@@ -1809,7 +1894,7 @@ bool FGridDirectVelocityTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridSerializationMigrationTest, "GridWorld.Navigation.SerializationV7", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGridSerializationMigrationTest, "GridWorld.Navigation.SerializationV8", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 {
 	FGridWorldSnapshot SourceSnapshot;
@@ -1827,31 +1912,31 @@ bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 	SourceCell.FloorNormal = FVector3f(FVector(-0.5, 0.0, FMath::Sqrt(0.75)).GetSafeNormal());
 	SourceCell.bHasAuthoredWorldCenter = true;
 
-	TArray<uint8> Version7Bytes;
+	TArray<uint8> Version8Bytes;
 	{
-		FMemoryWriter Writer(Version7Bytes);
-		UE::GridWorld::Serialization::SerializeSnapshot(Writer, SourceSnapshot, 7);
+		FMemoryWriter Writer(Version8Bytes);
+		UE::GridWorld::Serialization::SerializeSnapshot(Writer, SourceSnapshot, 8);
 	}
 	FGridWorldSnapshot ReloadedSnapshot;
 	{
-		FMemoryReader Reader(Version7Bytes);
-		UE::GridWorld::Serialization::SerializeSnapshot(Reader, ReloadedSnapshot, 7);
+		FMemoryReader Reader(Version8Bytes);
+		UE::GridWorld::Serialization::SerializeSnapshot(Reader, ReloadedSnapshot, 8);
 	}
 	const FGridRegionData* ReloadedRegion = ReloadedSnapshot.FindRegion(SourceSnapshot.GridId);
-	if (TestNotNull(TEXT("Version 7 region loads"), ReloadedRegion))
+	if (TestNotNull(TEXT("Version 8 region loads"), ReloadedRegion))
 	{
-		TestEqual(TEXT("Version 7 preserves precise path style"), ReloadedRegion->PathFollowingStyle, EGridPathFollowingStyle::CellByCell);
-		TestEqual(TEXT("Version 7 preserves Direct Velocity"), ReloadedRegion->PathDriveMode, EGridPathDriveMode::DirectVelocity);
-		TestTrue(TEXT("Version 7 preserves accelerated final approach"), ReloadedRegion->bUseAcceleratedFinalApproach);
+		TestEqual(TEXT("Version 8 preserves precise path style"), ReloadedRegion->PathFollowingStyle, EGridPathFollowingStyle::CellByCell);
+		TestEqual(TEXT("Version 8 preserves Direct Velocity"), ReloadedRegion->PathDriveMode, EGridPathDriveMode::DirectVelocity);
+		TestTrue(TEXT("Version 8 preserves accelerated final approach"), ReloadedRegion->bUseAcceleratedFinalApproach);
 	}
-	if (TestEqual(TEXT("Version 7 preserves cells"), ReloadedSnapshot.Cells.Num(), 1))
+	if (TestEqual(TEXT("Version 8 preserves cells"), ReloadedSnapshot.Cells.Num(), 1))
 	{
 		TestTrue(
-			TEXT("Version 7 preserves floor normal"),
+			TEXT("Version 8 preserves floor normal"),
 			FVector(ReloadedSnapshot.Cells[0].FloorNormal).Equals(FVector(SourceCell.FloorNormal), UE_KINDA_SMALL_NUMBER));
 	}
 
-	for (int32 LegacyVersion = 2; LegacyVersion <= 6; ++LegacyVersion)
+	for (int32 LegacyVersion = 2; LegacyVersion <= 7; ++LegacyVersion)
 	{
 		TArray<uint8> LegacyBytes;
 		{
@@ -1869,8 +1954,8 @@ bool FGridSerializationMigrationTest::RunTest(const FString& Parameters)
 		TestTrue(*FString::Printf(TEXT("Version %d is recognized for safe consumption"), LegacyVersion), UE::GridWorld::Serialization::CanConsumeVersion(LegacyVersion));
 		TestFalse(*FString::Printf(TEXT("Version %d cannot be published without rebuild"), LegacyVersion), UE::GridWorld::Serialization::CanPublishVersion(LegacyVersion));
 	}
-	TestTrue(TEXT("Version 7 may be published"), UE::GridWorld::Serialization::CanPublishVersion(7));
-	TestFalse(TEXT("Unknown future version cannot be consumed"), UE::GridWorld::Serialization::CanConsumeVersion(8));
+	TestTrue(TEXT("Version 8 may be published"), UE::GridWorld::Serialization::CanPublishVersion(8));
+	TestFalse(TEXT("Unknown future version cannot be consumed"), UE::GridWorld::Serialization::CanConsumeVersion(9));
 	return true;
 }
 
