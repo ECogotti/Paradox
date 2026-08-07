@@ -1,5 +1,6 @@
 #pragma once
 
+#include "AlphaBlend.h"
 #include "CoreMinimal.h"
 #include "ParadoxCameraTypes.generated.h"
 
@@ -32,6 +33,18 @@ struct PARADOX_API FParadoxCameraConfiguration
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Paradox|Camera", meta = (ClampMin = "0.0", Units = "s"))
 	float RecenterDuration = 0.3f;
+
+	/** Duration of one discrete 90-degree yaw rotation. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Paradox|Camera", meta = (ClampMin = "0.01", Units = "s"))
+	float RotationDuration = 0.3f;
+
+	/** Non-overshooting easing used while moving between adjacent quarter turns. */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadWrite,
+		Category = "Paradox|Camera",
+		meta = (InvalidEnumValues = "Custom"))
+	EAlphaBlendOption RotationEasing = EAlphaBlendOption::HermiteCubic;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Paradox|Camera", meta = (ClampMin = "0.0", Units = "cm"))
 	float BoundaryMargin = 100.0f;
@@ -68,4 +81,3 @@ struct PARADOX_API FParadoxCameraOperationResult
 
 	bool IsSuccess() const { return Status == EParadoxCameraOperationStatus::Succeeded; }
 };
-

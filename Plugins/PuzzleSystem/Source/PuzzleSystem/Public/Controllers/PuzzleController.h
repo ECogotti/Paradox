@@ -12,6 +12,33 @@ class UPuzzleReceiverComponent;
 class UPuzzleSignalPayload;
 class UBillboardComponent;
 
+/** Designer-facing gate input resolved inside one primary input binding only. */
+USTRUCT(BlueprintType)
+struct PUZZLESYSTEM_API FPuzzleEmitterGateBinding
+{
+	GENERATED_BODY()
+
+	/** Local alias used by this primary binding's gate conditions. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate")
+	FName InputId;
+
+	/** Actor that owns the emitter component publishing this gate input. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate")
+	TObjectPtr<AActor> EmitterActor = nullptr;
+
+	/** When enabled, resolves the emitter by `EmitterComponentName`; otherwise uses the first available emitter. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate")
+	bool bSpecifyEmitterComponent = false;
+
+	/** Emitter component name used only when `bSpecifyEmitterComponent` is enabled. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate", meta = (EditCondition = "bSpecifyEmitterComponent", EditConditionHides))
+	FName EmitterComponentName;
+
+	/** Gameplay tag identifying the signal channel on the resolved emitter. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate")
+	FGameplayTag SignalTag;
+};
+
 /** Designer-facing binding from one external emitter signal to one controller-local input ID. */
 USTRUCT(BlueprintType)
 struct PUZZLESYSTEM_API FPuzzleInputBinding
@@ -37,6 +64,14 @@ struct PUZZLESYSTEM_API FPuzzleInputBinding
 	/** Gameplay tag identifying the signal channel on the resolved emitter. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle")
 	FGameplayTag SignalTag;
+
+	/** Gate-local emitter inputs. Ignored unless at least one Gate Condition is also configured. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Puzzle|Gate", meta = (TitleProperty = "InputId"))
+	TArray<FPuzzleEmitterGateBinding> EmitterGates;
+
+	/** Conditions evaluated with AND semantics against this binding's gate-local inputs. */
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Instanced, Category = "Puzzle|Gate", meta = (EditInline, AllowEditInlineCustomization, MaxPropertyDepth = "8"))
+	TArray<TObjectPtr<UPuzzleCondition>> GateConditions;
 };
 
 /** Designer-facing binding to one receiver component controlled by this controller. */
@@ -95,6 +130,9 @@ public:
 	virtual bool ShouldTickIfViewportsOnly() const override;
 
 #if WITH_EDITOR
+	/** Validates primary bindings, enabled gates, condition ownership, and Receiver wiring. */
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+
 	/**
 	 * Keeps debug tick state in sync when designers toggle properties in the Details panel.
 	 *
@@ -108,7 +146,7 @@ public:
 	TObjectPtr<UBillboardComponent> PuzzleBillboardComponent = nullptr;
 
 	/** Input wiring from external emitter signals to local condition input IDs. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Inputs")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Inputs", meta = (TitleProperty = "InputId"))
 	TArray<FPuzzleInputBinding> InputBindings;
 
 	/** Root condition object evaluated to decide whether this controller requests activation. */
@@ -152,6 +190,29 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle|Controller")
 	bool TryGetInputState(FName InputId, FPuzzleSignalState& OutInputState) const;
+
+	/** Explicitly reads the effective main-input state, independent of condition evaluation scope. */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle|Controller")
+	bool TryGetEffectiveInputState(FName InputId, FPuzzleSignalState& OutInputState) const;
+
+	/** Reads the source state before gate admission. Intentionally C++-only to protect Blueprint condition invariants. */
+	bool TryGetRawInputState(FName InputId, FPuzzleSignalState& OutInputState) const;
+
+	/** Reads one gate-local signal state for diagnostics and Blueprint tooling. */
+	UFUNCTION(BlueprintCallable, Category = "Puzzle|Controller|Gate")
+	bool TryGetGateInputState(FName PrimaryInputId, FName GateInputId, FPuzzleSignalState& OutInputState) const;
+
+	/** Returns true when either gate array is empty and the primary signal therefore bypasses gating. */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Controller|Gate")
+	bool IsInputGateBypassed(FName PrimaryInputId) const;
+
+	/** Returns true for a bypassed gate or for an enabled gate with valid runtime inputs. */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Controller|Gate")
+	bool IsInputGateValid(FName PrimaryInputId) const;
+
+	/** Returns true for a bypassed gate or when every enabled top-level gate condition passes. */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Controller|Gate")
+	bool DoesInputGateAllowSignal(FName PrimaryInputId) const;
 
 	/**
 	 * Checks whether a local input currently has valid data.
@@ -222,9 +283,21 @@ public:
 	bool HasConfiguredInput(FName InputId) const;
 
 private:
+	/** Runtime-resolved form of one gate-local emitter input. */
+	struct FResolvedGateInputBinding
+	{
+		FName InputId;
+		TWeakObjectPtr<UPuzzleEmitterComponent> Emitter;
+		FGameplayTag SignalTag;
+		FPuzzleSignalState State;
+	};
+
 	/** Runtime-resolved form of an input binding after component lookup succeeds. */
 	struct FResolvedInputBinding
 	{
+		/** Index into the serialized `InputBindings` array. */
+		int32 ConfigurationIndex = INDEX_NONE;
+
 		/** Local input alias written to the runtime input cache. */
 		FName InputId;
 
@@ -233,6 +306,54 @@ private:
 
 		/** Signal channel observed on the emitter. */
 		FGameplayTag SignalTag;
+
+		/** Latest source state before gate admission. */
+		FPuzzleSignalState RawState;
+
+		/** Resolved and cached gate-local inputs. Empty when gate evaluation is bypassed. */
+		TArray<FResolvedGateInputBinding> GateInputs;
+
+		/** Gate-local IDs available to conditions in this binding's evaluation scope. */
+		TSet<FName> ConfiguredGateInputIds;
+
+		/** Last result of each top-level gate condition, in authored order. */
+		TArray<bool> LastGateConditionResults;
+
+		/** True only when both gate arrays were configured. */
+		bool bGateEnabled = false;
+
+		/** Runtime validity of every required gate input. Bypassed gates are valid. */
+		bool bGateValid = true;
+
+		/** Aggregated AND result. Bypassed gates always allow the primary signal. */
+		bool bGateAllowsSignal = true;
+
+		/** True after the first gated effective-state signature has been built. */
+		bool bHasEffectiveSignature = false;
+
+		/** Gate-local revision snapshot used to identify meaningful effective updates. */
+		TArray<int64> LastGateRevisions;
+
+		/** Raw revision last admitted through an open gate. */
+		int64 LastAdmittedRawRevision = 0;
+
+		/** Monotonic Controller-local revision used only by enabled gates. */
+		int64 EffectiveRevision = 0;
+	};
+
+	/** One cached destination updated by an emitter signal route. */
+	struct FSignalRouteDestination
+	{
+		int32 PrimaryBindingIndex = INDEX_NONE;
+		int32 GateBindingIndex = INDEX_NONE;
+
+		bool IsPrimary() const { return GateBindingIndex == INDEX_NONE; }
+	};
+
+	/** Routes signal tags from one unique emitter to every affected primary or gate cache. */
+	struct FEmitterSignalRoutes
+	{
+		TMap<FGameplayTag, TArray<FSignalRouteDestination>> DestinationsBySignal;
 	};
 
 	/**
@@ -262,6 +383,12 @@ private:
 	/** Receiver components that receive this controller's output request. */
 	TArray<TWeakObjectPtr<UPuzzleReceiverComponent>> ResolvedReceivers;
 
+	/** Event routing shared by primary and gate inputs, keyed by unique emitter component. */
+	TMap<TWeakObjectPtr<UPuzzleEmitterComponent>, FEmitterSignalRoutes> SignalRoutes;
+
+	/** Fast lookup from a validated primary InputId to its resolved runtime binding. */
+	TMap<FName, int32> ResolvedInputIndices;
+
 	/** Latest known state for each configured local input ID. */
 	TMap<FName, FPuzzleSignalState> RuntimeInputCache;
 
@@ -286,6 +413,9 @@ private:
 	/** Requests one collapsed follow-up evaluation after a reentrant signal update. */
 	bool bReevaluationRequested = false;
 
+	/** Resolved primary binding whose gate-local cache is currently visible to a condition. */
+	int32 ActiveGateEvaluationBindingIndex = INDEX_NONE;
+
 	/**
 	 * Validates designer configuration and resolves actor bindings to components.
 	 *
@@ -294,13 +424,21 @@ private:
 	bool ValidateAndResolveConfiguration();
 
 	/**
-	 * Resolves one input binding to the first emitter or the explicitly named emitter.
+	 * Resolves an Actor/component selection to the first emitter or the explicitly named emitter.
 	 *
-	 * @param Binding Designer-facing binding to resolve.
+	 * @param EmitterActor Actor expected to own the component.
+	 * @param bSpecifyEmitterComponent Whether component-name selection is enabled.
+	 * @param EmitterComponentName Explicit component name when selection is enabled.
+	 * @param BindingContext Human-readable binding identity used in diagnostics.
 	 * @param OutEmitter Receives the resolved component on success.
 	 * @return True when a valid emitter was resolved.
 	 */
-	bool ResolveEmitterComponent(const FPuzzleInputBinding& Binding, UPuzzleEmitterComponent*& OutEmitter) const;
+	bool ResolveEmitterComponent(
+		AActor* EmitterActor,
+		bool bSpecifyEmitterComponent,
+		FName EmitterComponentName,
+		const FString& BindingContext,
+		UPuzzleEmitterComponent*& OutEmitter) const;
 
 	/**
 	 * Resolves one receiver binding to the first receiver or the explicitly named receiver.
@@ -311,14 +449,26 @@ private:
 	 */
 	bool ResolveReceiverComponent(const FPuzzleReceiverBinding& Binding, UPuzzleReceiverComponent*& OutReceiver) const;
 
-	/** Subscribes to every unique resolved emitter. */
+	/** Builds emitter/signal routes and subscribes once to every unique resolved emitter. */
 	void BindEmitters();
 
 	/** Removes this controller's native delegate bindings from every bound emitter. */
 	void UnbindEmitters();
 
-	/** Initializes the runtime input cache from each emitter's current state. */
+	/** Initializes raw primary and gate caches, then builds every effective input state. */
 	void InitializeInputCache();
+
+	/** Re-evaluates one enabled gate and rebuilds its primary input's effective cached state. */
+	void RebuildEffectiveInput(int32 PrimaryBindingIndex);
+
+	/** Evaluates all top-level conditions for one valid enabled gate under a scoped local namespace. */
+	bool EvaluateGateConditions(int32 PrimaryBindingIndex);
+
+	/** Returns the resolved runtime binding for one primary ID, or null when unavailable. */
+	const FResolvedInputBinding* FindResolvedInput(FName PrimaryInputId) const;
+
+	/** Returns the input cache currently visible to conditions according to evaluation scope. */
+	const FPuzzleSignalState* FindConditionInputState(FName InputId) const;
 
 	/**
 	 * Sends the controller's result to every resolved receiver.
@@ -328,7 +478,7 @@ private:
 	void ApplyEvaluationResultToReceivers(bool bResult);
 
 	/**
-	 * Marks cached inputs from one emitter invalid.
+	 * Marks every routed primary and gate destination from one emitter invalid.
 	 *
 	 * @param Emitter Emitter whose bound inputs should fail closed.
 	 */

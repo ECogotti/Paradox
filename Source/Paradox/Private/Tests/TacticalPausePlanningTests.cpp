@@ -6,6 +6,9 @@
 #include "Components/TacticalPauseActionQueueComponent.h"
 #include "Characters/ParadoxPlayerCharacter.h"
 #include "Controllers/ParadoxPlayerController.h"
+#include "AI/GridWorldPathFollowingComponent.h"
+#include "Interaction/GridCellPointerComponent.h"
+#include "Prediction/GridPathPreviewComponent.h"
 #include "UObject/UnrealType.h"
 
 /** Narrow friend accessor for exercising the adapter's ownership transition without a real World. */
@@ -62,6 +65,26 @@ bool FParadoxTacticalPlanningDefaultsTest::RunTest(const FString& Parameters)
 	{
 		TestTrue(TEXT("Player Controller tick is allowed during world pause"),
 			Controller->PrimaryActorTick.bTickEvenWhenPaused);
+		TestNull(
+			TEXT("Controller does not duplicate the path follower's active-presentation master setting"),
+			FindFProperty<FProperty>(AParadoxPlayerController::StaticClass(), TEXT("bPresentActivePath")));
+		TestNull(
+			TEXT("Controller does not duplicate the path follower's cell-renderer setting"),
+			FindFProperty<FProperty>(AParadoxPlayerController::StaticClass(), TEXT("bPresentActivePathAsCells")));
+		TestNull(
+			TEXT("Controller does not duplicate the path follower's line-renderer setting"),
+			FindFProperty<FProperty>(AParadoxPlayerController::StaticClass(), TEXT("bPresentActivePathAsLine")));
+		TestNotNull(
+			TEXT("Path follower remains the active-presentation configuration owner"),
+			Controller->FindComponentByClass<UGridWorldPathFollowingComponent>());
+		const UGridCellPointerComponent* Pointer =
+			Controller->FindComponentByClass<UGridCellPointerComponent>();
+		if (TestNotNull(TEXT("Controller owns the GridWorld cell pointer"), Pointer))
+		{
+			TestFalse(
+				TEXT("Paradox pointer does not add an independent cell-hover visualization"),
+				Pointer->bApplyHoverToVisualization);
+		}
 
 		const FBoolProperty* FullPauseTickProperty = FindFProperty<FBoolProperty>(
 			APlayerController::StaticClass(),
@@ -87,19 +110,50 @@ bool FParadoxTacticalPlanningDefaultsTest::RunTest(const FString& Parameters)
 
 		UClass* ProjectControllerClass = LoadObject<UClass>(
 			nullptr,
-			TEXT("/Game/TopDown/Blueprints/BP_PlayerController.BP_PlayerController_C"));
+			TEXT("/Game/Characters/Astronaut/Blueprints/BP_PlayerController.BP_PlayerController_C"));
 		const AParadoxPlayerController* ProjectControllerDefaults = ProjectControllerClass != nullptr
 			? Cast<AParadoxPlayerController>(ProjectControllerClass->GetDefaultObject())
 			: nullptr;
-		if (TestNotNull(TEXT("Project Top Down Controller defaults load"), ProjectControllerDefaults)
+		if (TestNotNull(TEXT("Project Player Controller defaults load"), ProjectControllerDefaults)
 			&& GoalContentionProperty != nullptr)
 		{
 			const void* BlueprintValueAddress =
 				GoalContentionProperty->ContainerPtrToValuePtr<void>(ProjectControllerDefaults);
 			TestEqual(
-				TEXT("Project Top Down Controller inherits Stop Before Occupied"),
+				TEXT("Project Player Controller inherits Stop Before Occupied"),
 				GoalContentionProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(BlueprintValueAddress),
 				static_cast<int64>(EGridGoalContentionPolicy::StopBeforeOccupied));
+
+			const UGridPathPreviewComponent* Preview =
+				ProjectControllerDefaults->FindComponentByClass<UGridPathPreviewComponent>();
+			if (TestNotNull(TEXT("Project Controller owns the path preview component"), Preview))
+			{
+				TestTrue(TEXT("Project preview presents automatically"), Preview->bAutoPresentPreview);
+				TestFalse(TEXT("Project preview cell overlay is disabled"), Preview->bRenderCellOverlay);
+				TestTrue(TEXT("Project preview strict line is enabled"), Preview->bRenderLine);
+			}
+
+			const UGridCellPointerComponent* ProjectPointer =
+				ProjectControllerDefaults->FindComponentByClass<UGridCellPointerComponent>();
+			if (TestNotNull(TEXT("Project Controller owns the cell pointer"), ProjectPointer))
+			{
+				TestFalse(
+					TEXT("Project pointer inherits disabled cell-hover visualization"),
+					ProjectPointer->bApplyHoverToVisualization);
+			}
+
+			const UGridWorldPathFollowingComponent* PathFollower =
+				ProjectControllerDefaults->FindComponentByClass<UGridWorldPathFollowingComponent>();
+			if (TestNotNull(TEXT("Project Controller owns the GridWorld path follower"), PathFollower))
+			{
+				TestTrue(TEXT("Project active-path presentation is enabled"), PathFollower->bPresentActivePath);
+				TestFalse(
+					TEXT("Project active-path cell overlay is disabled"),
+					PathFollower->bPresentActivePathAsCellOverlay);
+				TestTrue(
+					TEXT("Project active-path strict line is enabled"),
+					PathFollower->bPresentActivePathAsLine);
+			}
 		}
 	}
 

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Conditions/PuzzleCondition.h"
+#include "Controllers/PuzzleController.h"
 #include "Emitters/PuzzleEmitterComponent.h"
 #include "Emitters/PuzzleSwitch.h"
 #include "Receivers/PuzzleReceiverComponent.h"
@@ -17,6 +19,93 @@ public:
 	/** Arbitrary value used by payload-related tests. */
 	UPROPERTY()
 	int32 Value = 0;
+};
+
+/** Payload-aware condition used to exercise the same scoped queries available to Blueprint conditions. */
+UCLASS()
+class UPuzzleTestPayloadCondition : public UPuzzleCondition
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY()
+	FName InputId;
+
+	UPROPERTY()
+	int32 ExpectedValue = 0;
+
+	virtual bool EvaluateCondition_Implementation(const APuzzleController* Controller) override
+	{
+		const UPuzzleTestSignalPayload* Payload = Controller
+			? Cast<UPuzzleTestSignalPayload>(Controller->GetInputPayload(InputId))
+			: nullptr;
+		return Payload && Payload->Value == ExpectedValue;
+	}
+
+	virtual void GetReferencedInputIds(TSet<FName>& OutInputIds) const override
+	{
+		if (!InputId.IsNone())
+		{
+			OutInputIds.Add(InputId);
+		}
+	}
+
+	virtual bool ValidateCondition(FString& OutError) const override
+	{
+		if (InputId.IsNone())
+		{
+			OutError = TEXT("Test payload condition has no InputId.");
+			return false;
+		}
+		return true;
+	}
+};
+
+/** Counts root evaluations while querying two effective inputs. */
+UCLASS()
+class UPuzzleTestCountingCondition : public UPuzzleCondition
+{
+	GENERATED_BODY()
+
+public:
+	UPROPERTY()
+	FName FirstInputId;
+
+	UPROPERTY()
+	FName SecondInputId;
+
+	UPROPERTY()
+	int32 EvaluationCount = 0;
+
+	virtual bool EvaluateCondition_Implementation(const APuzzleController* Controller) override
+	{
+		++EvaluationCount;
+		return Controller
+			&& Controller->IsInputActive(FirstInputId)
+			&& Controller->IsInputActive(SecondInputId);
+	}
+
+	virtual void GetReferencedInputIds(TSet<FName>& OutInputIds) const override
+	{
+		if (!FirstInputId.IsNone())
+		{
+			OutInputIds.Add(FirstInputId);
+		}
+		if (!SecondInputId.IsNone())
+		{
+			OutInputIds.Add(SecondInputId);
+		}
+	}
+
+	virtual bool ValidateCondition(FString& OutError) const override
+	{
+		if (FirstInputId.IsNone() || SecondInputId.IsNone())
+		{
+			OutError = TEXT("Test counting condition requires two InputIds.");
+			return false;
+		}
+		return true;
+	}
 };
 
 /** Test observer used to verify receiver Blueprint-style delegates from C++. */
@@ -67,6 +156,10 @@ public:
 	UPROPERTY()
 	int32 PublishCount = 0;
 
+	/** Active state published by the chained activation; defaults true for existing tests. */
+	UPROPERTY()
+	bool bPublishedState = true;
+
 protected:
 	/** Publishes a chained signal after base receiver activation behavior. */
 	virtual void HandleReceiverActivated() override
@@ -76,7 +169,7 @@ protected:
 		++PublishCount;
 		if (EmitterToPublish && SignalTagToPublish.IsValid())
 		{
-			EmitterToPublish->SetSignalState(SignalTagToPublish, true, nullptr);
+			EmitterToPublish->SetSignalState(SignalTagToPublish, bPublishedState, nullptr);
 		}
 	}
 };

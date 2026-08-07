@@ -213,6 +213,84 @@ The controller resolves component references during initialization:
 - Enable the corresponding flag only when a specific component is required, then set `EmitterComponentName` or `ReceiverComponentName`.
 - Missing components, invalid explicit names, duplicate bindings, or other invalid configuration fail closed and keep receivers inactive.
 
+### Per-Input Gates
+
+Every element of `InputBindings` can optionally filter its own primary signal through additional
+Emitter signals and the existing `UPuzzleCondition` hierarchy. This is local Controller wiring: closing
+a gate does not modify or republish the source Emitter signal, so another Controller or another binding
+may continue to admit the same signal.
+
+Expand one primary input binding and configure both arrays:
+
+- `Emitter Gates`: gate-local inputs with `Input Id`, `Emitter Actor`, optional explicit component
+  selection, and `Signal Tag`.
+- `Gate Conditions`: inline instanced `UPuzzleCondition` objects. All top-level entries must pass; use
+  `All`, `Any`, `Not`, or `Threshold` inside an entry for more complex formulas.
+
+Gate `Input Id` values belong only to the `Emitter Gates` array of their containing primary binding.
+They do not resolve against the Controller's main inputs or gates owned by another primary binding. Two
+different primary bindings may therefore both use a local gate ID such as `Enabled` without interfering.
+
+The gate is enabled only when both arrays contain at least one element:
+
+```text
+Emitter Gates empty + Gate Conditions empty     -> bypass
+Emitter Gates populated + Gate Conditions empty -> bypass
+Emitter Gates empty + Gate Conditions populated -> bypass
+both arrays populated                            -> enabled gate
+```
+
+An unpaired array is intentionally ignored at runtime: its Emitters are not subscribed, its conditions
+are not evaluated, and invalid ignored entries do not suppress the primary signal. Editor data validation
+reports a non-fatal warning so the unused setup is visible.
+
+For an enabled gate, the Controller maintains three separate states:
+
+```text
+raw primary state
+    + gate-local cached states and Gate Conditions
+    -> effective primary state read by RootCondition
+```
+
+A valid open gate admits the primary active state and payload. A valid closed gate leaves the effective
+input valid but inactive and hides its primary payload; a normal condition that explicitly expects the
+input to be inactive can pass. A missing/destroyed gate source, unpublished required gate signal, unknown
+local ID, invalid condition tree, or other invalid enabled configuration makes the effective primary input
+invalid, so even an inactive-state condition fails closed.
+
+Gate Emitters are subscribed event-first and queried for their persistent state during Controller
+initialization. Changing a gate closes or reopens the effective input immediately without requiring the
+primary Emitter to republish. Shared Emitter components use one native subscription and fan a notification
+out to every affected primary/gate cache before one collapsed Controller reevaluation.
+
+Example:
+
+```text
+InputBindings[MainRequest]
+  Emitter Actor: BP_MainSwitch
+  Signal Tag: Puzzle.Signal.Active
+
+  Emitter Gates
+    PermissionA -> BP_A / Puzzle.Signal.Enabled
+    PermissionB -> BP_B / Puzzle.Signal.Ready
+
+  Gate Conditions
+    All
+      InputState(PermissionA, active)
+      InputState(PermissionB, active)
+```
+
+`MainRequest` is effectively active only while its raw signal is active and both permissions pass.
+Custom native or Blueprint `UPuzzleCondition` subclasses use the existing `TryGetInputState`,
+`IsInputActive`, `GetInputPayload`, and revision queries; the Controller automatically presents the
+gate-local namespace while a Gate Condition is evaluating and effective main inputs while the normal
+`RootCondition` is evaluating.
+
+Blueprint diagnostics can query `IsInputGateBypassed`, `IsInputGateValid`,
+`DoesInputGateAllowSignal`, `TryGetGateInputState`, and `TryGetEffectiveInputState`. C++ diagnostics may
+also use `TryGetRawInputState`. Raw state is intentionally not exposed to Blueprint conditions, preventing
+ordinary condition graphs from reading a payload that a closed gate suppressed.
+
 ### Receivers
 
 Add `UPuzzleReceiverComponent` to any gameplay Actor that should react to puzzle activation, such as a door, bridge, moving platform, trap, spawner, or checkpoint.
@@ -311,9 +389,15 @@ PuzzleSystem.Debug.Visual 0
 `PuzzleSystem.Debug` enables verbose logging. `PuzzleSystem.Debug.Visual` is a global visual-debug kill switch and defaults to enabled; set it to `0` to suppress all PuzzleSystem debug drawing. Controller visual debug also requires the controller instance property `bEnableDebug` to be true. When enabled, the controller draws in PIE and editor viewports:
 
 - cyan lines to emitter Actors it listens to;
+- red lines and endpoint spheres to per-input gate Emitters;
 - green lines to receiver Actors it controls;
 - cyan and green endpoint spheres plus a yellow controller marker;
-- a world-space label with input IDs, signal tags, validity, active state, revisions, and final result.
+- a world-space label with raw primary state, gate mode (`Bypassed`, `Open`, `Closed`, or `Invalid`),
+  gate-local states and payload classes, top-level condition results, effective state/revision, and final
+  Controller result.
+
+If one Actor is both a primary and gate source, the cyan and red relationships are drawn with a small
+offset so both remain visible.
 
 Debug visual output is disabled by default.
 
@@ -324,9 +408,14 @@ The system fails closed. Invalid configuration or missing runtime state should m
 Common causes:
 
 - duplicate `InputId`;
+- duplicate gate-local `InputId` inside one primary binding;
 - invalid signal tag;
 - missing root condition;
 - condition references an unknown input;
+- enabled Gate Condition references an ID outside its containing `Emitter Gates` array;
+- enabled gate condition is null, invalid, or not instanced under its Controller;
+- duplicate Emitter/signal gate source inside one primary binding;
+- enabled gate source is missing, destroyed, or has not published its required signal;
 - binding Actor has zero matching components;
 - explicit component selection is enabled but its component name is empty or does not match;
 - duplicate receiver binding;

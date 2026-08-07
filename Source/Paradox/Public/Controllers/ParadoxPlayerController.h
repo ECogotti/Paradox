@@ -56,16 +56,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Prediction")
 	bool bEnablePointerPathPrediction = true;
 
-	/** Presents the authoritative path accepted after a click. */
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Prediction")
-	bool bPresentActivePath = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Prediction", meta = (EditCondition = "bPresentActivePath"))
-	bool bPresentActivePathAsCells = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Prediction", meta = (EditCondition = "bPresentActivePath"))
-	bool bPresentActivePathAsLine = true;
-
 	/** Time Threshold to know if it was a short press */
 	UPROPERTY(EditAnywhere, Category="Input")
 	float ShortPressThreshold;
@@ -105,6 +95,14 @@ protected:
 	/** One-shot recenter command. */
 	UPROPERTY(EditAnywhere, Category = "Input|Camera")
 	TObjectPtr<UInputAction> CameraRecenterAction;
+
+	/** One-shot command that rotates the free camera 90 degrees to the left. */
+	UPROPERTY(EditAnywhere, Category = "Input|Camera")
+	TObjectPtr<UInputAction> CameraRotateLeftAction;
+
+	/** One-shot command that rotates the free camera 90 degrees to the right. */
+	UPROPERTY(EditAnywhere, Category = "Input|Camera")
+	TObjectPtr<UInputAction> CameraRotateRightAction;
 
 	/** Replaceable presentation class; the native rig is a complete default. */
 	UPROPERTY(EditDefaultsOnly, Category = "Paradox|Camera")
@@ -182,10 +180,16 @@ protected:
 	FVector CameraFocusLocation = FVector::ZeroVector;
 	FVector CameraRecenterStart = FVector::ZeroVector;
 	FVector CameraRecenterTarget = FVector::ZeroVector;
+	FVector CameraRecenterRequestedTarget = FVector::ZeroVector;
 	FVector2D CameraMoveInput = FVector2D::ZeroVector;
 	float CurrentOrthoWidth = 0.0f;
 	float CameraRecenterElapsed = 0.0f;
+	float CameraRotationElapsed = 0.0f;
+	int32 CurrentCameraQuarterTurnIndex = 0;
+	int32 CameraRotationStartQuarterTurnIndex = 0;
+	int32 CameraRotationDirection = 0;
 	bool bCameraRecenterActive = false;
+	bool bCameraRotationActive = false;
 	bool bWarnedRuntimeAspectConstraint = false;
 	bool bRecordedTimeTravelPending = false;
 	bool bRecordedTimeTravelExecutionScheduled = false;
@@ -296,6 +300,8 @@ protected:
 	void OnCameraMoveCompleted();
 	void OnCameraZoomTriggered(const FInputActionValue& Value);
 	void OnCameraRecenterTriggered();
+	void OnCameraRotateLeftTriggered();
+	void OnCameraRotateRightTriggered();
 
 	/** Helper function to get the move destination */
 	void UpdateCachedDestination();
@@ -312,20 +318,43 @@ protected:
 	void ScheduleRecordedTimeTravelExecution();
 	void ExecuteRecordedTimeTravel();
 	void ClearPendingRecordedTimeTravel();
+	bool RequestCameraRotation(int32 Direction);
 	void UpdateFreeCamera(float RealDeltaSeconds);
 	void UpdateFreeCameraPose(float AspectRatio);
+	FRotator GetCurrentCameraOrientation() const;
+	FRotator GetCameraOrientationForYawOffset(float YawOffsetDegrees) const;
+	float GetCurrentCameraYawOffset() const;
 	float GetCameraAspectRatio() const;
 	bool CalculateFootprint(
 		const FVector& FocusLocation,
+		const FRotator& Orientation,
 		float OrthoWidth,
 		float AspectRatio,
 		TArray<FVector>& OutCorners) const;
 	bool CalculateFootprintExtents(
+		const FRotator& Orientation,
 		float OrthoWidth,
 		float AspectRatio,
 		FVector2D& OutExtents) const;
-	float CalculateMaximumCompatibleOrthoWidth(float AspectRatio) const;
-	FVector ClampCameraFocus(const FVector& RequestedFocus, float OrthoWidth, float AspectRatio) const;
+	bool CalculateRotationArcFootprintExtents(
+		float OrthoWidth,
+		float AspectRatio,
+		float StartYawOffsetDegrees,
+		float EndYawOffsetDegrees,
+		FVector2D& OutExtents) const;
+	float CalculateMaximumCompatibleOrthoWidth(
+		const FRotator& Orientation,
+		float AspectRatio) const;
+	float CalculateMaximumCompatibleOrthoWidthForRotationArc(
+		float StartYawOffsetDegrees,
+		float EndYawOffsetDegrees,
+		float AspectRatio) const;
+	float CalculateMaximumRotationSafeOrthoWidth(float AspectRatio) const;
+	FVector ClampCameraFocus(
+		const FVector& RequestedFocus,
+		const FRotator& Orientation,
+		float OrthoWidth,
+		float AspectRatio) const;
 	bool ValidateCameraConfiguration(
 		const AParadoxCameraBoundsVolume& Volume,
 		const FParadoxCameraConfiguration& Configuration,

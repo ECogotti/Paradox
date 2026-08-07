@@ -134,14 +134,17 @@ fallback for both roles.
 The controller now owns inherited `UGridCellPointerComponent` and `UGridPathPreviewComponent`
 components. For a local mouse, `PlayerTick` continuously resolves the hovered cell and requests a
 prediction; semantic deduplication means unchanged cursor cells do not run another path search.
-Touch updates the same components while the gesture is active. The pointer applies only hover;
-selection remains an explicit gameplay/UI operation.
+Touch updates the same components while the gesture is active. Paradox keeps the pointer's semantic
+hover target but disables `bApplyHoverToVisualization` by default, so line-only preview and active
+paths do not show an independent yellow destination cell. Enable that pointer option explicitly when
+a cell-hover affordance is desired; selection remains a separate gameplay/UI operation.
 
-Prediction presentation defaults to both cell overlay and strict line. Configure the inherited
-preview component to enable either renderer independently and assign separate `Grid Cell Visual
-Style` and `Grid Path Line Visual Style` assets. The active `UGridWorldPathFollowingComponent`
-defaults to presenting the accepted path through both renderers; the controller exposes independent
-cell/line toggles and a master active-path toggle.
+Configure the inherited preview component to enable either renderer independently and assign
+separate `Grid Cell Visual Style` and `Grid Path Line Visual Style` assets. Configure accepted-path
+presentation only on the inherited `UGridWorldPathFollowingComponent`: its master, cell-overlay,
+and strict-line flags are the authoritative settings. At Begin Play the controller enables only the
+global backends selected by that component and never overwrites its authored values. Consequently,
+a line-only preview and active path do not implicitly enable cell rendering.
 
 On release, the controller calls `PreparePreviewForCommit`. This synchronously refreshes a stale or
 start-changed preview and submits `PathSource = ExactInjectedPath` to the Gameplay Action. Failure to
@@ -187,8 +190,12 @@ after another action on resume remains governed by its Gameplay Actions executio
 Time-loop maps use a controller-owned `AParadoxCameraRig` as an independent orthographic view
 target while the controller continues possessing the player Character. `AParadoxCameraBoundsVolume`
 contains the complete projected view, not only the focus point. W/A/S/D pans, the mouse wheel
-zooms, and Space recenters; these actions continue during Tactical Pause without changing Common
-UI focus or input mode.
+zooms, Space recenters, and Q/E rotate left/right in exact 90-degree steps. These actions continue
+during Tactical Pause without changing Common UI focus or input mode. Quarter turns use
+configurable duration/easing and are rejected without changing zoom when the complete intermediate
+footprint cannot remain inside the camera volume. The effective zoom-out ceiling is derived
+dynamically from the current volume, margin, aspect ratio, and complete yaw arc, so ordinary camera
+use keeps every quarter turn available without changing zoom on Q/E.
 
 See [Paradox free camera - Milestones 5-6](Camera.md) for setup, configuration, containment
 formula, Blueprint API, debugging, and troubleshooting.
