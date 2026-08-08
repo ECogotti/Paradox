@@ -119,9 +119,17 @@ public:
 	UPROPERTY()
 	int32 StateChangedCount = 0;
 
+	/** Number of aggregated Controller-prerequisite changes observed. */
+	UPROPERTY()
+	int32 PrerequisitesChangedCount = 0;
+
 	/** Last state value received from the receiver delegate. */
 	UPROPERTY()
 	bool bLastActive = false;
+
+	/** Last prerequisite state received from the receiver delegate. */
+	UPROPERTY()
+	bool bLastPrerequisitesSatisfied = false;
 
 	/**
 	 * Records a receiver state change notification.
@@ -134,6 +142,16 @@ public:
 	{
 		++StateChangedCount;
 		bLastActive = bIsActive;
+	}
+
+	/** Records one aggregated Controller-prerequisite transition. */
+	UFUNCTION()
+	void HandleReceiverPrerequisitesChanged(
+		UPuzzleReceiverComponent* Receiver,
+		bool bPrerequisitesSatisfied)
+	{
+		++PrerequisitesChangedCount;
+		bLastPrerequisitesSatisfied = bPrerequisitesSatisfied;
 	}
 };
 
@@ -170,6 +188,33 @@ protected:
 		if (EmitterToPublish && SignalTagToPublish.IsValid())
 		{
 			EmitterToPublish->SetSignalState(SignalTagToPublish, bPublishedState, nullptr);
+		}
+	}
+};
+
+/** Test Receiver that removes its prerequisite synchronously during activation. */
+UCLASS(ClassGroup = (Puzzle))
+class UPuzzleManualReentrantReceiverComponent : public UPuzzleReceiverComponent
+{
+	GENERATED_BODY()
+
+public:
+	/** Controller request removed from the activation hook. */
+	UPROPERTY()
+	TObjectPtr<APuzzleController> ControllerToDeactivate = nullptr;
+
+	/** Number of activation hooks used to trigger the reentrant update. */
+	UPROPERTY()
+	int32 ReentrantUpdateCount = 0;
+
+protected:
+	virtual void HandleReceiverActivated() override
+	{
+		Super::HandleReceiverActivated();
+		++ReentrantUpdateCount;
+		if (ControllerToDeactivate)
+		{
+			SetControllerRequest(ControllerToDeactivate, false);
 		}
 	}
 };

@@ -8,6 +8,26 @@ AIControllers call the exported GridWorld task directly instead of duplicating n
 contention. Other Controllers project the requested goal through GridWorld and execute the resulting
 path through their existing `UPathFollowingComponent`.
 
+The action identity is registered as `GameplayAction.Type.GridWorld.MoveToGridCell`. Its terminal
+failure reasons remain grouped below
+`GameplayAction.Result.Failure.GridWorld.MoveToGridCell.*`, keeping action type and outcome in
+separate role branches.
+
+## Reusable movement execution
+
+`UGridMoveToCellExecution` is the non-journaled transient executor used by
+`UGridMoveToCellAction`. `FGridMoveToCellExecutionRequest` describes the controller-aware movement
+policy, `Evaluate` performs a read-only complete-path assessment, and
+`Start`/`Pause`/`Resume`/`Cancel` own one execution with a single terminal callback. The ordinary
+Grid Move action is now an adapter over this object, so its scheduler, lock, journal, and public
+behavior remain unchanged.
+
+Composed Gameplay Actions may retain the executor as one internal phase. This avoids submitting a
+second Gameplay Action and therefore avoids a second journal intent. The containing action remains
+responsible for semantic parameters and terminal lifecycle; the executor owns only path following,
+traffic contention, and movement cleanup. It is one-shot, removes delegates before cancellation,
+and rejects late task/path callbacks.
+
 The bridge deliberately works against the base path-following API. A player controller can therefore
 install `UGridWorldPathFollowingComponent` and receive GridWorld's Center-Constrained or Cell-by-Cell
 behavior without introducing a Paradox-specific dependency into the bridge.

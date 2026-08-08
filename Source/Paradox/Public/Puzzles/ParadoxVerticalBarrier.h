@@ -14,6 +14,9 @@ class UGridNavigationModifierComponent;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UPerceptionKnowledgeSourceComponent;
+class UParadoxSelectableComponent;
+class UParadoxInteractionComponent;
+class USmartObjectComponent;
 class UPrimitiveComponent;
 class USceneComponent;
 class USoundBase;
@@ -115,6 +118,18 @@ public:
 
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Barrier|Components")
 	TObjectPtr<UPerceptionKnowledgeSourceComponent> PerceptionSource = nullptr;
+
+	/** Project-level hover, selection, outline, and optional world-widget capability. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Barrier|Components")
+	TObjectPtr<UParadoxSelectableComponent> SelectableComponent = nullptr;
+
+	/** Smart Object slot authority; a null Definition is valid until a Blueprint assigns content. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Vertical Barrier|Components")
+	TObjectPtr<USmartObjectComponent> SmartObjectComponent = nullptr;
+
+	/** Paradox-owned multi-interaction catalog projected from the Smart Object slots. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Vertical Barrier|Components")
+	TObjectPtr<UParadoxInteractionComponent> InteractionComponent = nullptr;
 
 	/** Safe mode waits for an empty passage; disabled mode transports eligible occupants upward. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Barrier|Occupants")

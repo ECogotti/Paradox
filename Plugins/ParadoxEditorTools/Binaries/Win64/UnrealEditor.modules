@@ -2,6 +2,7 @@
 	"BuildId": "55116800",
 	"Modules": 
 	{
-		"ParadoxEditorTools": "UnrealEditor-ParadoxEditorTools.dll"
+		"ParadoxEditorTools": "UnrealEditor-ParadoxEditorTools.dll",
+		"ParadoxMaterialExpressions": "UnrealEditor-ParadoxMaterialExpressions.dll"
 	}
 }

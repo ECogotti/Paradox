@@ -25,6 +25,9 @@ responsibility and their implementations use the matching path under `Private`:
   PuzzleSystem primitives;
 - `Public/Presentation` and `Private/Presentation` contain native, Blueprint-replaceable outcome
   presentation;
+- `Public/Interaction` and `Private/Interaction` contain player selection, selectable Actor
+  presentation, the Blueprint-extensible world-space widget base, multi-interaction Smart Object
+  slot queries/submission, and the replay-safe interaction Gameplay Action template;
 - `Public/Paradox.h` exposes the module log category and native gameplay tags;
 - `Private/Tests` contains module automation tests.
 
@@ -89,6 +92,11 @@ Hearing Range renderer. Clone setup and policy are documented in:
 Native tag ownership and registered strings are indexed in
 [Gameplay Tag declarations](GAMEPLAY_TAGS.md).
 
+Hover, RMB single-Actor selection, outline stencil ownership, optional world-space widgets,
+multi-interaction Smart Object catalogs, exact Gameplay Action requests, claim lifecycle, semantic
+Intent Replay, selected GridWorld cells, World State cleanup, and input arbitration are documented in
+[Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
+
 ## Player movement
 
 `AParadoxPlayerController` no longer applies direct movement input or calls `SimpleMoveToLocation`.
@@ -114,7 +122,7 @@ holding the Movement lock while preserving action submission, interruption, and 
 Intent Replay journal.
 
 Player crouch is also semantic rather than a direct Character call. `RequestSetCrouched` submits
-`GameplayAction.Character.SetCrouched` with the absolute `DesiredCrouched` parameter through
+`GameplayAction.Type.Paradox.Character.SetCrouched` with the absolute `DesiredCrouched` parameter through
 `/Game/Data/GameplayActions/DA_ParadoxSetCrouched`. The action owns only
 `GameplayAction.Lock.Stance`; movement owns only `GameplayAction.Lock.Movement`. Exact lock
 matching therefore applies crouch or uncrouch immediately while an active movement remains
@@ -122,7 +130,7 @@ matching therefore applies crouch or uncrouch immediately while an active moveme
 Intent Replay records and reproduces both absolute stance transitions.
 
 Time Travel is likewise semantic. `RequestTimeRewind` on the player controller submits
-`GameplayAction.Paradox.TimeTravel` through
+`GameplayAction.Type.Paradox.TimeLoop.TimeTravel` through
 `/Game/Data/GameplayActions/DA_ParadoxTimeTravel`. Its high-priority exact locks for Movement,
 Stance and TimeTravel stop the current move and reject duplicate departure commands without
 affecting the immutable track. Every `AParadoxCharacter` owns an inherited, non-auto-activating

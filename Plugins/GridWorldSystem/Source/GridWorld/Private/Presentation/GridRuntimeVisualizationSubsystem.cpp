@@ -59,6 +59,7 @@ void UGridRuntimeVisualizationSubsystem::Deinitialize()
 	ActiveStyle = nullptr;
 	HoveredCells.Reset();
 	SelectedCells.Reset();
+	OverlayStates.Reset();
 	PathStates.Reset();
 	bVisualizationEnabled = false;
 	Super::Deinitialize();
@@ -132,6 +133,7 @@ bool UGridRuntimeVisualizationSubsystem::RebuildVisualization()
 	{
 		HoveredCells.Reset();
 		SelectedCells.Reset();
+		OverlayStates.Reset();
 		PathStates.Reset();
 		CachedRevisions = FGridRevisionSet();
 		ApplyVisibility();
@@ -431,6 +433,11 @@ FGridCellVisualState UGridRuntimeVisualizationSubsystem::BuildCellVisualState(co
 	State.InteractionState = SelectedCells.Contains(Cell.Id)
 		? EGridCellInteractionVisualState::Selected
 		: (HoveredCells.Contains(Cell.Id) ? EGridCellInteractionVisualState::Hovered : EGridCellInteractionVisualState::Unselected);
+	if (const EGridCellOverlayVisualState* OverlayState = OverlayStates.Find(Cell.Id))
+	{
+		State.OverlayState = *OverlayState;
+		State.CustomStyleValue = static_cast<float>(*OverlayState);
+	}
 	if (const FGridResolvedPathVisualState* PathState = PathStates.Find(Cell.Id))
 	{
 		State.PathState = PathState->State;
@@ -560,6 +567,13 @@ void UGridRuntimeVisualizationSubsystem::PruneStaleInteractionState(const FGridW
 			It.RemoveCurrent();
 		}
 	}
+	for (auto It = OverlayStates.CreateIterator(); It; ++It)
+	{
+		if (Snapshot.FindCell(It.Key()) == nullptr)
+		{
+			It.RemoveCurrent();
+		}
+	}
 }
 
 bool UGridRuntimeVisualizationSubsystem::SetCellPathStateInternal(
@@ -608,6 +622,31 @@ void UGridRuntimeVisualizationSubsystem::ReplaceResolvedPathStatesInternal(
 	}
 
 	PathStates = MoveTemp(NewStates);
+	ApplyCustomDataBatch(ChangedCells.Array());
+}
+
+void UGridRuntimeVisualizationSubsystem::ReplaceResolvedOverlayStatesInternal(
+	TMap<FGridCellId, EGridCellOverlayVisualState>&& NewStates)
+{
+	TSet<FGridCellId> ChangedCells;
+	for (const TPair<FGridCellId, EGridCellOverlayVisualState>& Pair : OverlayStates)
+	{
+		const EGridCellOverlayVisualState* NewState = NewStates.Find(Pair.Key);
+		if (NewState == nullptr || *NewState != Pair.Value)
+		{
+			ChangedCells.Add(Pair.Key);
+		}
+	}
+	for (const TPair<FGridCellId, EGridCellOverlayVisualState>& Pair : NewStates)
+	{
+		const EGridCellOverlayVisualState* PreviousState = OverlayStates.Find(Pair.Key);
+		if (PreviousState == nullptr || *PreviousState != Pair.Value)
+		{
+			ChangedCells.Add(Pair.Key);
+		}
+	}
+
+	OverlayStates = MoveTemp(NewStates);
 	ApplyCustomDataBatch(ChangedCells.Array());
 }
 

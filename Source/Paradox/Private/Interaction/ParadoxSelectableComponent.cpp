@@ -1,0 +1,357 @@
+#include "Interaction/ParadoxSelectableComponent.h"
+
+#include "Components/SceneComponent.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Components/WidgetComponent.h"
+#include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "Interaction/ParadoxInteractionWidgetBase.h"
+#include "Interaction/ParadoxSelectionComponent.h"
+#include "Paradox.h"
+
+UParadoxSelectableComponent::UParadoxSelectableComponent()
+{
+	PrimaryComponentTick.bCanEverTick = true;
+	PrimaryComponentTick.bStartWithTickEnabled = false;
+}
+
+EParadoxSelectionPresentationState UParadoxSelectableComponent::GetSelectionPresentationState() const
+{
+	if (bIsSelected)
+	{
+		return EParadoxSelectionPresentationState::Selected;
+	}
+	return bIsHovered
+		? EParadoxSelectionPresentationState::Hovered
+		: EParadoxSelectionPresentationState::None;
+}
+
+void UParadoxSelectableComponent::TickComponent(
+	const float DeltaTime,
+	const ELevelTick TickType,
+	FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	UpdateInteractionWidgetFacing();
+}
+
+void UParadoxSelectableComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (UParadoxSelectionComponent* Selection = ActiveSelectionComponent.Get())
+	{
+		Selection->HandleSelectableEndingPlay(this);
+	}
+	ResetPresentationState();
+	DestroyInteractionWidget();
+	Super::EndPlay(EndPlayReason);
+}
+
+void UParadoxSelectableComponent::OnComponentDestroyed(const bool bDestroyingHierarchy)
+{
+	if (UParadoxSelectionComponent* Selection = ActiveSelectionComponent.Get())
+	{
+		Selection->HandleSelectableEndingPlay(this);
+	}
+	ResetPresentationState();
+	DestroyInteractionWidget();
+	Super::OnComponentDestroyed(bDestroyingHierarchy);
+}
+
+void UParadoxSelectableComponent::HandleHoverChanged_Implementation(const bool bNewHovered)
+{
+}
+
+void UParadoxSelectableComponent::HandleSelectionChanged_Implementation(const bool bNewSelected)
+{
+}
+
+void UParadoxSelectableComponent::SetHoveredFromSelection(const bool bNewHovered)
+{
+	const bool bEffectiveHovered = bCanBeHovered && bNewHovered;
+	if (bIsHovered == bEffectiveHovered)
+	{
+		return;
+	}
+
+	bIsHovered = bEffectiveHovered;
+	ApplyPresentationState();
+	OnHoverChanged.Broadcast(this, bIsHovered);
+	HandleHoverChanged(bIsHovered);
+	if (bEnableDebug)
+	{
+		PARADOX_LOG_INFO(
+			TEXT("Selectable '%s' hover changed to %s."),
+			*GetNameSafe(GetOwner()),
+			bIsHovered ? TEXT("true") : TEXT("false"));
+	}
+}
+
+void UParadoxSelectableComponent::SetSelectedFromSelection(
+	const bool bNewSelected,
+	UParadoxSelectionComponent* InSelectionComponent)
+{
+	const bool bEffectiveSelected = bCanBeSelected && bNewSelected;
+	if (bIsSelected == bEffectiveSelected)
+	{
+		return;
+	}
+
+	bIsSelected = bEffectiveSelected;
+	ActiveSelectionComponent = bIsSelected ? InSelectionComponent : nullptr;
+	ApplyPresentationState();
+	if (bIsSelected)
+	{
+		ShowInteractionWidget(InSelectionComponent);
+	}
+	else
+	{
+		HideInteractionWidget();
+	}
+	OnSelectionChanged.Broadcast(this, bIsSelected);
+	HandleSelectionChanged(bIsSelected);
+	if (bEnableDebug)
+	{
+		PARADOX_LOG_INFO(
+			TEXT("Selectable '%s' selection changed to %s."),
+			*GetNameSafe(GetOwner()),
+			bIsSelected ? TEXT("true") : TEXT("false"));
+	}
+}
+
+void UParadoxSelectableComponent::ResetPresentationState()
+{
+	const bool bWasHovered = bIsHovered;
+	const bool bWasSelected = bIsSelected;
+	bIsHovered = false;
+	bIsSelected = false;
+	ActiveSelectionComponent.Reset();
+	RestoreOutline();
+	HideInteractionWidget();
+
+	if (bWasHovered)
+	{
+		OnHoverChanged.Broadcast(this, false);
+		HandleHoverChanged(false);
+	}
+	if (bWasSelected)
+	{
+		OnSelectionChanged.Broadcast(this, false);
+		HandleSelectionChanged(false);
+	}
+}
+
+void UParadoxSelectableComponent::ApplyPresentationState()
+{
+	switch (GetSelectionPresentationState())
+	{
+	case EParadoxSelectionPresentationState::Selected:
+		ApplyOutline(UE::Paradox::Selection::SelectedStencilValue);
+		break;
+	case EParadoxSelectionPresentationState::Hovered:
+		ApplyOutline(UE::Paradox::Selection::HoverStencilValue);
+		break;
+	case EParadoxSelectionPresentationState::None:
+	default:
+		RestoreOutline();
+		break;
+	}
+}
+
+void UParadoxSelectableComponent::ApplyOutline(const int32 StencilValue)
+{
+	AActor* Owner = GetOwner();
+	if (!IsValid(Owner))
+	{
+		return;
+	}
+
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+	Owner->GetComponents(PrimitiveComponents, false);
+	for (UPrimitiveComponent* PrimitiveComponent : PrimitiveComponents)
+	{
+		if (!IsValid(PrimitiveComponent)
+			|| PrimitiveComponent->GetOwner() != Owner
+			|| (!PrimitiveComponent->IsA<UStaticMeshComponent>()
+				&& !PrimitiveComponent->IsA<USkeletalMeshComponent>()))
+		{
+			continue;
+		}
+
+		const TWeakObjectPtr<UPrimitiveComponent> ComponentKey(PrimitiveComponent);
+		if (!CachedPrimitiveRenderStates.Contains(ComponentKey))
+		{
+			FCachedPrimitiveRenderState& CachedState = CachedPrimitiveRenderStates.Add(ComponentKey);
+			CachedState.bRenderCustomDepth = PrimitiveComponent->bRenderCustomDepth;
+			CachedState.CustomDepthStencilValue = PrimitiveComponent->CustomDepthStencilValue;
+			CachedState.CustomDepthStencilWriteMask = PrimitiveComponent->CustomDepthStencilWriteMask;
+		}
+
+		PrimitiveComponent->SetRenderCustomDepth(true);
+		PrimitiveComponent->SetCustomDepthStencilWriteMask(ERendererStencilMask::ERSM_Default);
+		PrimitiveComponent->SetCustomDepthStencilValue(StencilValue);
+	}
+}
+
+void UParadoxSelectableComponent::RestoreOutline()
+{
+	for (const TPair<TWeakObjectPtr<UPrimitiveComponent>, FCachedPrimitiveRenderState>& Pair
+		: CachedPrimitiveRenderStates)
+	{
+		if (UPrimitiveComponent* PrimitiveComponent = Pair.Key.Get())
+		{
+			PrimitiveComponent->SetCustomDepthStencilWriteMask(Pair.Value.CustomDepthStencilWriteMask);
+			PrimitiveComponent->SetCustomDepthStencilValue(Pair.Value.CustomDepthStencilValue);
+			PrimitiveComponent->SetRenderCustomDepth(Pair.Value.bRenderCustomDepth);
+		}
+	}
+	CachedPrimitiveRenderStates.Reset();
+}
+
+bool UParadoxSelectableComponent::EnsureInteractionWidget(
+	UParadoxSelectionComponent* InSelectionComponent)
+{
+	if (IsValid(InteractionWidgetComponent))
+	{
+		return true;
+	}
+	if (!SelectionWidgetClass || !IsValid(GetOwner()) || !GetWorld())
+	{
+		return false;
+	}
+
+	AActor* Owner = GetOwner();
+	USceneComponent* Anchor = Cast<USceneComponent>(WidgetAnchor.GetComponent(Owner));
+	if (IsValid(Anchor) && Anchor->GetOwner() != Owner)
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Selectable '%s' ignored widget anchor '%s' because it belongs to Actor '%s'; widget anchors must belong to the selected Actor."),
+			*GetNameSafe(Owner),
+			*GetNameSafe(Anchor),
+			*GetNameSafe(Anchor->GetOwner()));
+		Anchor = nullptr;
+	}
+	if (!IsValid(Anchor))
+	{
+		Anchor = Owner->GetRootComponent();
+	}
+	if (!IsValid(Anchor))
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Selectable '%s' cannot create its interaction widget because no Scene Component anchor is available."),
+			*GetNameSafe(Owner));
+		return false;
+	}
+
+	const FName ComponentName = MakeUniqueObjectName(
+		Owner,
+		UWidgetComponent::StaticClass(),
+		TEXT("ParadoxInteractionWidget"));
+	InteractionWidgetComponent = NewObject<UWidgetComponent>(Owner, ComponentName);
+	Owner->AddInstanceComponent(InteractionWidgetComponent);
+	InteractionWidgetComponent->SetupAttachment(Anchor);
+	InteractionWidgetComponent->SetRelativeLocation(WidgetRelativeOffset);
+	InteractionWidgetComponent->SetRelativeRotation(WidgetRelativeRotation);
+	InteractionWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
+	InteractionWidgetComponent->SetDrawSize(FVector2D(WidgetDrawSize));
+	InteractionWidgetComponent->SetTwoSided(true);
+	InteractionWidgetComponent->SetCollisionProfileName(TEXT("UI"));
+	InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	InteractionWidgetComponent->SetGenerateOverlapEvents(false);
+	InteractionWidgetComponent->SetWidgetClass(SelectionWidgetClass);
+	InteractionWidgetComponent->SetVisibility(false, true);
+	if (const APlayerController* PlayerController = InSelectionComponent
+		? Cast<APlayerController>(InSelectionComponent->GetOwner())
+		: nullptr)
+	{
+		InteractionWidgetComponent->SetOwnerPlayer(PlayerController->GetLocalPlayer());
+	}
+	InteractionWidgetComponent->RegisterComponent();
+	InteractionWidgetComponent->InitWidget();
+
+	if (!Cast<UParadoxInteractionWidgetBase>(InteractionWidgetComponent->GetUserWidgetObject()))
+	{
+		PARADOX_LOG_ERROR(
+			TEXT("Selectable '%s' failed to create a UParadoxInteractionWidgetBase from widget class '%s'."),
+			*GetNameSafe(Owner),
+			*GetNameSafe(SelectionWidgetClass.Get()));
+		DestroyInteractionWidget();
+		return false;
+	}
+	return true;
+}
+
+void UParadoxSelectableComponent::ShowInteractionWidget(
+	UParadoxSelectionComponent* InSelectionComponent)
+{
+	if (!EnsureInteractionWidget(InSelectionComponent))
+	{
+		return;
+	}
+
+	APlayerController* PlayerController = InSelectionComponent
+		? Cast<APlayerController>(InSelectionComponent->GetOwner())
+		: nullptr;
+	if (UParadoxInteractionWidgetBase* Widget = Cast<UParadoxInteractionWidgetBase>(
+		InteractionWidgetComponent->GetUserWidgetObject()))
+	{
+		Widget->AssignSelectionContext(GetOwner(), this, InSelectionComponent, PlayerController);
+		InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		InteractionWidgetComponent->SetVisibility(true, true);
+		UpdateInteractionWidgetFacing();
+		SetComponentTickEnabled(bFaceOwningPlayerCamera);
+	}
+}
+
+void UParadoxSelectableComponent::HideInteractionWidget()
+{
+	SetComponentTickEnabled(false);
+	if (!IsValid(InteractionWidgetComponent))
+	{
+		return;
+	}
+	if (UParadoxInteractionWidgetBase* Widget = Cast<UParadoxInteractionWidgetBase>(
+		InteractionWidgetComponent->GetUserWidgetObject()))
+	{
+		Widget->ClearSelectionContext();
+	}
+	InteractionWidgetComponent->SetVisibility(false, true);
+	InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void UParadoxSelectableComponent::DestroyInteractionWidget()
+{
+	if (!IsValid(InteractionWidgetComponent))
+	{
+		InteractionWidgetComponent = nullptr;
+		return;
+	}
+	HideInteractionWidget();
+	InteractionWidgetComponent->DestroyComponent();
+	InteractionWidgetComponent = nullptr;
+}
+
+void UParadoxSelectableComponent::UpdateInteractionWidgetFacing()
+{
+	if (!bFaceOwningPlayerCamera
+		|| !bIsSelected
+		|| !IsValid(InteractionWidgetComponent)
+		|| !InteractionWidgetComponent->IsVisible())
+	{
+		return;
+	}
+
+	const UParadoxSelectionComponent* SelectionComponent = ActiveSelectionComponent.Get();
+	const APlayerController* PlayerController = SelectionComponent
+		? Cast<APlayerController>(SelectionComponent->GetOwner())
+		: nullptr;
+	if (!IsValid(PlayerController))
+	{
+		return;
+	}
+
+	FVector CameraLocation = FVector::ZeroVector;
+	FRotator CameraRotation = FRotator::ZeroRotator;
+	PlayerController->GetPlayerViewPoint(CameraLocation, CameraRotation);
+	InteractionWidgetComponent->SetWorldRotation((-CameraRotation.Vector()).Rotation());
+}

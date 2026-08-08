@@ -2,7 +2,7 @@
 
 namespace GameplayActionsGridWorldTags
 {
-	UE_DEFINE_GAMEPLAY_TAG(Action_MoveToGridCell, "GameplayAction.GridWorld.MoveToGridCell");
+	UE_DEFINE_GAMEPLAY_TAG(Action_MoveToGridCell, "GameplayAction.Type.GridWorld.MoveToGridCell");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Failure_Blocked,
 		"GameplayAction.Result.Failure.GridWorld.MoveToGridCell.Blocked");

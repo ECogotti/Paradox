@@ -11,8 +11,8 @@ It supplements the root `AGENTS.md`. Do not duplicate global coding, workflow, l
 Build a generic, modular, Blueprint-extensible system for environmental puzzles based on exactly three fundamental world roles:
 
 1. **Emitters** — `UPuzzleEmitterComponent` instances that generate stateful signals.
-2. **Controllers** — `APuzzleController` Actors that observe signals and decide whether receivers should be active.
-3. **Receivers** — `UPuzzleReceiverComponent` instances that own requested/effective puzzle activation state.
+2. **Controllers** — `APuzzleController` Actors that observe signals and decide whether receiver prerequisites are satisfied.
+3. **Receivers** — `UPuzzleReceiverComponent` instances that own requested/effective puzzle activation state and its automatic/manual policy.
 
 Emitter and Receiver are composable capabilities, not mutually exclusive Actor classes. The same gameplay Actor may own both components.
 
@@ -46,7 +46,8 @@ Do not bypass the Controller for ordinary puzzle activation.
 - Emitters do not activate Receivers directly.
 - Receivers do not inspect Emitters.
 - Emitters do not know which Controllers observe them.
-- Controllers own puzzle wiring and activation logic.
+- Controllers own puzzle wiring and prerequisite logic.
+- Receivers may require an explicit manual activation command, but that command never bypasses Controller prerequisites.
 
 A simple one-switch/one-door puzzle still uses a Controller with a single input condition.
 
@@ -109,8 +110,8 @@ The expected flow is:
 2. the Emitter component broadcasts the change;
 3. subscribed Controllers update their cached input state;
 4. affected Controllers reevaluate their root condition;
-5. only Controllers whose result changed update their Receiver components;
-6. Receiver components recompute effective state;
+5. only Controllers whose result changed update their Receiver prerequisite requests;
+6. Receiver components combine those prerequisites with their automatic/manual activation policy;
 7. only effective state transitions emit activation/deactivation notifications;
 8. owning gameplay Actors or reusable specialized Receiver components perform gameplay actions.
 
@@ -418,7 +419,9 @@ Target base Actor:
 APuzzleController
 ```
 
-The Controller is the only world element responsible for deciding whether its Receivers should be active.
+The Controller is the only world element responsible for evaluating Emitter-driven prerequisites. A
+Receiver configured for manual activation may additionally require an explicit activation command, but
+that command can never make the Receiver active while all Controller prerequisites are false.
 
 ## Required owned data
 
@@ -659,6 +662,8 @@ Checkpoint mechanism
 A Receiver component must:
 
 - receive active/inactive requests from Controllers;
+- OR-aggregate those requests into an authoritative prerequisite state;
+- optionally require a separate manual activation request;
 - calculate its effective active state;
 - store that state as the authoritative puzzle activation state for the capability;
 - notify observers only on effective state transitions;
@@ -691,11 +696,22 @@ SetControllerRequest(SourceController, bRequestedActive)
 RemoveControllerRequest(SourceController)
 ```
 
-Default effective state:
+Default `Automatic` effective state:
 
 ```text
 Receiver component is active when at least one valid Controller currently requests active.
 ```
+
+Optional `Manual` effective state:
+
+```text
+Receiver component is active when at least one valid Controller requests active
+AND a manual activation request is currently latched.
+```
+
+Manual activation fails while no Controller prerequisite is active. Manual deactivation is always
+allowed. Losing the final active Controller request deactivates the Receiver and clears the manual latch,
+so prerequisite restoration never reactivates it without a new explicit command.
 
 This OR aggregation exists only to prevent request ownership races.
 

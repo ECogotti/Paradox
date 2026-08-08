@@ -15,5 +15,7 @@ namespace IntentReplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Failure_PendingExternalRecovery, "IntentReplay.Failure.PendingExternalRecovery");
 	UE_DEFINE_GAMEPLAY_TAG(Failure_RecordedIntentNotFound, "IntentReplay.Failure.RecordedIntentNotFound");
 	UE_DEFINE_GAMEPLAY_TAG(Failure_ExternalInterruption, "IntentReplay.Failure.ExternalInterruption");
-	UE_DEFINE_GAMEPLAY_TAG(Cancelled_PlaybackStopped, "IntentReplay.Cancelled.PlaybackStopped");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Cancelled_PlaybackStopped,
+		"GameplayAction.Result.Cancelled.IntentReplay.PlaybackStopped");
 }

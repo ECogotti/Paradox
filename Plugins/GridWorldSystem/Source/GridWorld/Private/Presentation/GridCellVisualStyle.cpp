@@ -9,6 +9,8 @@ UGridCellVisualStyle::UGridCellVisualStyle()
 	: UnselectedColor(0.08f, 0.75f, 0.18f, 0.20f)
 	, HoveredColor(1.0f, 0.75f, 0.05f, 0.70f)
 	, SelectedColor(0.05f, 0.75f, 1.0f, 0.85f)
+	, PrimaryOverlayColor(0.05f, 1.0f, 0.55f, 0.75f)
+	, SecondaryOverlayColor(1.0f, 0.2f, 0.05f, 0.80f)
 	, BlockedColor(0.25f, 0.02f, 0.02f, 0.0f)
 	, HighCostColor(1.0f, 0.25f, 0.02f, 0.35f)
 	, OccupiedColor(1.0f, 0.8f, 0.05f, 0.45f)
@@ -31,6 +33,14 @@ FLinearColor UGridCellVisualStyle::ResolveColor(const FGridCellVisualState& Stat
 	if (State.InteractionState == EGridCellInteractionVisualState::Hovered)
 	{
 		return HoveredColor;
+	}
+	if (State.OverlayState == EGridCellOverlayVisualState::Secondary)
+	{
+		return SecondaryOverlayColor;
+	}
+	if (State.OverlayState == EGridCellOverlayVisualState::Primary)
+	{
+		return PrimaryOverlayColor;
 	}
 
 	switch (State.PathState)
@@ -100,6 +110,8 @@ bool UGridCellVisualStyle::Validate(FString& OutError) const
 		UnselectedColor,
 		HoveredColor,
 		SelectedColor,
+		PrimaryOverlayColor,
+		SecondaryOverlayColor,
 		BlockedColor,
 		HighCostColor,
 		OccupiedColor,

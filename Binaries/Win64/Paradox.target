@@ -13,9 +13,9 @@
 	{
 		"MajorVersion": 5,
 		"MinorVersion": 8,
-		"PatchVersion": 0,
-		"Changelist": 55116800,
-		"CompatibleChangelist": 0,
+		"PatchVersion": 1,
+		"Changelist": 56057345,
+		"CompatibleChangelist": 55116800,
 		"IsLicenseeVersion": 0,
 		"IsPromotedBuild": 0,
 		"BranchName": "++UE5+Release-5.8",
@@ -85,6 +85,10 @@
 			"Type": "UFS"
 		},
 		{
+			"Path": "$(ProjectDir)/Plugins/FootstepSystem/FootstepSystem.uplugin",
+			"Type": "UFS"
+		},
+		{
 			"Path": "$(ProjectDir)/Plugins/GameplayActionsAI/GameplayActionsAI.uplugin",
 			"Type": "UFS"
 		},
@@ -102,6 +106,14 @@
 		},
 		{
 			"Path": "$(ProjectDir)/Plugins/LineOfSight/LineOfSight.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/ParadoxEditorTools/ParadoxEditorTools.uplugin",
+			"Type": "UFS"
+		},
+		{
+			"Path": "$(ProjectDir)/Plugins/PerceptionKnowledge/PerceptionKnowledge.uplugin",
 			"Type": "UFS"
 		},
 		{
@@ -3741,10 +3753,6 @@
 			"Type": "UFS"
 		},
 		{
-			"Path": "$(EngineDir)/Plugins/Experimental/ToolsetRegistry/ToolsetRegistry.uplugin",
-			"Type": "UFS"
-		},
-		{
 			"Path": "$(EngineDir)/Plugins/Experimental/Water/Water.uplugin",
 			"Type": "UFS"
 		},
@@ -4184,6 +4192,7 @@
 		"Fab",
 		"FacialAnimation",
 		"FileSandbox",
+		"FootstepSystem",
 		"Fracture",
 		"FullBodyIK",
 		"GLTFExporter",
@@ -4267,6 +4276,7 @@
 		"PCG",
 		"Paper2D",
 		"ParadoxEditorTools",
+		"PerceptionKnowledge",
 		"PerforceSourceControl",
 		"PhysicsControl",
 		"PixWinPlugin",
@@ -4313,7 +4323,6 @@
 		"TemplateSequence",
 		"TmvMedia",
 		"ToolPresets",
-		"ToolsetRegistry",
 		"TraceUtilities",
 		"TweeningUtils",
 		"UMGWidgetPreview",

@@ -29,16 +29,17 @@ public class Paradox : ModuleRules
 			"PhysicsCore",
 			"ProceduralMeshComponent",
 			"PuzzleSystem",
+			"SmartObjectsModule",
 			"EntityRelations",
 			"WorldState",
 			"TacticalPause",
-			"Niagara"
+			"Niagara",
+			"UMG"
 		});
 
 		PrivateDependencyModuleNames.AddRange(new string[] {
 			"Slate",
-			"SlateCore",
-			"UMG"
+			"SlateCore"
 		});
 
 		// Uncomment if you are using Slate UI

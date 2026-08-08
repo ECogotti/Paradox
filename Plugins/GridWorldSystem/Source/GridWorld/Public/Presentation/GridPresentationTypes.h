@@ -15,6 +15,15 @@ enum class EGridCellInteractionVisualState : uint8
 	Selected
 };
 
+/** Generic owner-scoped overlay layer. Consumers assign project meaning to Primary and Secondary. */
+UENUM(BlueprintType)
+enum class EGridCellOverlayVisualState : uint8
+{
+	None,
+	Primary,
+	Secondary
+};
+
 /** Independent path-presentation layer reserved for the cell-overlay milestone. */
 UENUM(BlueprintType)
 enum class EGridCellPathVisualState : uint8
@@ -53,6 +62,9 @@ struct GRIDWORLD_API FGridCellVisualState
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation")
 	EGridCellPathVisualState PathState = EGridCellPathVisualState::None;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation")
+	EGridCellOverlayVisualState OverlayState = EGridCellOverlayVisualState::None;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation", meta = (Bitmask, BitmaskEnum = "/Script/GridWorld.EGridCellNavigationVisualFlags"))
 	int32 NavigationFlags = static_cast<int32>(EGridCellNavigationVisualFlags::None);

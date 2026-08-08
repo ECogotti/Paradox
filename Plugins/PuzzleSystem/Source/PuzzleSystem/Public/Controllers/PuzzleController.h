@@ -8,6 +8,7 @@
 
 class UPuzzleCondition;
 class UPuzzleEmitterComponent;
+class UPuzzleGraphSubsystem;
 class UPuzzleReceiverComponent;
 class UPuzzleSignalPayload;
 class UBillboardComponent;
@@ -496,4 +497,6 @@ private:
 
 	/** Enables actor ticking while local debug is enabled so Details-panel toggles take effect. */
 	void UpdateDebugTickState();
+
+	friend class UPuzzleGraphSubsystem;
 };

@@ -5,6 +5,7 @@
 #include "DrawDebugHelpers.h"
 #include "Emitters/PuzzleEmitterComponent.h"
 #include "Engine/Texture2D.h"
+#include "Graph/PuzzleGraphSubsystem.h"
 #include "PuzzleSystem.h"
 #include "Receivers/PuzzleReceiverComponent.h"
 #include "UObject/ConstructorHelpers.h"
@@ -404,11 +405,26 @@ bool APuzzleController::InitializePuzzleController()
 
 	bIsInitialized = true;
 	EvaluateController();
+	if (UWorld* World = GetWorld())
+	{
+		if (UPuzzleGraphSubsystem* GraphSubsystem = World->GetSubsystem<UPuzzleGraphSubsystem>())
+		{
+			GraphSubsystem->RegisterOrRefreshController(this);
+		}
+	}
 	return true;
 }
 
 void APuzzleController::ShutdownPuzzleController()
 {
+	if (UWorld* World = GetWorld())
+	{
+		if (UPuzzleGraphSubsystem* GraphSubsystem = World->GetSubsystem<UPuzzleGraphSubsystem>())
+		{
+			GraphSubsystem->UnregisterController(this);
+		}
+	}
+
 	UnbindEmitters();
 
 	for (const TWeakObjectPtr<UPuzzleReceiverComponent>& ReceiverPtr : ResolvedReceivers)
@@ -460,6 +476,13 @@ void APuzzleController::EvaluateController()
 	while (bReevaluationRequested);
 
 	bIsEvaluating = false;
+	if (UWorld* World = GetWorld())
+	{
+		if (UPuzzleGraphSubsystem* GraphSubsystem = World->GetSubsystem<UPuzzleGraphSubsystem>())
+		{
+			GraphSubsystem->RefreshControllerState(this);
+		}
+	}
 }
 
 bool APuzzleController::TryGetInputState(FName InputId, FPuzzleSignalState& OutInputState) const

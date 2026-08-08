@@ -4,7 +4,14 @@
 #include "Components/StaticMeshComponent.h"
 #include "Components/TextRenderComponent.h"
 #include "Engine/StaticMesh.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "UObject/ConstructorHelpers.h"
+
+#if WITH_EDITOR
+#include "Misc/DataValidation.h"
+#endif
+
+#define LOCTEXT_NAMESPACE "ParadoxChronoSpawn"
 
 AParadoxChronoSpawn::AParadoxChronoSpawn()
 {
@@ -37,6 +44,8 @@ AParadoxChronoSpawn::AParadoxChronoSpawn()
 	StateLabel->SetWorldSize(28.0f);
 	StateLabel->SetRelativeLocation(FVector(0.0f, 0.0f, 28.0f));
 	StateLabel->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
+
+	SelectableComponent = CreateDefaultSubobject<UParadoxSelectableComponent>(TEXT("SelectableComponent"));
 }
 
 void AParadoxChronoSpawn::OnConstruction(const FTransform& Transform)
@@ -61,6 +70,40 @@ void AParadoxChronoSpawn::BeginPlay()
 			? EParadoxChronoSpawnState::Available
 			: EParadoxChronoSpawnState::Disabled);
 }
+
+#if WITH_EDITOR
+EDataValidationResult AParadoxChronoSpawn::IsDataValid(FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = Super::IsDataValid(Context);
+	if (Result == EDataValidationResult::NotValidated)
+	{
+		Result = EDataValidationResult::Valid;
+	}
+	auto AddError = [&Context, &Result](const FText& Message)
+	{
+		Context.AddError(Message);
+		Result = EDataValidationResult::Invalid;
+	};
+
+	if (!SceneRoot || GetRootComponent() != SceneRoot)
+	{
+		AddError(LOCTEXT("MissingSceneRoot", "Chrono Spawn requires its native Scene Root."));
+	}
+	if (!SelectionMesh || SelectionMesh->GetAttachParent() != SceneRoot)
+	{
+		AddError(LOCTEXT("MissingSelectionMesh", "Chrono Spawn requires Selection Mesh attached to Scene Root."));
+	}
+	if (!StateLabel || StateLabel->GetAttachParent() != SceneRoot)
+	{
+		AddError(LOCTEXT("MissingStateLabel", "Chrono Spawn requires State Label attached to Scene Root."));
+	}
+	if (!SelectableComponent)
+	{
+		AddError(LOCTEXT("MissingSelectableComponent", "Chrono Spawn requires its native Selectable Component."));
+	}
+	return Result;
+}
+#endif
 
 bool AParadoxChronoSpawn::IsAvailableForSelection() const
 {
@@ -142,3 +185,5 @@ void AParadoxChronoSpawn::ReceiveVisualStateChanged_Implementation(
 	StateLabel->SetTextRenderColor(LabelColor);
 	StateLabel->SetVisibility(true);
 }
+
+#undef LOCTEXT_NAMESPACE

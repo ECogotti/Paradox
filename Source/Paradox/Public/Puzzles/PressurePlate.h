@@ -13,7 +13,10 @@ class UCurveFloat;
 class UNiagaraComponent;
 class UNiagaraSystem;
 class UPerceptionKnowledgeSourceComponent;
+class UParadoxSelectableComponent;
+class UParadoxInteractionComponent;
 class UPrimitiveComponent;
+class USmartObjectComponent;
 class USoundBase;
 class UStaticMeshComponent;
 class UWorldStateParticipantComponent;
@@ -100,6 +103,18 @@ public:
 	/** PerceptionKnowledge source used for movement noise identity and native Hearing publication. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Pressure Plate|Components")
 	TObjectPtr<UPerceptionKnowledgeSourceComponent> PerceptionSource = nullptr;
+
+	/** Project-level hover, selection, outline, and optional world-widget capability. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Pressure Plate|Components")
+	TObjectPtr<UParadoxSelectableComponent> SelectableComponent = nullptr;
+
+	/** Smart Object slot authority; a null Definition is valid until a Blueprint assigns content. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Pressure Plate|Components")
+	TObjectPtr<USmartObjectComponent> SmartObjectComponent = nullptr;
+
+	/** Paradox-owned multi-interaction catalog projected from the Smart Object slots. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Pressure Plate|Components")
+	TObjectPtr<UParadoxInteractionComponent> InteractionComponent = nullptr;
 
 	/** Empty accepts every otherwise valid Actor; non-empty requires all configured AActor FName tags. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Pressure Plate|Occupancy")

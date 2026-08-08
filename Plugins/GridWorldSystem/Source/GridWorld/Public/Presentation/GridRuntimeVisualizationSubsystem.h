@@ -10,6 +10,7 @@
 
 class AActor;
 class UGridCellVisualStyle;
+class UGridCellOverlayPresentationSubsystem;
 class UGridPathPresentationSubsystem;
 class UGridWorldSubsystem;
 class UHierarchicalInstancedStaticMeshComponent;
@@ -83,6 +84,7 @@ protected:
 private:
 	friend class FGridRuntimeVisualizationLifecycleTest;
 	friend class FGridRuntimeVisualizationStateTest;
+	friend class UGridCellOverlayPresentationSubsystem;
 	friend class UGridPathPresentationSubsystem;
 
 	struct FGridCellVisualHandle
@@ -108,6 +110,7 @@ private:
 	TMap<FGridCellId, FGridCellVisualHandle> CellHandles;
 	TSet<FGridCellId> HoveredCells;
 	TSet<FGridCellId> SelectedCells;
+	TMap<FGridCellId, EGridCellOverlayVisualState> OverlayStates;
 	TMap<FGridCellId, FGridResolvedPathVisualState> PathStates;
 	FGridRevisionSet CachedRevisions;
 	int64 RendererGeneration = 0;
@@ -132,5 +135,6 @@ private:
 		EGridCellPathVisualState PathState,
 		float PathProgress = 0.0f);
 	void ReplaceResolvedPathStatesInternal(TMap<FGridCellId, FGridResolvedPathVisualState>&& NewStates);
+	void ReplaceResolvedOverlayStatesInternal(TMap<FGridCellId, EGridCellOverlayVisualState>&& NewStates);
 	bool GetVisualHandleForTesting(const FGridCellId& CellId, FGridCellVisualHandle& OutHandle) const;
 };

@@ -18,10 +18,10 @@
 
 #include <limits>
 
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_Action, "GameplayAction.Test.Action");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockA, "GameplayAction.Lock.Test.A");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockAChild, "GameplayAction.Lock.Test.A.Child");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockB, "GameplayAction.Lock.Test.B");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_Action, "GameplayAction.Test.Core.Action");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockA, "GameplayAction.Lock.Test.Conflict.Primary");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockAChild, "GameplayAction.Lock.Test.Conflict.Primary.Child");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_GameplayAction_Test_LockB, "GameplayAction.Lock.Test.Conflict.Secondary");
 
 namespace GameplayActionsTests
 {

@@ -22,6 +22,8 @@ PARADOX_API bool IsParadoxFootstepDebugEnabled();
 PARADOX_API bool IsParadoxPressurePlateDebugEnabled();
 /** Global half of the vertical-barrier visual debug gate. */
 PARADOX_API bool IsParadoxVerticalBarrierDebugEnabled();
+/** Global half of the Smart Object/GridWorld interaction-query debug gate. */
+PARADOX_API bool IsParadoxInteractionDebugEnabled();
 
 namespace ParadoxGameplayTags
 {
@@ -37,6 +39,18 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Interrupted_InvestigationSuperseded);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Origin_Investigation);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_InvestigationInspect);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Receiver);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Emitter);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Lock_Interaction);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_InvalidRequest);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_TargetUnavailable);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_InvalidPosition);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_SlotUnavailable);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_ClaimFailed);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_NotImplemented);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_EffectUnavailable);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_Prerequisites);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_GateClosed);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Computer_Powered);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Test_State_Active);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Test_Event_Noise);
@@ -52,6 +66,8 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_Moving);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_WaitingForClearance);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Barrier_TransportingOccupants);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Barrier_Open);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Barrier_Close);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Raise);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Lower);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Barrier_Impact);

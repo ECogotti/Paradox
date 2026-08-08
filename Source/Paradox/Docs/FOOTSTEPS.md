@@ -70,8 +70,8 @@ foot-contact frames. Notify intensity is `1.0` and socket override is empty, so 
 The astronaut profile uses one fallback:
 
 ```text
-EventTag    = PerceptionKnowledge.Event.Noise.Character.Footstep
-CauseTag    = PerceptionKnowledge.Cause.CharacterMovement.Footstep
+EventTag    = PerceptionKnowledge.Event.Paradox.Noise.Character.Footstep
+CauseTag    = PerceptionKnowledge.Cause.Paradox.CharacterMovement.Footstep
 BaseLoudness = 1.0
 MaxRange     = 0.0
 bEmitNoise   = true
@@ -95,7 +95,7 @@ calls `RequestSetCrouched` with an absolute value. The ready-to-use definition i
 ```
 
 It creates `UParadoxSetCrouchedAction`, uses
-`GameplayAction.Character.SetCrouched`, and writes `DesiredCrouched` to the recorded request. The
+`GameplayAction.Type.Paradox.Character.SetCrouched`, and writes `DesiredCrouched` to the recorded request. The
 action calls `Crouch()` or `UnCrouch()` and completes as soon as Character Movement accepts the
 persistent request.
 

@@ -5,7 +5,7 @@
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Interaction+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -29,6 +29,57 @@ conflicting-action interruption, new-request rejection, and independent lock own
 safe defer/retry, safety return, navigation ordering, attachment persistence after EndOverlap,
 Paradox Character Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport,
 and endpoint cleanup.
+
+`Paradox.Selection.*` covers hover/selected stencil transitions, exact restoration of existing
+Custom Depth/Stencil/write-mask state, RMB toggle/replacement and empty-world deselection,
+dynamic/destroyed mesh cleanup, idempotent reset, World State reset-start cleanup, lazy world-widget
+creation/context/teardown, selected interaction-cell refresh/cleanup, and native composition on
+Pressure Plate, Vertical Barrier, and Chrono Spawn.
+
+`Paradox.Interaction.*` covers several slots, several definitions on the same slot, Activity Tag and
+interaction-tag filtering, runtime slot transforms, deterministic ordering, GridWorld projection,
+Smart Object claims, ordinary occupancy/reservations, requester-owned state, traffic reservations,
+failure results, and the shared GridWorld style asset. Its `Action`, `Replay`, and `Hardening`
+groups additionally cover exact-tag submission, required Property Bag schema, native standard
+Definition defaults, standard Receiver/Emitter effects, reachability/effect preflight,
+claim acquisition only at start, every terminal release path, selection-reset separation,
+requester/target teardown, the non-implemented base fallback, one semantic recorded intent, fresh
+replay resolution/claim, immutable source tracks, replay origin/journal, and moved-requester
+failure without movement. `GridWorld.Presentation.CellOverlay.*` covers owner-lifetime sessions,
+priority, Primary/Secondary resolution, path coexistence, navigation immutability, and renderer
+reuse.
+
+`GameplayActionsGridWorld.Execution.*` verifies the reusable non-journaled executor contract; the
+existing runtime tests continue to cover the Grid Move adapter's AI and Player path-following
+behavior.
+
+Run the focused suites after building `ParadoxEditor`:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.Interaction; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.Selection; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests GridWorld.Presentation.CellOverlay; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.PressurePlate.Architecture; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.VerticalBarrier.Architecture; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+For PIE acceptance, assign valid Smart Object Definitions and interaction catalogs to Blueprint
+children of Pressure Plate and Vertical Barrier. RMB selection must show green Primary cells when
+at least one option is free and orange Secondary cells otherwise. LMB navigation and its path
+preview must remain active while the Actor outline is visible. Deselect, target destruction, and
+World State restore-start must remove the interaction cells immediately. Chrono Spawn must retain
+selection behavior without Smart Object or Paradox interaction components.
+
+For execution acceptance, give the possessed requester a `UGameplayActionComponent` and choose an
+exact catalog tag from the widget or call `RequestInteraction` directly. Confirm the action chooses
+the lowest-cost complete path, acquires one claim before movement, reaches the exact green cell,
+and revalidates before applying the effect. Exercise
+success, explicit failure, cancel, interrupt, and time-loop abort; each must release that claim.
+Block every path between presentation and submission/start and verify the request fails without
+rotation or teleport. Recording one accepted player
+request must add one semantic intent containing Definition identity, soft `Target`, and
+`InteractionTag`; replay must create a new action and claim while leaving the source track
+unchanged.
 
 ## Idle tail and recorded Time Travel
 

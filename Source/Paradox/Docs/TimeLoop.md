@@ -63,6 +63,13 @@ by the authoritative loop.
 The selection mesh is Visibility query-only and never blocks movement. Click/touch selects only
 during `ChronoSpawnSelection`; the same pointer commits movement only during `ActiveRun`.
 
+Every native Chrono Spawn also owns `UParadoxSelectableComponent` for the project-level Milestone
+1-2 outline and optional world widget. During `ChronoSpawnSelection`, the dedicated time-loop hover
+and selection state remains authoritative and generic selection input is bypassed. Outside that
+phase the direct `SelectionMesh` can participate in generic selection. Do not add a duplicate
+selectable component to a Chrono Spawn Blueprint. See
+[Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
+
 Selection immediately:
 
 - moves and enables the player at the chosen spawn;
@@ -140,6 +147,19 @@ A legal rewind:
 9. restores the World State baseline;
 10. reapplies occupied Chrono Spawn states;
 11. reconstructs every consolidated timeline in Temporal Index order.
+
+Smart Object interaction claims follow the same Gameplay Action lifecycle as movement and stance.
+Step 3 is therefore the authority that aborts a running `UParadoxInteractionActionBase` and releases
+its claim before WorldState mutation begins. The selection component's restore-start callback is
+presentation-only: it clears hover, outline, widget context, cached interaction options, and cell
+overlays, but never cancels actions or releases claims. Do not move claim ownership into WorldState,
+IntentReplay, or selection cleanup.
+
+An accepted interaction is journaled semantically by Gameplay Actions. Its replay payload keeps the
+Definition identity, soft world-authored `Target`, exact `InteractionTag`, and any authored action
+parameters. A reconstructed clone resolves current slots, GridWorld position, and a new Smart
+Object claim at playback time; runtime slot/claim/cell handles are never stored in the immutable
+track.
 
 Intent Replay tracks live in the transient package. The reflected consolidated-timeline array owns
 each full Timeline Bundle across reset. An empty finalized Action Track is valid. Callers receive
@@ -270,7 +290,7 @@ produce duplicate candidates for one authorized session.
 `VisualPerception` domain and is deliberately non-cacheable:
 
 - `ObserverIndex < TargetIndex` denies the relation with outcome
-  `Paradox.Relation.Outcome.FutureObserved`;
+  `Relation.Outcome.Paradox.FutureObserved`;
 - reverse or equal ordering is safe;
 - self-overlap, missing identity, non-temporal actors, invalid indices, stale sessions, and failed
   relation queries are ignored with a copied diagnostic snapshot.

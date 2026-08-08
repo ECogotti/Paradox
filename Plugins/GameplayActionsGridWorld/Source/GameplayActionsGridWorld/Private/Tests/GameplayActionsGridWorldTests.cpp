@@ -10,6 +10,7 @@
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
 #include "Components/GameplayActionComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
+#include "Execution/GridMoveToCellExecution.h"
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "GameFramework/PlayerController.h"
@@ -48,6 +49,27 @@ namespace GameplayActionsGridWorldTests
 		Definition->BlockedPolicy = EGameplayActionBlockedPolicy::Queue;
 		return Definition;
 	}
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FGameplayActionsGridWorldExecutionInvalidInputTest,
+	"GameplayActionsGridWorld.Execution.InvalidInputAndOneShotCleanup",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGameplayActionsGridWorldExecutionInvalidInputTest::RunTest(const FString& Parameters)
+{
+	FGridMoveToCellExecutionRequest Request;
+	const FGridMoveToCellEvaluationResult Evaluation = UGridMoveToCellExecution::Evaluate(Request);
+	TestFalse(TEXT("Evaluation rejects a missing Controller"), Evaluation.bCanExecute);
+	TestTrue(TEXT("Evaluation keeps an actionable diagnostic"), !Evaluation.DiagnosticMessage.IsEmpty());
+	UGridMoveToCellExecution* Execution = NewObject<UGridMoveToCellExecution>();
+	FString Diagnostic;
+	TestFalse(TEXT("Execution rejects a missing Controller"), Execution->Start(Request, Diagnostic));
+	TestTrue(TEXT("Start failure keeps an actionable diagnostic"), !Diagnostic.IsEmpty());
+	Execution->Cancel();
+	Execution->Cancel();
+	TestFalse(TEXT("Repeated cleanup leaves execution stopped"), Execution->IsRunning());
+	return true;
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(

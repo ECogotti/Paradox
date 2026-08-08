@@ -11,6 +11,28 @@ adjust collision, or specialize the provided events.
 ## Blueprint setup
 
 1. Create a Blueprint class derived from `APressurePlate`.
+
+The native Actor also owns `SelectableComponent`. It outlines the direct `FloorMesh` and
+`PlateMesh` components and may show an optional world-space widget when `SelectionWidgetClass` is
+configured. Do not add a second selectable component in the Blueprint. See
+[Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
+
+It also owns one native `SmartObjectComponent` attached to `BillboardRoot` and one
+`InteractionComponent`. Assign an engine-valid Smart Object Definition on the inherited Smart
+Object component, then add any number of `InteractionDefinitions` to the Paradox component. One
+definition may match several slots and every slot may expose several definitions. Use each
+definition's Activity Tag query to select the intended slots. A null Definition and empty catalog
+are valid and display no interaction cells; do not add duplicate native components in the
+Blueprint. The selectable's `bShowInteractionCellsWhenSelected` default is already enabled for this
+Actor.
+
+For standard puzzle controls, create a Data Asset based on
+`UParadoxEmitterInteractionActionDefinition`, choose On/Off, author the exact `SignalTag`, and set
+`EmitterComponentName` whenever the target owns more than one Emitter. The native Definition owns
+the required semantic/movement schema, locks and journaling. A request claims its Smart Object slot
+and moves to the cheapest reachable exact cell before publishing the signal. Custom effects may
+still derive from `UParadoxInteractionActionBase`.
+
 2. Assign the static support mesh to `FloorMesh` and the moving surface to `PlateMesh`.
 3. Adjust `OccupancyVolume` extent, relative transform, and collision responses so only intended
    object channels overlap it.
@@ -84,9 +106,9 @@ zero depth snaps safely. Actor Tick is used only while movement or requested deb
 One meaningful movement start may play the selected sound, activate the selected Niagara system,
 and emit one PerceptionKnowledge semantic Hearing event. Defaults are:
 
-- press event: `PerceptionKnowledge.Event.Noise.PressurePlate.Press`;
-- release event: `PerceptionKnowledge.Event.Noise.PressurePlate.Release`;
-- cause: `PerceptionKnowledge.Cause.PressurePlate.Movement`.
+- press event: `PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Press`;
+- release event: `PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Release`;
+- cause: `PerceptionKnowledge.Cause.Paradox.PressurePlate.Movement`.
 
 Use `bEmitNoiseOnPressMovement` and `bEmitNoiseOnReleaseMovement` independently. Loudness and max
 range control native Hearing; strength is retained in semantic observations. Initialization and
@@ -155,7 +177,13 @@ pending delay, reset guard, and noise configuration. The inherited PuzzleSwitch 
 separate `PuzzleSystem.Debug.Visual` global gate.
 
 Editor validation reports invalid hierarchy, navigation relevance, overlap configuration, negative
-movement values, invalid signal/noise tags, and missing integration components. If the plate does not
+movement values, invalid signal/noise tags, and missing native selection/Smart Object/interaction
+components. A deliberately unconfigured Smart Object Definition or interaction catalog is valid.
+Once the catalog is non-empty, validation also reports missing or unloadable action Definitions,
+invalid interaction tags, incompatible instance classes, disabled journaling, missing required
+Property Bag fields, a missing direct Smart Object component, or a non-empty catalog without a
+Smart Object Definition.
+If the plate does not
 activate, first check the volume's collision responses, the candidate Actor's **Actor → Tags**, and any
 Blueprint `CanOccupantActivatePlate` override. Optional sound and Niagara assets may remain unset;
 occupancy and signal publication still work.

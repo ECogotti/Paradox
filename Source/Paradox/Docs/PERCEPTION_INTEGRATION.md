@@ -44,7 +44,7 @@ The native default policy is:
 
 | Observation | Rule ID | Priority | Result |
 |---|---|---:|---|
-| Sight state `Computer.State.Powered`, unexpected value/status | `Sight.ComputerPowered.High` | 300 | Investigate |
+| Sight state `PerceptionKnowledge.State.Paradox.Computer.Powered`, unexpected value/status | `Sight.ComputerPowered.High` | 300 | Investigate |
 | Sight state, unexpected value/status | `Sight.UnexpectedState.Default` | 200 | Investigate |
 | Hearing event, unexpected observation | `Hearing.UnexpectedEvent.Default` | 100 | Investigate |
 | Matched, duplicate, raw Sight without mismatch | none | 0 | Ignore |
@@ -74,7 +74,7 @@ the current investigation remains authoritative.
 ## Native PIE fixtures
 
 `AParadoxSemanticStateCube` exposes a configurable bool state and visual material/color feedback.
-Its default state is `Computer.State.Powered`. Its native
+Its default state is `PerceptionKnowledge.State.Paradox.Computer.Powered`. Its native
 `UPerceptionKnowledgeSourceComponent` already has Sight enabled, fills the native stimuli-sense
 list in `OnRegister`, registers itself with AI Perception, and exposes newly-created semantic
 states through Sight. Do not call `Register for Sense` from the Blueprint `BeginPlay`; that node is
@@ -100,8 +100,8 @@ into native semantic noise. It preserves the contact location and owning Charact
 and uses:
 
 ```text
-PerceptionKnowledge.Event.Noise.Character.Footstep
-PerceptionKnowledge.Cause.CharacterMovement.Footstep
+PerceptionKnowledge.Event.Paradox.Noise.Character.Footstep
+PerceptionKnowledge.Cause.Paradox.CharacterMovement.Footstep
 ```
 
 The default astronaut noise profile uses listener-controlled range and scales loudness/strength by
@@ -143,7 +143,7 @@ to `Investigating` with priority 100. Only `ObserverCaused + Verified` is filter
 
 Paradox enables
 `bTreatPersistentStateObservationsAsOrderedSnapshots` with strict persistent identity. If T0 saw
-`Computer.State.Powered=false`, lost Sight, and recorded a later reacquisition, that second State
+`PerceptionKnowledge.State.Paradox.Computer.Powered=false`, lost Sight, and recorded a later reacquisition, that second State
 snapshot remains pending even when replay movement reacquires the cube more than 0.25 seconds
 late. Reacquiring it as `true` produces `UnexpectedStateValue`, so
 `Sight.ComputerPowered.High` starts priority-300 investigation. Snapshot order, Entity ID,

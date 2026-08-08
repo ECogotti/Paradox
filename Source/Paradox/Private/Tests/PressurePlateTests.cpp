@@ -15,7 +15,10 @@
 #include "EngineUtils.h"
 #include "NiagaraComponent.h"
 #include "Paradox.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "PressurePlateTestTypes.h"
+#include "SmartObjectComponent.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "TimerManager.h"
 
@@ -153,6 +156,20 @@ bool FPressurePlateArchitectureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("OccupancyVolume generates overlaps"), Defaults->OccupancyVolume && Defaults->OccupancyVolume->GetGenerateOverlapEvents());
 	TestNotNull(TEXT("Pressure Plate owns one World State participant"), Defaults->WorldStateParticipant.Get());
 	TestNotNull(TEXT("Pressure Plate owns one PerceptionKnowledge source"), Defaults->PerceptionSource.Get());
+	TestNotNull(TEXT("Pressure Plate owns one Selectable Component"), Defaults->SelectableComponent.Get());
+	TestTrue(TEXT("Pressure Plate opts into selected interaction-cell presentation"),
+		Defaults->SelectableComponent
+			&& Defaults->SelectableComponent->bShowInteractionCellsWhenSelected);
+	TestNotNull(TEXT("Pressure Plate owns one Smart Object Component"), Defaults->SmartObjectComponent.Get());
+	TestTrue(TEXT("Pressure Plate Smart Object attaches to BillboardRoot"),
+		Defaults->SmartObjectComponent
+			&& Defaults->SmartObjectComponent->GetAttachParent() == Defaults->BillboardRoot);
+	TestNotNull(TEXT("Pressure Plate owns one Paradox Interaction Component"), Defaults->InteractionComponent.Get());
+	TestNull(TEXT("Pressure Plate permits an unassigned Smart Object Definition"),
+		Defaults->SmartObjectComponent ? Defaults->SmartObjectComponent->GetDefinition() : nullptr);
+	TestEqual(TEXT("Pressure Plate permits an empty native interaction catalog"),
+		Defaults->InteractionComponent ? Defaults->InteractionComponent->InteractionDefinitions.Num() : INDEX_NONE,
+		0);
 	TestEqual(
 		TEXT("Pressure Plate defaults to Released initial input"),
 		Defaults->InitialInputState,

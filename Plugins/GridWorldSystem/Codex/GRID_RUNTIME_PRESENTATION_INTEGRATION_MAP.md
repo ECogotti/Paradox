@@ -91,3 +91,27 @@ This file records the existing-plugin ownership map required before implementing
 - `GameplayActionsGridWorld` extends its existing request schema with `PathSource` and `InjectedPath`. `PostLoad` migrates pre-Milestone-5 Definition assets while preserving authored destination settings.
 - Exact is the only injection mode implemented. Waypoint, prefix, repair/rejoin, and mandatory-waypoint recovery are deferred to Milestone 6 rather than exposed as non-functional modes.
 - Validation coverage adds `GridWorld.Presentation.Path.Prediction.ExactInjectionValidation`; build and complete `GridWorld.Presentation.*` / `GridWorld.*` suites remain mandatory.
+
+## Paradox interaction-overlay integration record
+
+- `UGridCellOverlayPresentationSubsystem` is the generic owner-scoped extension used by Paradox
+  interaction affordances. It belongs to the GridWorld runtime module because it composes the
+  existing cell presentation layers and HISM mapping; it contains no Paradox, Smart Object,
+  Gameplay Action, selection, or puzzle dependency.
+- The semantic states are deliberately generic `Primary` and `Secondary`. Paradox assigns Free and
+  unavailable meaning before submitting deduplicated entries. GridWorld only validates stable cell
+  identity, owns session lifetime/overlap resolution, and publishes the resolved layer.
+- Overlay state is stored beside, not inside, direct hover/selection, path, or navigation state.
+  Rebuilding one contribution cannot clear another. The default style's visible precedence does
+  not discard the lower-priority semantic channels available to custom materials.
+- Sessions require a weak owner and use create/update/clear/visible/priority/release operations.
+  They create no renderer object; the only renderer remains
+  `UGridRuntimeVisualizationSubsystem` and its chunked HISM Actor.
+- Presentation validates cells against the immutable snapshot but never calls navigation mutation,
+  occupancy, reservation, pathfinding, or claim APIs. Topology publication drops stale rendered
+  contributions while leaving surviving session data inspectable for an owner-driven refresh.
+- `UGridCellVisualStyle` now owns `PrimaryOverlayColor` and `SecondaryOverlayColor`. Paradox supplies
+  `/Game/Data/GridWorld/DA_ParadoxGridCellStyle`, reusing GridWorld's existing block mesh and runtime
+  material for both path and interaction-cell presentation.
+- Validation coverage is `GridWorld.Presentation.CellOverlay.*`, including ownership, priority,
+  path coexistence, style resolution, navigation immutability, and owner-GC cleanup.

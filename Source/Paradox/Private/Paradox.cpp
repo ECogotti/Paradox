@@ -41,6 +41,12 @@ namespace
 		0,
 		TEXT("Enables vertical-barrier passage, passenger, and movement diagnostics when local debug is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxInteractionDebug(
+		TEXT("Paradox.Interaction.Debug"),
+		0,
+		TEXT("Enables event-driven Smart Object slot and GridWorld interaction diagnostics when local debug is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -68,77 +74,108 @@ bool IsParadoxVerticalBarrierDebugEnabled()
 	return CVarParadoxVerticalBarrierDebug.GetValueOnGameThread() != 0;
 }
 
+bool IsParadoxInteractionDebugEnabled()
+{
+	return CVarParadoxInteractionDebug.GetValueOnGameThread() != 0;
+}
+
 namespace ParadoxGameplayTags
 {
 	UE_DEFINE_GAMEPLAY_TAG(Origin_Player, "GameplayAction.Origin.Player");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Action_SetCrouched,
-		"GameplayAction.Character.SetCrouched");
+		"GameplayAction.Type.Paradox.Character.SetCrouched");
 	UE_DEFINE_GAMEPLAY_TAG(Lock_Stance, "GameplayAction.Lock.Stance");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Action_TimeTravel,
-		"GameplayAction.Paradox.TimeTravel");
+		"GameplayAction.Type.Paradox.TimeLoop.TimeTravel");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Lock_TimeTravel,
-		"GameplayAction.Lock.TimeTravel");
+		"GameplayAction.Lock.Paradox.TimeTravel");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Outcome_FutureObserved,
-		"Paradox.Relation.Outcome.FutureObserved");
+		"Relation.Outcome.Paradox.FutureObserved");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Reason_FutureTemporalOrder,
-		"Paradox.Relation.Reason.FutureTemporalOrder");
+		"Relation.Reason.Paradox.FutureTemporalOrder");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Reason_SafeTemporalOrder,
-		"Paradox.Relation.Reason.SafeTemporalOrder");
+		"Relation.Reason.Paradox.SafeTemporalOrder");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Interrupted_ByInvestigation,
-		"GameplayAction.Result.Interrupted.ByInvestigation");
+		"GameplayAction.Result.Interrupted.Paradox.Investigation.Started");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Interrupted_InvestigationSuperseded,
-		"GameplayAction.Result.Interrupted.InvestigationSuperseded");
+		"GameplayAction.Result.Interrupted.Paradox.Investigation.Superseded");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Origin_Investigation,
-		"GameplayAction.Origin.Investigation");
+		"GameplayAction.Origin.Paradox.Investigation");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Action_InvestigationInspect,
-		"GameplayAction.Investigation.Inspect");
+		"GameplayAction.Type.Paradox.Investigation.Inspect");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Receiver, "GameplayAction.Type.Paradox.Interaction.Receiver.SetState");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Emitter, "GameplayAction.Type.Paradox.Interaction.Emitter.SetSignal");
+	UE_DEFINE_GAMEPLAY_TAG(Lock_Interaction, "GameplayAction.Lock.Interaction");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_InvalidRequest,
+		"GameplayAction.Result.Failure.Paradox.Interaction.InvalidRequest");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_TargetUnavailable,
+		"GameplayAction.Result.Failure.Paradox.Interaction.TargetUnavailable");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_InvalidPosition,
+		"GameplayAction.Result.Failure.Paradox.Interaction.InvalidPosition");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_SlotUnavailable,
+		"GameplayAction.Result.Failure.Paradox.Interaction.SlotUnavailable");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_ClaimFailed,
+		"GameplayAction.Result.Failure.Paradox.Interaction.ClaimFailed");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_Interaction_NotImplemented,
+		"GameplayAction.Result.Failure.Paradox.Interaction.NotImplemented");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Interaction_EffectUnavailable, "GameplayAction.Result.Failure.Paradox.Interaction.EffectUnavailable");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Interaction_Prerequisites, "GameplayAction.Result.Failure.Paradox.Interaction.Prerequisites");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Interaction_GateClosed, "GameplayAction.Result.Failure.Paradox.Interaction.GateClosed");
 	UE_DEFINE_GAMEPLAY_TAG(
 		State_Computer_Powered,
-		"Computer.State.Powered");
+		"PerceptionKnowledge.State.Paradox.Computer.Powered");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Test_State_Active,
-		"Paradox.Test.State.Active");
+		"PerceptionKnowledge.State.Test.Paradox.Active");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Test_Event_Noise,
-		"Paradox.Test.Event.Noise");
+		"PerceptionKnowledge.Event.Test.Paradox.Noise");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Event_Noise_Character_Footstep,
-		"PerceptionKnowledge.Event.Noise.Character.Footstep");
+		"PerceptionKnowledge.Event.Paradox.Noise.Character.Footstep");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Cause_CharacterMovement_Footstep,
-		"PerceptionKnowledge.Cause.CharacterMovement.Footstep");
+		"PerceptionKnowledge.Cause.Paradox.CharacterMovement.Footstep");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Puzzle_Signal_Pressed,
 		"Puzzle.Signal.Pressed");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Event_Noise_PressurePlate_Press,
-		"PerceptionKnowledge.Event.Noise.PressurePlate.Press");
+		"PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Press");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Event_Noise_PressurePlate_Release,
-		"PerceptionKnowledge.Event.Noise.PressurePlate.Release");
+		"PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Release");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Cause_PressurePlate_Movement,
-		"PerceptionKnowledge.Cause.PressurePlate.Movement");
+		"PerceptionKnowledge.Cause.Paradox.PressurePlate.Movement");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Interrupted_ByBarrierLift,
-		"GameplayAction.Result.Interrupted.ByBarrierLift");
-	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Open, "Barrier.State.Open");
-	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_BlockingPassage, "Barrier.State.BlockingPassage");
-	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Moving, "Barrier.State.Moving");
-	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_WaitingForClearance, "Barrier.State.WaitingForClearance");
-	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_TransportingOccupants, "Barrier.State.TransportingOccupants");
-	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Raise, "PerceptionKnowledge.Event.Noise.Barrier.Raise");
-	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Lower, "PerceptionKnowledge.Event.Noise.Barrier.Lower");
-	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Impact, "PerceptionKnowledge.Event.Noise.Barrier.Impact");
-	UE_DEFINE_GAMEPLAY_TAG(Cause_Barrier_Movement, "PerceptionKnowledge.Cause.Barrier.Movement");
+		"GameplayAction.Result.Interrupted.Paradox.Barrier.Transport");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Open, "PerceptionKnowledge.State.Paradox.Barrier.Open");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_BlockingPassage, "PerceptionKnowledge.State.Paradox.Barrier.BlockingPassage");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_Moving, "PerceptionKnowledge.State.Paradox.Barrier.Moving");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_WaitingForClearance, "PerceptionKnowledge.State.Paradox.Barrier.WaitingForClearance");
+	UE_DEFINE_GAMEPLAY_TAG(State_Barrier_TransportingOccupants, "PerceptionKnowledge.State.Paradox.Barrier.TransportingOccupants");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_Barrier_Open, "Interaction.Paradox.Barrier.Open");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_Barrier_Close, "Interaction.Paradox.Barrier.Close");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Raise, "PerceptionKnowledge.Event.Paradox.Noise.Barrier.Raise");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Lower, "PerceptionKnowledge.Event.Paradox.Noise.Barrier.Lower");
+	UE_DEFINE_GAMEPLAY_TAG(Event_Noise_Barrier_Impact, "PerceptionKnowledge.Event.Paradox.Noise.Barrier.Impact");
+	UE_DEFINE_GAMEPLAY_TAG(Cause_Barrier_Movement, "PerceptionKnowledge.Cause.Paradox.Barrier.Movement");
 }

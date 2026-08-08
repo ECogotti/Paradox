@@ -21,7 +21,10 @@
 #include "GameplayActionTags.h"
 #include "Interfaces/MovementBaseInterface.h"
 #include "NiagaraComponent.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "ParadoxVerticalBarrierTestTypes.h"
+#include "SmartObjectComponent.h"
 
 namespace UE::Paradox::VerticalBarrier::Tests
 {
@@ -119,6 +122,20 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Closed Start is the native initial endpoint"), Defaults->InitialPosition, EPuzzleTransformMoverInitialPosition::Start);
 	TestNotNull(TEXT("World State participant exists"), Defaults->WorldStateParticipant.Get());
 	TestNotNull(TEXT("Perception source exists"), Defaults->PerceptionSource.Get());
+	TestNotNull(TEXT("Selectable Component exists"), Defaults->SelectableComponent.Get());
+	TestTrue(TEXT("Vertical Barrier opts into selected interaction-cell presentation"),
+		Defaults->SelectableComponent
+			&& Defaults->SelectableComponent->bShowInteractionCellsWhenSelected);
+	TestNotNull(TEXT("Smart Object Component exists"), Defaults->SmartObjectComponent.Get());
+	TestTrue(TEXT("Smart Object Component attaches to inherited root"),
+		Defaults->SmartObjectComponent
+			&& Defaults->SmartObjectComponent->GetAttachParent() == Defaults->BillboardRoot.Get());
+	TestNotNull(TEXT("Paradox Interaction Component exists"), Defaults->InteractionComponent.Get());
+	TestNull(TEXT("Vertical Barrier permits an unassigned Smart Object Definition"),
+		Defaults->SmartObjectComponent ? Defaults->SmartObjectComponent->GetDefinition() : nullptr);
+	TestEqual(TEXT("Vertical Barrier permits an empty native interaction catalog"),
+		Defaults->InteractionComponent ? Defaults->InteractionComponent->InteractionDefinitions.Num() : INDEX_NONE,
+		0);
 	return true;
 }
 

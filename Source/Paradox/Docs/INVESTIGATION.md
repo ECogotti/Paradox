@@ -21,7 +21,7 @@ Commit then:
 1. advances `InvestigationRevision`;
 2. changes callback correlation before ending the old handle;
 3. interrupts only the investigation-owned action with
-   `GameplayAction.Result.Interrupted.InvestigationSuperseded`;
+   `GameplayAction.Result.Interrupted.Paradox.Investigation.Superseded`;
 4. replaces the context and Blackboard mirror;
 5. submits the new action;
 6. broadcasts the exact new revision to the still-running BT task.

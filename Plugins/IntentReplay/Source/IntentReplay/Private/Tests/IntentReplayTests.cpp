@@ -23,12 +23,12 @@
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Action, "GameplayAction.Test.IntentReplay.Action");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_ActionChanged, "GameplayAction.Test.IntentReplay.ActionChanged");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_OriginPlayer, "GameplayAction.Origin.TestPlayer");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Correlation, "GameplayAction.Correlation.TestIntentReplay");
-UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_MovementLock, "GameplayAction.Lock.Test.IntentReplayMovement");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_OriginPlayer, "GameplayAction.Origin.Test.IntentReplay.Player");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_Correlation, "IntentReplay.Correlation.Test.Intent");
+UE_DEFINE_GAMEPLAY_TAG_STATIC(TAG_IntentReplay_Test_MovementLock, "GameplayAction.Lock.Test.IntentReplay.Movement");
 UE_DEFINE_GAMEPLAY_TAG_STATIC(
 	TAG_IntentReplay_Test_ExternalRecovery,
-	"GameplayAction.Result.Interrupted.TestExternalRecovery");
+	"GameplayAction.Result.Interrupted.Test.IntentReplay.ExternalRecovery");
 
 namespace IntentReplayTests
 {

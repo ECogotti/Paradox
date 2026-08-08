@@ -30,14 +30,18 @@
 #include "Interaction/GridCellPointerComponent.h"
 #include "Prediction/GridPathPreviewComponent.h"
 #include "Presentation/GridPathLineVisualizationSubsystem.h"
+#include "Presentation/GridCellVisualStyle.h"
 #include "Presentation/GridRuntimeVisualizationSubsystem.h"
 #include "InputActionValue.h"
+#include "InputCoreTypes.h"
 #include "EnhancedInputSubsystems.h"
 #include "HAL/IConsoleManager.h"
 #include "Misc/App.h"
 #include "Engine/LocalPlayer.h"
 #include "GameModes/ParadoxGameMode.h"
 #include "Paradox.h"
+#include "Interaction/ParadoxSelectionComponent.h"
+#include "Interaction/ParadoxWidgetInteractionComponent.h"
 #include "Presentation/ParadoxOutcomePresentationComponent.h"
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
@@ -146,6 +150,7 @@ AParadoxPlayerController::AParadoxPlayerController()
 	bIsTouch = false;
 	bMoveToMouseCursor = false;
 	bHasCachedDestination = false;
+	bPrimaryPointerConsumedByWidget = false;
 	// PlayerController already pause-ticks in UE 5.8; full tick keeps pointer projection, camera,
 	// Enhanced Input, and path-preview replanning active while gameplay simulation is paused.
 	bShouldPerformFullTickWhenPaused = true;
@@ -160,6 +165,13 @@ AParadoxPlayerController::AParadoxPlayerController()
 	GridCellPointerComponent->bApplyHoverToVisualization = false;
 	GridPathPreviewComponent = CreateDefaultSubobject<UGridPathPreviewComponent>(
 		TEXT("Grid Path Preview Component"));
+	SelectionComponent = CreateDefaultSubobject<UParadoxSelectionComponent>(
+		TEXT("Selection Component"));
+	WidgetInteractionComponent = CreateDefaultSubobject<UParadoxWidgetInteractionComponent>(
+		TEXT("Widget Interaction Component"));
+	WidgetInteractionComponent->InteractionSource = EWidgetInteractionSource::Custom;
+	WidgetInteractionComponent->bEnableHitTesting = true;
+	WidgetInteractionComponent->bShowDebug = false;
 	OutcomePresentationComponent =
 		CreateDefaultSubobject<UParadoxOutcomePresentationComponent>(
 			TEXT("Outcome Presentation Component"));
@@ -181,6 +193,8 @@ AParadoxPlayerController::AParadoxPlayerController()
 	CachedDestination = FVector::ZeroVector;
 	FollowTime = 0.f;
 	CameraRigClass = AParadoxCameraRig::StaticClass();
+	RuntimeGridCellVisualStyle = TSoftObjectPtr<UGridCellVisualStyle>(
+		FSoftObjectPath(TEXT("/Game/Data/GridWorld/DA_ParadoxGridCellStyle.DA_ParadoxGridCellStyle")));
 
 	static ConstructorHelpers::FObjectFinder<UGameplayActionDefinition> MoveToGridCellDefinitionFinder(
 		TEXT("/GameplayActionsGridWorld/Definitions/DA_GameplayAction_MoveToGridCell.DA_GameplayAction_MoveToGridCell"));
@@ -224,6 +238,20 @@ void AParadoxPlayerController::GetActorEyesViewPoint(
 void AParadoxPlayerController::BeginPlay()
 {
 	Super::BeginPlay();
+	ResolvedRuntimeGridCellVisualStyle = RuntimeGridCellVisualStyle.IsNull()
+		? nullptr
+		: RuntimeGridCellVisualStyle.LoadSynchronous();
+	if (!RuntimeGridCellVisualStyle.IsNull() && !ResolvedRuntimeGridCellVisualStyle)
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Player Controller '%s' could not load GridWorld style '%s'."),
+			*GetNameSafe(this),
+			*RuntimeGridCellVisualStyle.ToSoftObjectPath().ToString());
+	}
+	if (GridPathPreviewComponent && ResolvedRuntimeGridCellVisualStyle)
+	{
+		GridPathPreviewComponent->CellVisualStyle = ResolvedRuntimeGridCellVisualStyle;
+	}
 	if (PerceptionKnowledgeListener)
 	{
 		UPerceptionKnowledgeProfile* ListenerProfile =
@@ -264,7 +292,7 @@ void AParadoxPlayerController::BeginPlay()
 		{
 			if (UGridRuntimeVisualizationSubsystem* Cells = GetWorld()->GetSubsystem<UGridRuntimeVisualizationSubsystem>())
 			{
-				Cells->EnableVisualization();
+				Cells->EnableVisualization(ResolvedRuntimeGridCellVisualStyle);
 			}
 		}
 		if (PathFollowingComponent->bPresentActivePathAsLine)
@@ -296,6 +324,12 @@ void AParadoxPlayerController::BeginPlay()
 
 void AParadoxPlayerController::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (bPrimaryPointerConsumedByWidget && WidgetInteractionComponent)
+	{
+		WidgetInteractionComponent->ReleasePointerKey(EKeys::LeftMouseButton);
+	}
+	bPrimaryPointerConsumedByWidget = false;
+	ClearMousePointerState();
 	bRecordedTimeTravelPending = false;
 	bRecordedTimeTravelExecutionScheduled = false;
 	if (TacticalPauseSubsystem)
@@ -325,19 +359,25 @@ void AParadoxPlayerController::PlayerTick(float DeltaTime)
 	}
 	if (IsChronoSpawnSelectionActive())
 	{
+		ClearMousePointerState();
 		UpdateChronoSpawnHover(false);
 		if (GridPathPreviewComponent)
 		{
 			GridPathPreviewComponent->ClearPreview();
 		}
 	}
-	else if (bEnablePointerPathPrediction && IsMovementInputAllowed())
+	else
 	{
-		UpdatePointerPrediction(false);
-	}
-	else if (GridPathPreviewComponent)
-	{
-		GridPathPreviewComponent->ClearPreview();
+		UpdateMousePointerState();
+		if (bEnablePointerPathPrediction
+			&& IsMovementInputAllowed())
+		{
+			UpdatePointerPrediction(false);
+		}
+		else if (GridPathPreviewComponent)
+		{
+			GridPathPreviewComponent->ClearPreview();
+		}
 	}
 }
 
@@ -399,10 +439,15 @@ void AParadoxPlayerController::SetupInputComponent()
 			EnhancedInputComponent->BindAction(SetDestinationClickAction, ETriggerEvent::Canceled, this, &AParadoxPlayerController::OnSetDestinationReleased);
 
 			// Setup touch input events
-			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Started, this, &AParadoxPlayerController::OnInputStarted);
+			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Started, this, &AParadoxPlayerController::OnTouchStarted);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Triggered, this, &AParadoxPlayerController::OnTouchTriggered);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Completed, this, &AParadoxPlayerController::OnTouchReleased);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Canceled, this, &AParadoxPlayerController::OnTouchReleased);
+			InputComponent->BindKey(
+				EKeys::RightMouseButton,
+				IE_Pressed,
+				this,
+				&AParadoxPlayerController::OnSelectionTriggered);
 			if (RewindAction)
 			{
 				EnhancedInputComponent->BindAction(
@@ -481,11 +526,28 @@ void AParadoxPlayerController::SetupInputComponent()
 
 void AParadoxPlayerController::OnInputStarted()
 {
+	bPrimaryPointerConsumedByWidget = false;
 	if (IsChronoSpawnSelectionActive())
 	{
 		bHasCachedDestination = false;
 		UpdateChronoSpawnHover(bIsTouch);
 		return;
+	}
+
+	if (!bIsTouch)
+	{
+		UpdateMousePointerState();
+		if (WidgetInteractionComponent && WidgetInteractionComponent->IsOverInteractableWidget())
+		{
+			WidgetInteractionComponent->PressPointerKey(EKeys::LeftMouseButton);
+			bPrimaryPointerConsumedByWidget = true;
+			bHasCachedDestination = false;
+			if (GridPathPreviewComponent)
+			{
+				GridPathPreviewComponent->ClearPreview();
+			}
+			return;
+		}
 	}
 	if (!IsMovementInputAllowed())
 	{
@@ -500,6 +562,10 @@ void AParadoxPlayerController::OnInputStarted()
 
 void AParadoxPlayerController::OnSetDestinationTriggered()
 {
+	if (bPrimaryPointerConsumedByWidget)
+	{
+		return;
+	}
 	if (IsChronoSpawnSelectionActive())
 	{
 		UpdateChronoSpawnHover(bIsTouch);
@@ -523,6 +589,17 @@ void AParadoxPlayerController::OnSetDestinationReleased()
 	{
 		TrySelectChronoSpawn(bIsTouch);
 		FollowTime = 0.f;
+		bHasCachedDestination = false;
+		return;
+	}
+	if (bPrimaryPointerConsumedByWidget)
+	{
+		if (WidgetInteractionComponent)
+		{
+			WidgetInteractionComponent->ReleasePointerKey(EKeys::LeftMouseButton);
+		}
+		bPrimaryPointerConsumedByWidget = false;
+		FollowTime = 0.0f;
 		bHasCachedDestination = false;
 		return;
 	}
@@ -599,6 +676,13 @@ void AParadoxPlayerController::OnSetDestinationReleased()
 
 	FollowTime = 0.f;
 	bHasCachedDestination = false;
+	bPrimaryPointerConsumedByWidget = false;
+}
+
+void AParadoxPlayerController::OnTouchStarted()
+{
+	bIsTouch = true;
+	OnInputStarted();
 }
 
 // Triggered every frame when the input is held down
@@ -619,6 +703,19 @@ void AParadoxPlayerController::OnTouchReleased()
 		return;
 	}
 	OnSetDestinationReleased();
+}
+
+void AParadoxPlayerController::OnSelectionTriggered()
+{
+	if (IsChronoSpawnSelectionActive())
+	{
+		return;
+	}
+	UpdateMousePointerState();
+	if (SelectionComponent)
+	{
+		SelectionComponent->HandleSelectionPointerHit(CachedMouseHit, bHasCachedMouseHit);
+	}
 }
 
 void AParadoxPlayerController::OnRewindTriggered()
@@ -719,6 +816,51 @@ void AParadoxPlayerController::OnCameraRotateRightTriggered()
 	RequestCameraRotation(-1);
 }
 
+void AParadoxPlayerController::UpdateMousePointerState()
+{
+	if (!IsLocalPlayerController() || bIsTouch)
+	{
+		ClearMousePointerState();
+		return;
+	}
+	if (CachedMouseHitFrame == GFrameCounter)
+	{
+		return;
+	}
+	CachedMouseHitFrame = GFrameCounter;
+
+	FHitResult HitResult;
+	bHasCachedMouseHit = GetHitResultUnderCursor(
+		ECollisionChannel::ECC_Visibility,
+		true,
+		HitResult);
+	CachedMouseHit = bHasCachedMouseHit ? HitResult : FHitResult();
+	if (SelectionComponent)
+	{
+		SelectionComponent->UpdateHoverFromHitResult(CachedMouseHit, bHasCachedMouseHit);
+	}
+	if (WidgetInteractionComponent)
+	{
+		WidgetInteractionComponent->SetCustomHitResult(CachedMouseHit);
+		WidgetInteractionComponent->RefreshFromCustomHitResult();
+	}
+}
+
+void AParadoxPlayerController::ClearMousePointerState()
+{
+	bHasCachedMouseHit = false;
+	CachedMouseHit = FHitResult();
+	if (SelectionComponent)
+	{
+		SelectionComponent->UpdateHoverFromHitResult(CachedMouseHit, false);
+	}
+	if (WidgetInteractionComponent)
+	{
+		WidgetInteractionComponent->SetCustomHitResult(CachedMouseHit);
+		WidgetInteractionComponent->RefreshFromCustomHitResult();
+	}
+}
+
 void AParadoxPlayerController::UpdateCachedDestination()
 {
 	if (!IsMovementInputAllowed())
@@ -736,7 +878,8 @@ void AParadoxPlayerController::UpdateCachedDestination()
 	}
 	else
 	{
-		bHitSuccessful = GetHitResultUnderCursor(ECollisionChannel::ECC_Visibility, true, Hit);
+		bHitSuccessful = bHasCachedMouseHit;
+		Hit = CachedMouseHit;
 	}
 
 	// If we hit a surface, cache the location
@@ -786,16 +929,9 @@ void AParadoxPlayerController::UpdatePointerPrediction(bool bUseTouchInput)
 			PointerResult = GridCellPointerComponent->UpdateFromHitResult(Hit);
 		}
 	}
-	else
+	else if (bHasCachedMouseHit)
 	{
-		float MouseX = 0.0f;
-		float MouseY = 0.0f;
-		if (GetMousePosition(MouseX, MouseY))
-		{
-			PointerResult = GridCellPointerComponent->UpdateFromScreenPosition(
-				this,
-				FVector2D(MouseX, MouseY));
-		}
+		PointerResult = GridCellPointerComponent->UpdateFromHitResult(CachedMouseHit);
 	}
 
 	if (PointerResult.Status != EGridCellPointerStatus::Success)

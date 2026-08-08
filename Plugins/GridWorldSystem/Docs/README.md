@@ -104,6 +104,20 @@ For cursor/controller integration, add a **Grid Cell Pointer Component** and cal
 
 Create a **Grid Cell Visual Style** Data Asset for a custom plane, material, colors, inset, floor offset, culling, or shadows. Assign the material on this style, because it overrides the Static Mesh material slot, and enable **Used with Instanced Static Meshes** on custom materials. The fixed ten-float Per Instance Custom Data contract contains interaction, path, navigation flags, emphasis, resolved RGBA, path progress, and one custom scalar. The default material reads resolved RGBA. Path presentation uses its dedicated layer and never converts cells to interaction selection. Detailed indices and C++ setup are documented in `Source/GridWorld/Docs/README.md`.
 
+## Generic cell-overlay sessions
+
+Use `UGridCellOverlayPresentationSubsystem` for owner-scoped, non-authoritative cell marks that are
+neither path nor direct hover/selection. A request copies persistent cell IDs with `Primary` or
+`Secondary` states and requires a weak UObject owner. The opaque handle supports whole-session
+update, clear, visibility, priority, inspection, and release. Owner collection releases the session
+without Tick.
+
+Sessions resolve deterministically and feed the existing chunked HISM renderer; they do not create
+per-cell renderers and never mutate topology, traversal, occupancy, reservations, or revisions.
+Direct selection/hover, generic overlay, path, and navigation state are retained independently.
+`UGridCellVisualStyle` provides `PrimaryOverlayColor` and `SecondaryOverlayColor` so the same style
+asset can present both ordinary paths and project-specific overlays.
+
 ## Runtime path presentation
 
 `UGridPathPresentationSubsystem` presents one or more ordered cell paths through independent cell-overlay and strict-line backends. Create a `FGridPathPresentationRequest` from persistent cell IDs, or call **Create Path Presentation From Query Result** with an `FGridPathQueryResult`. The returned `FGridPathPresentationHandle` is opaque and world-local; use it to update the path or current index, change visibility/mode/priority/renderers, mark it invalid, clear it for reuse, or release it. A stale or cross-World handle fails without changing another session.

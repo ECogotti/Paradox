@@ -29,7 +29,7 @@ Replay/Investigating -- explicit future handoff --> Goap (terminal)
 Entering `Investigating` atomically pauses the playback clock, captures every replay-owned active
 intent as an immutable `FIntentReplaySuspendedIntent`, registers the expected interruption reason,
 and interrupts those actions with
-`GameplayAction.Result.Interrupted.ByInvestigation`. These interruptions remain visible in the
+`GameplayAction.Result.Interrupted.Paradox.Investigation.Started`. These interruptions remain visible in the
 Intent Replay Execution Journal and are not replay fractures.
 
 `RequestEnterGoapMode` is intentionally not called by Milestone 3 gameplay. If a future authority

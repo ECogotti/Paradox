@@ -13,6 +13,9 @@
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Paradox.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxSelectableComponent.h"
+#include "SmartObjectComponent.h"
 #include "Sound/SoundBase.h"
 
 #if WITH_EDITOR
@@ -82,6 +85,11 @@ APressurePlate::APressurePlate(const FObjectInitializer& ObjectInitializer)
 	ActiveStateSelection.PropertyName = TEXT("bIsActive");
 
 	PerceptionSource = CreateDefaultSubobject<UPerceptionKnowledgeSourceComponent>(TEXT("PerceptionSource"));
+	SelectableComponent = CreateDefaultSubobject<UParadoxSelectableComponent>(TEXT("SelectableComponent"));
+	SelectableComponent->bShowInteractionCellsWhenSelected = true;
+	SmartObjectComponent = CreateDefaultSubobject<USmartObjectComponent>(TEXT("SmartObjectComponent"));
+	SmartObjectComponent->SetupAttachment(BillboardRoot);
+	InteractionComponent = CreateDefaultSubobject<UParadoxInteractionComponent>(TEXT("InteractionComponent"));
 }
 
 void APressurePlate::PostRegisterAllComponents()
@@ -241,6 +249,18 @@ EDataValidationResult APressurePlate::IsDataValid(FDataValidationContext& Contex
 	if (!PerceptionSource)
 	{
 		AddError(LOCTEXT("MissingPerceptionSource", "Pressure Plate requires its native PerceptionKnowledge source."));
+	}
+	if (!SelectableComponent)
+	{
+		AddError(LOCTEXT("MissingSelectableComponent", "Pressure Plate requires its native Selectable Component."));
+	}
+	if (!SmartObjectComponent || SmartObjectComponent->GetAttachParent() != BillboardRoot)
+	{
+		AddError(LOCTEXT("MissingSmartObjectComponent", "Pressure Plate requires its native Smart Object Component attached to Billboard Root."));
+	}
+	if (!InteractionComponent)
+	{
+		AddError(LOCTEXT("MissingInteractionComponent", "Pressure Plate requires its native Paradox Interaction Component."));
 	}
 	if (PlateMesh && PlateMesh->CanEverAffectNavigation())
 	{

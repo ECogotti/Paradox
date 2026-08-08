@@ -1,0 +1,5 @@
+#include "ParadoxMaterialExpressionsModule.h"
+
+DEFINE_LOG_CATEGORY(LogParadoxMaterialExpressions);
+
+IMPLEMENT_MODULE(FParadoxMaterialExpressionsModule, ParadoxMaterialExpressions)

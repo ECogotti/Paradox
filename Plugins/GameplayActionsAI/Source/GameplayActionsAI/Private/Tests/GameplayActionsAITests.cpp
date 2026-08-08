@@ -31,7 +31,7 @@
 
 UE_DEFINE_GAMEPLAY_TAG_STATIC(
 	TAG_GameplayActionsAI_Test_Action,
-	"GameplayAction.Test.AI");
+	"GameplayAction.Test.AI.Execution");
 
 namespace GameplayActionsAITests
 {

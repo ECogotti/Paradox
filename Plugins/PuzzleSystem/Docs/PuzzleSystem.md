@@ -308,7 +308,160 @@ Native C++ systems that need a direct transition subscription can use
 second, and the existing Blueprint-assignable transition delegates execute last. Blueprint workflows
 continue to use `OnReceiverActivated`, `OnReceiverDeactivated`, and `OnReceiverStateChanged` unchanged.
 
-A receiver can be targeted by multiple controllers. It remains active while at least one valid controller requests active. When a controller ends play, its request is removed.
+A receiver can be targeted by multiple controllers and OR-aggregates their prerequisite requests. In the
+default Automatic mode it remains active while at least one valid Controller requests active. When a
+Controller ends play, its request is removed.
+
+Every Receiver exposes `ActivationMode`:
+
+- `Automatic` is the default and preserves the original behavior for existing content: the Receiver is
+  active whenever at least one valid Controller requests active.
+- `Manual` treats the OR-aggregated Controller result as an activation prerequisite. The Receiver remains
+  inactive until `RequestManualActivation` is called, and that command fails while no Controller requests
+  active. `RequestManualDeactivation` is always allowed in Manual mode.
+
+If the final active Controller request disappears, a Manual Receiver deactivates immediately and clears
+its manual latch. Restoring the prerequisite does not reactivate it; a new explicit Open request is
+required. Use one Controller with an `All` condition when several signals must all authorize activation.
+Multiple independent Controllers targeting one Receiver intentionally retain OR semantics.
+
+Blueprint and C++ callers can inspect `CanRequestManualActivation`,
+`AreActivationPrerequisitesSatisfied`, `IsManualActivationRequested`, and `GetActivationMode` before
+calling the two command functions. Each command returns `FPuzzleReceiverActivationCommandResult`, which
+contains a precise status, a settled state snapshot, and a diagnostic. `Applied` and
+`AlreadyInRequestedState` are accepted outcomes. Bind `OnReceiverActivationPrerequisitesChanged` (or its
+native counterpart) when UI availability must refresh while a Manual Receiver remains effectively
+inactive.
+
+For a Paradox interaction Gameplay Action, resolve the action's semantic target Actor and then its
+`UPuzzleReceiverComponent`; do not search for a Controller:
+
+```text
+GetInteractionTarget
+  -> Get Component By Class (PuzzleReceiverComponent)
+  -> CanRequestManualActivation
+  -> RequestManualActivation
+  -> CompleteInteractionSuccess / CompleteInteractionFailure
+```
+
+Close uses `RequestManualDeactivation`. If an Actor owns multiple Receiver components, the concrete action
+must select the intended component explicitly by authored name or equivalent stable local selector. The
+PuzzleSystem plugin does not depend on Paradox or GameplayActions.
+
+## Read-Only Graph Queries
+
+`UPuzzleGraphSubsystem` is a world-scoped observer for the topology already resolved by initialized
+`APuzzleController` instances. It does not evaluate conditions, route signals, activate Receivers, or
+change the existing `Emitter -> Controller -> Receiver` flow. It has no Tick and performs no world scan;
+queries use indices populated by Controller initialization and teardown.
+
+Get the subsystem from the relevant gameplay world in Blueprint with **Get World Subsystem** or in C++:
+
+```cpp
+#include "Graph/PuzzleGraphSubsystem.h"
+
+UPuzzleGraphSubsystem* Graph = World->GetSubsystem<UPuzzleGraphSubsystem>();
+const FPuzzleActorGraphView View = Graph->QueryActorGraph(ObservedActor);
+
+for (const FPuzzleGraphLink& Link : View.OutgoingPrimaryLinks)
+{
+    FPuzzleGraphLinkState State;
+    if (Graph->TryGetLinkState(Link.LinkHandle, State))
+    {
+        // State is a read-only snapshot for this Controller-local relationship.
+    }
+}
+```
+
+The public query API provides:
+
+- `QueryActorGraph`, grouped into incoming/outgoing primary and gate relationships;
+- `QueryIncomingLinksForActor` and `QueryOutgoingLinksForActor`, when grouping is not required;
+- `QueryLinksForEmitterComponent` and `QueryLinksForReceiverComponent`, preserving exact component
+  identity on Actors with multiple PuzzleSystem components;
+- `TryGetLink` for the immutable relationship descriptor and `TryGetLinkState` for current state;
+- `GetGraphTopologyRevision` for invalidating consumer-side topology caches.
+
+All returned arrays use deterministic order: Controller path, authored primary binding index, link kind,
+then gate or Receiver index. Registration order and pointer addresses do not affect semantic order.
+
+### Link semantics
+
+`PrimarySignal` represents one resolved primary input binding targeting one resolved Receiver. A primary
+binding with three Receivers therefore creates three primary links. Its descriptor identifies the exact
+primary Emitter, Controller, primary input and target Receiver.
+
+`GateInfluence` represents one enabled gate input influencing one primary binding. It is created once per
+gate input, independently of the number of Receivers, and its Receiver fields are intentionally null.
+Unpaired gate arrays are runtime-bypassed and create no gate links because the Controller neither resolves
+nor subscribes to them.
+
+An Actor can participate in more than one role. `FPuzzleActorGraphView` preserves those roles separately:
+
+- `OutgoingPrimaryLinks`: the Actor owns a primary Emitter endpoint;
+- `OutgoingGateLinks`: the Actor owns a gate Emitter endpoint, including gate-only Actors;
+- `IncomingPrimaryLinks`: the Actor owns a Receiver targeted by a primary link;
+- `IncomingGateLinks`: one of the Actor's primary bindings is influenced by a gate link.
+
+No relationship is deduplicated across Controllers. If two Controllers consume the same Emitter, their
+links remain distinct because gate policy and effective result are Controller-local.
+
+### Raw, gate, effective, Controller, and Receiver state
+
+`FPuzzleGraphLinkState` deliberately keeps topology separate from runtime state:
+
+```text
+raw primary
+    + aggregated gate mode/result
+    -> effective primary
+    -> Controller result
+    -> Receiver prerequisite aggregation
+    + Receiver Automatic/Manual policy
+    -> Receiver effective state
+```
+
+Raw and effective primary snapshots expose validity, active state, revision, and a weak payload reference.
+Gate state exposes `Bypassed`, `Open`, `Closed`, or `Invalid`, plus validity and admission result. A
+`GateInfluence` additionally exposes the validity, active state, revision, and payload of its particular
+gate input. Controller result is separate from the individual input result. On a `PrimarySignal`, Receiver
+validity, activation mode, aggregated prerequisites, manual latch, and current effective state are also
+available.
+
+For example, one Emitter may feed `ControllerA` through an open gate and `ControllerB` through a closed
+gate. Both links expose the same raw primary state, while their gate modes, effective primary states, and
+Controller results differ. If both Controllers target the same Receiver, that Receiver can still report
+effective active because `ControllerA` requests activation even though `ControllerB` does not.
+
+Receiver effective state is read on demand by `TryGetLinkState`. Ordinary Receiver aggregation changes do
+not independently emit graph state events, avoiding partial notifications during reentrant Controller
+chains. Explicit manual commands refresh every retained link for that Receiver after the synchronous
+notification chain settles, without changing topology revision. Receiver destruction emits invalidation
+through the graph.
+
+### Handles, revisions, events, and lifecycle
+
+`FPuzzleGraphLinkHandle` is opaque and valid only in the current runtime world. It is not an array index,
+save identifier, or authored identity and must not be persisted. Removing or reinitializing a Controller
+makes only its old handles stale; `TryGetLink` and `TryGetLinkState` then return `false` for those handles.
+A gameplay-invalid relationship is different: `TryGetLinkState` returns `true` and reports the relevant
+validity flags as false.
+
+`GraphTopologyRevision` starts at zero and increments once after each Controller add, remove, or structural
+refresh. Raw signal, gate, effective, and Controller-result changes never increment it.
+
+Bind `OnPuzzleGraphTopologyChanged` for completed index changes. The event includes the new revision, the
+affected Controller, and `Added`, `Removed`, or `Refreshed`. Bind `OnPuzzleGraphLinkStateChanged` for
+publicly observable per-link state changes; it supplies the handle and previous/new snapshots. Native C++
+observers may bind the matching `OnPuzzleGraphTopologyChangedNative` and
+`OnPuzzleGraphLinkStateChangedNative` delegates. A gate transition updates its gate link and all primary
+links for that binding after Controller reentrancy has settled, without duplicate events when the public
+snapshot is unchanged.
+
+Destroyed primary Emitters, gate Emitters, and Receivers remain as contextual relationships while their
+Controller stays registered. Their weak endpoint references and state validity flags become invalid, so
+consumers can explain the broken connection without losing its handle. The relationship disappears when
+the Controller is reinitialized, shuts down, ends play, or the world subsystem deinitializes. A transient
+Controller without a `UWorld` continues to run normally but is not graph-indexed.
 
 ## Built-In Conditions
 

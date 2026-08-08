@@ -7,6 +7,7 @@
 
 class UStaticMeshComponent;
 class UTextRenderComponent;
+class UParadoxSelectableComponent;
 
 /** Designer-placeable entry point for one playable timeline. */
 UCLASS(Blueprintable)
@@ -20,6 +21,10 @@ public:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
+
 	UFUNCTION(BlueprintPure, Category = "Paradox|Chrono Spawn")
 	EParadoxChronoSpawnState GetChronoSpawnState() const { return ChronoSpawnState; }
 
@@ -28,6 +33,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Chrono Spawn")
 	bool IsAvailableForSelection() const;
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Chrono Spawn")
+	UParadoxSelectableComponent* GetSelectableComponent() const { return SelectableComponent.Get(); }
 
 	/** Runtime/design-time switch. Disabling immediately makes this spawn unselectable. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Chrono Spawn")
@@ -53,6 +61,10 @@ private:
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Paradox|Chrono Spawn", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UTextRenderComponent> StateLabel;
+
+	/** Project-level hover, selection, outline, and optional world-widget capability. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Paradox|Chrono Spawn", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxSelectableComponent> SelectableComponent;
 
 	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Paradox|Chrono Spawn", meta = (AllowPrivateAccess = "true"))
 	bool bChronoSpawnEnabled = true;

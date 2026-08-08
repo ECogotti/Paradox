@@ -12,7 +12,7 @@ Filter, topology, traversal, link, and goal validation are not downgraded.
 The asset `/GameplayActionsGridWorld/Definitions/DA_GameplayAction_MoveToGridCell` uses:
 
 - `UGridMoveToCellAction`;
-- action tag `GameplayAction.GridWorld.MoveToGridCell`;
+- action tag `GameplayAction.Type.GridWorld.MoveToGridCell`;
 - exact lock `GameplayAction.Lock.Movement`;
 - blocked policy `Queue`;
 - optional journaling;

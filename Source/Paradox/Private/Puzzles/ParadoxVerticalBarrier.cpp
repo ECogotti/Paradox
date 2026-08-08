@@ -19,8 +19,11 @@
 #include "NiagaraComponent.h"
 #include "NiagaraSystem.h"
 #include "Paradox.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "Receivers/PuzzleReceiverComponent.h"
 #include "Sound/SoundBase.h"
+#include "SmartObjectComponent.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "TimerManager.h"
 #include "Types/PerceptionKnowledgeTypes.h"
@@ -85,6 +88,11 @@ AParadoxVerticalBarrier::AParadoxVerticalBarrier()
 	MoverSelection.PropertyName = GET_MEMBER_NAME_CHECKED(AParadoxVerticalBarrier, WorldStateMoverRuntimeState);
 
 	PerceptionSource = CreateDefaultSubobject<UPerceptionKnowledgeSourceComponent>(TEXT("PerceptionSource"));
+	SelectableComponent = CreateDefaultSubobject<UParadoxSelectableComponent>(TEXT("SelectableComponent"));
+	SelectableComponent->bShowInteractionCellsWhenSelected = true;
+	SmartObjectComponent = CreateDefaultSubobject<USmartObjectComponent>(TEXT("SmartObjectComponent"));
+	SmartObjectComponent->SetupAttachment(BillboardRoot.Get());
+	InteractionComponent = CreateDefaultSubobject<UParadoxInteractionComponent>(TEXT("InteractionComponent"));
 
 	DefaultMovedComponent.ComponentProperty = GET_MEMBER_NAME_CHECKED(AParadoxVerticalBarrier, BarrierMesh);
 	if (EndArrow)
@@ -269,6 +277,18 @@ EDataValidationResult AParadoxVerticalBarrier::IsDataValid(FDataValidationContex
 	if (!WorldStateParticipant || !PerceptionSource)
 	{
 		AddError(LOCTEXT("IntegrationComponents", "Vertical Barrier requires WorldStateParticipant and PerceptionSource."));
+	}
+	if (!SelectableComponent)
+	{
+		AddError(LOCTEXT("SelectableComponent", "Vertical Barrier requires its native Selectable Component."));
+	}
+	if (!SmartObjectComponent || SmartObjectComponent->GetAttachParent() != BillboardRoot.Get())
+	{
+		AddError(LOCTEXT("SmartObjectComponent", "Vertical Barrier requires its native Smart Object Component attached to Billboard Root."));
+	}
+	if (!InteractionComponent)
+	{
+		AddError(LOCTEXT("InteractionComponent", "Vertical Barrier requires its native Paradox Interaction Component."));
 	}
 	if (!FMath::IsFinite(MovementNoiseLoudness) || MovementNoiseLoudness < 0.0f
 		|| !FMath::IsFinite(MovementNoiseMaxRange) || MovementNoiseMaxRange < 0.0f

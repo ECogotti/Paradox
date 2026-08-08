@@ -34,6 +34,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation|Interaction")
 	FLinearColor SelectedColor;
 
+	/** Color for a winning generic Primary overlay contribution. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation|Overlay")
+	FLinearColor PrimaryOverlayColor;
+
+	/** Color for a winning generic Secondary overlay contribution. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation|Overlay")
+	FLinearColor SecondaryOverlayColor;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Grid World|Presentation|Navigation")
 	FLinearColor BlockedColor;
 

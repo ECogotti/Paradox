@@ -14,6 +14,11 @@ Modulo runtime responsabile di:
 - barriera di completamento sulla durata totale registrata, inclusa l'eventuale coda inattiva;
 - isolamento di sessioni, handle e journal.
 
+Quando la playback viene fermata, il motivo di cancellazione della Gameplay Action è il tag
+`GameplayAction.Result.Cancelled.IntentReplay.PlaybackStopped`. Il ramo `IntentReplay.Failure.*`
+resta invece riservato agli errori propri del servizio di recording/playback e non ai risultati
+terminali dello scheduler Gameplay Actions.
+
 Il core pubblica inoltre:
 
 - Recording Session ID separato dal Track ID;

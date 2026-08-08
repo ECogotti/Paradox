@@ -16,6 +16,7 @@ class UInputMappingContext;
 class UInputAction;
 class UGridWorldPathFollowingComponent;
 class UGridCellPointerComponent;
+class UGridCellVisualStyle;
 class UGridPathPreviewComponent;
 class UTacticalPauseWorldSubsystem;
 class UParadoxTimeTravelAction;
@@ -24,6 +25,8 @@ class UParadoxOutcomePresentationComponent;
 class UPerceptionKnowledgeHearingRangeRendererComponent;
 class UPerceptionKnowledgeListenerComponent;
 class UPerceptionKnowledgeProfile;
+class UParadoxSelectionComponent;
+class UParadoxWidgetInteractionComponent;
 class AParadoxCameraBoundsVolume;
 class AParadoxCameraRig;
 struct FInputActionValue;
@@ -51,6 +54,21 @@ protected:
 	/** Owns the deduplicated, revision-aware path prediction shown before a click. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UGridPathPreviewComponent> GridPathPreviewComponent;
+
+	/** Authoritative owner of local mouse hover and single-Actor selection. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UParadoxSelectionComponent> SelectionComponent;
+
+	/** Virtual pointer used to interact with selected Actors' world-space widgets. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UParadoxWidgetInteractionComponent> WidgetInteractionComponent;
+
+	/** Shared style for path overlays and selected interaction cells. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Grid World|Presentation")
+	TSoftObjectPtr<UGridCellVisualStyle> RuntimeGridCellVisualStyle;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UGridCellVisualStyle> ResolvedRuntimeGridCellVisualStyle = nullptr;
 
 	/** Continuously predicts under the local mouse cursor. Touch prediction updates while pressed. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Grid World|Prediction")
@@ -132,6 +150,14 @@ protected:
 
 	/** True when the current pointer gesture produced a valid world destination. */
 	uint32 bHasCachedDestination : 1;
+
+	/** True while the current mouse gesture belongs to an interactive world widget. */
+	uint32 bPrimaryPointerConsumedByWidget : 1;
+
+	/** Most recent shared mouse cursor hit; selection, widget UI, and GridWorld all consume it. */
+	FHitResult CachedMouseHit;
+	bool bHasCachedMouseHit = false;
+	uint64 CachedMouseHitFrame = MAX_uint64;
 
 	/** Saved location of the character movement destination */
 	UPROPERTY(Transient)
@@ -256,6 +282,15 @@ public:
 		return OutcomePresentationComponent.Get();
 	}
 
+	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
+	UParadoxSelectionComponent* GetSelectionComponent() const { return SelectionComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Grid World|Presentation")
+	UGridCellVisualStyle* GetRuntimeGridCellVisualStyle() const
+	{
+		return ResolvedRuntimeGridCellVisualStyle.Get();
+	}
+
 	/** Discovers one enabled map volume and creates the independent orthographic view target. */
 	FParadoxCameraOperationResult EnsureFreeCameraInitialized(bool bRequiredForTimeLoop);
 
@@ -292,8 +327,10 @@ protected:
 	void OnInputStarted();
 	void OnSetDestinationTriggered();
 	void OnSetDestinationReleased();
+	void OnTouchStarted();
 	void OnTouchTriggered();
 	void OnTouchReleased();
+	void OnSelectionTriggered();
 	void OnRewindTriggered();
 	void OnCrouchTriggered();
 	void OnCameraMoveTriggered(const FInputActionValue& Value);
@@ -304,6 +341,8 @@ protected:
 	void OnCameraRotateRightTriggered();
 
 	/** Helper function to get the move destination */
+	void UpdateMousePointerState();
+	void ClearMousePointerState();
 	void UpdateCachedDestination();
 	void UpdatePointerPrediction(bool bUseTouchInput);
 	void UpdateChronoSpawnHover(bool bUseTouchInput);

@@ -12,6 +12,27 @@ opens the passage only after exact End arrival; deactivation raises it back towa
 ## Blueprint setup
 
 1. Create a Blueprint child of `AParadoxVerticalBarrier`.
+
+The native Actor owns `SelectableComponent`, which outlines its direct `BarrierMesh` and may show
+an optional world-space widget. A frame authored as a separate Actor is outside this ownership and
+needs its own selectable component. Do not add a duplicate selectable component to the barrier
+Blueprint. See [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
+
+It also owns one native `SmartObjectComponent` attached to `BillboardRoot` and one
+`InteractionComponent`. Assign an engine-valid Smart Object Definition and configure any number of
+Paradox `InteractionDefinitions` in the Blueprint defaults. A definition can match several slots,
+and a slot can expose several matching definitions. Null Definition and empty catalog are valid
+until content is authored and produce no interaction cells. The selectable already enables
+`bShowInteractionCellsWhenSelected`; do not add duplicate Smart Object or interaction components.
+
+Set the barrier's `PuzzleReceiver` to `Manual`, then create Open and Close Data Assets based on
+`UParadoxReceiverInteractionActionDefinition`. Choose Activate/Deactivate and leave
+`ReceiverComponentName` empty only when the Actor owns exactly one Receiver. The native Definition
+already owns the correct schema, locks, journaling, and action class. Open is disabled until a
+Controller satisfies the Receiver prerequisites; Close remains independent of those prerequisites.
+The action claims a Smart Object slot before moving to the cheapest reachable exact cell, then runs
+the Receiver command after authoritative revalidation.
+
 2. Assign the moving door mesh to `BarrierMesh`; it is already movable and selected as the
    inherited moved component. Build the static frame on a separate Actor (for example, the Puzzle
    Emitter that controls this barrier).
@@ -51,7 +72,7 @@ blocked during motion, waits for clearance, then retries only if the original co
 
 With `bWaitForClearPassage=false`, current occupants are prepared before GridWorld is blocked and
 movement starts. Paradox player and clone Characters have current Movement actions interrupted with
-`GameplayAction.Result.Interrupted.ByBarrierLift`; the barrier then owns an exact
+`GameplayAction.Result.Interrupted.Paradox.Barrier.Transport`; the barrier then owns an exact
 `GameplayAction.Lock.Movement` on each Character scheduler. New click/action movement is rejected,
 while camera, pause, UI, stance, and unrelated input remain available. Characters are not attached:
 engine moving-base motion is preserved and a world-delta adapter applies only when the Character is
@@ -90,14 +111,18 @@ without acquiring passengers or producing feedback.
 
 The Perception source exposes:
 
-- `Barrier.State.Open`;
-- `Barrier.State.BlockingPassage`;
-- `Barrier.State.Moving`;
-- `Barrier.State.WaitingForClearance`;
-- `Barrier.State.TransportingOccupants`.
+- `PerceptionKnowledge.State.Paradox.Barrier.Open`;
+- `PerceptionKnowledge.State.Paradox.Barrier.BlockingPassage`;
+- `PerceptionKnowledge.State.Paradox.Barrier.Moving`;
+- `PerceptionKnowledge.State.Paradox.Barrier.WaitingForClearance`;
+- `PerceptionKnowledge.State.Paradox.Barrier.TransportingOccupants`.
+
+These observable-state tags are intentionally separate from the interaction commands authored in
+the Door catalog and UI: `Interaction.Paradox.Barrier.Open` and
+`Interaction.Paradox.Barrier.Close`. A state tag must not be reused as an interaction identity.
 
 Raise, lower, and optional endpoint impact noises use the registered
-`PerceptionKnowledge.Event.Noise.Barrier.*` tags. Construction, deferred requests, reset, and restore
+`PerceptionKnowledge.Event.Paradox.Noise.Barrier.*` tags. Construction, deferred requests, reset, and restore
 never emit movement noise.
 
 ## Blueprint events and debugging
@@ -111,6 +136,12 @@ Enable local `bEnableDebug` and global `Paradox.VerticalBarrier.Debug 1` togethe
 movement the overlay shows shared bounds, navigation/pending policy, occupants, passengers, mover
 state, alpha, restore guard, and the last structured diagnostic. Disabled debug performs no Actor
 enumeration or drawing.
+
+Editor validation permits the native empty interaction catalog and null Smart Object Definition.
+Once content is added, it reports a missing direct Smart Object component, invalid or duplicate
+interaction tags, a missing/unloadable Gameplay Action Definition, an incompatible interaction
+action class, disabled journaling, incorrect required Property Bag fields, or a non-empty catalog
+without a Smart Object Definition.
 
 ## PIE transport validation
 

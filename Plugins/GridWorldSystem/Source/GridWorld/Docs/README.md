@@ -110,9 +110,51 @@ if (UGridRuntimeVisualizationSubsystem* Presentation =
 
 Topology publication and `ClearGridWorld` now broadcast `UGridWorldSubsystem::OnGridWorldChanged`, matching traversal and occupancy publication. A topology change causes a complete presentation rebuild. Traversal/occupancy-only changes update custom data only for `FGridChangeSet::ChangedCells`. Neither path changes navigation snapshots or their topology, traversal, or occupancy revisions.
 
+### Generic owner-scoped cell overlays
+
+`UGridCellOverlayPresentationSubsystem` adds a generic semantic layer for systems that need to mark
+published cells without pretending to be hover, selection, navigation, or a path. Each session has
+an opaque `FGridCellOverlayPresentationHandle`, a required weak UObject owner, copied entries, an
+explicit priority, and visibility. Entries use `EGridCellOverlayVisualState::Primary` or
+`Secondary`; GridWorld does not assign gameplay meaning to those names.
+
+Create, atomically replace, clear, hide, reprioritize, or release a session through the subsystem.
+Create/update validates every `FGridCellId` against the current topology. Owner collection releases
+the session after garbage collection, while explicit release immediately invalidates every copied
+handle. Overlap is resolved by priority, semantic state rank, immutable creation sequence, then
+entry index, so map iteration and update order cannot change the result.
+
+```cpp
+#include "Presentation/GridCellOverlayPresentationSubsystem.h"
+
+FGridCellOverlayPresentationRequest Request;
+Request.Owner = this;
+Request.Priority = 100;
+Request.Entries = {{CellId, EGridCellOverlayVisualState::Primary}};
+
+FGridCellOverlayPresentationHandle Handle;
+if (UGridCellOverlayPresentationSubsystem* Overlays =
+	World->GetSubsystem<UGridCellOverlayPresentationSubsystem>())
+{
+	Overlays->CreateCellOverlayPresentation(Request, Handle);
+	// Later: Overlays->ReleaseCellOverlayPresentation(Handle);
+}
+```
+
+The resolved overlay is copied into the existing runtime visualization mapping and creates no
+Actor, component, or HISM per cell/session. Hover, selection, overlay, path, navigation flags, and
+path progress remain independently stored. The default style displays direct selection/hover above
+the generic overlay and the generic overlay above path/navigation color while retaining all layer
+state for custom materials. The subsystem never edits occupancy, reservations, topology,
+walkability, or navigation revisions.
+
 ### Custom style and material contract
 
 Create a **Grid Cell Visual Style** Data Asset to replace the mesh, material, colors, per-edge inset, floor-normal offset, culling distances, or shadow setting. Assign the cell material to the style: it is an explicit HISM slot override, so a material assigned only to the Static Mesh asset is not used. The material must enable **Usage > Used with Instanced Static Meshes** or Unreal will render its default fallback material. The supplied `M_GridRuntimeCell` already enables this usage. The mesh must have finite non-zero X/Y bounds and should be an XY plane with +Z normal. Each instance is centered on `FGridCellData::WorldCenter`, oriented to `FloorNormal` with the region X axis projected into the floor plane, inset within the logical cell, and offset along the normal to avoid z-fighting.
+
+`UGridCellVisualStyle` exposes `PrimaryOverlayColor` and `SecondaryOverlayColor` for the generic
+overlay layer. A project may use one style asset for both path and overlay consumers; changing an
+overlay session never replaces the visualization style.
 
 A custom material receives ten Per Instance Custom Data floats:
 
