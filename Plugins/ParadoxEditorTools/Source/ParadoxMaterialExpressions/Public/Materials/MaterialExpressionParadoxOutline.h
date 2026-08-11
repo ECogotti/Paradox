@@ -14,6 +14,10 @@ enum class EParadoxOutlineOcclusionMode : uint8
     ThroughWalls UMETA(
         DisplayName = "Through Walls",
         ToolTip = "Keep outline samples visible when their Custom Depth surface is behind opaque geometry."),
+
+    OccludedOnly UMETA(
+        DisplayName = "Occluded Only",
+        ToolTip = "Keep outline samples only when their Custom Depth surface is behind opaque Scene Depth geometry."),
 };
 
 /**
@@ -72,6 +76,30 @@ public:
     UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Selection Stencil Max property when unconnected."))
     FExpressionInput SelectionStencilMax;
 
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Input Intensity property when unconnected."))
+    FExpressionInput PuzzleInputIntensity;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Output Intensity property when unconnected."))
+    FExpressionInput PuzzleOutputIntensity;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Input Color property when unconnected."))
+    FExpressionInput PuzzleInputColor;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Output Color property when unconnected."))
+    FExpressionInput PuzzleOutputColor;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Input Stencil Min property when unconnected."))
+    FExpressionInput PuzzleInputStencilMin;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Input Stencil Max property when unconnected."))
+    FExpressionInput PuzzleInputStencilMax;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Output Stencil Min property when unconnected."))
+    FExpressionInput PuzzleOutputStencilMin;
+
+    UPROPERTY(meta = (RequiredInput = "false", ToolTip = "Defaults to the Puzzle Output Stencil Max property when unconnected."))
+    FExpressionInput PuzzleOutputStencilMax;
+
     UPROPERTY(
         EditAnywhere,
         Category = "Paradox Outline|Input Defaults",
@@ -111,6 +139,18 @@ public:
     UPROPERTY(
         EditAnywhere,
         Category = "Paradox Outline|Input Defaults",
+        meta = (DisplayName = "Puzzle Input Intensity", ClampMin = "0.0", ClampMax = "16.0", UIMin = "0.0", UIMax = "4.0"))
+    float DefaultPuzzleInputIntensity = 1.0f;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Input Defaults",
+        meta = (DisplayName = "Puzzle Output Intensity", ClampMin = "0.0", ClampMax = "16.0", UIMin = "0.0", UIMax = "4.0"))
+    float DefaultPuzzleOutputIntensity = 1.0f;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Input Defaults",
         meta = (DisplayName = "Hover Color"))
     FLinearColor DefaultHoverColor = FLinearColor::White;
 
@@ -119,6 +159,18 @@ public:
         Category = "Paradox Outline|Input Defaults",
         meta = (DisplayName = "Selection Color"))
     FLinearColor DefaultSelectionColor = FLinearColor::White;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Input Defaults",
+        meta = (DisplayName = "Puzzle Input Color"))
+    FLinearColor DefaultPuzzleInputColor = FLinearColor(0.0f, 0.5f, 1.0f, 1.0f);
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Input Defaults",
+        meta = (DisplayName = "Puzzle Output Color"))
+    FLinearColor DefaultPuzzleOutputColor = FLinearColor(1.0f, 0.35f, 0.0f, 1.0f);
 
     UPROPERTY(
         EditAnywhere,
@@ -150,9 +202,43 @@ public:
         meta = (DisplayName = "Selection Stencil Max", ClampMin = "0.0", ClampMax = "255.0", UIMin = "0.0", UIMax = "255.0"))
     float DefaultSelectionStencilMax = 249.0f;
 
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Stencil Ranges",
+        meta = (DisplayName = "Puzzle Input Stencil Min", ClampMin = "0.0", ClampMax = "255.0", UIMin = "0.0", UIMax = "255.0"))
+    float DefaultPuzzleInputStencilMin = 210.0f;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Stencil Ranges",
+        meta = (DisplayName = "Puzzle Input Stencil Max", ClampMin = "0.0", ClampMax = "255.0", UIMin = "0.0", UIMax = "255.0"))
+    float DefaultPuzzleInputStencilMax = 219.0f;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Stencil Ranges",
+        meta = (DisplayName = "Puzzle Output Stencil Min", ClampMin = "0.0", ClampMax = "255.0", UIMin = "0.0", UIMax = "255.0"))
+    float DefaultPuzzleOutputStencilMin = 220.0f;
+
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline|Stencil Ranges",
+        meta = (DisplayName = "Puzzle Output Stencil Max", ClampMin = "0.0", ClampMax = "255.0", UIMin = "0.0", UIMax = "255.0"))
+    float DefaultPuzzleOutputStencilMax = 229.0f;
+
     UPROPERTY(EditAnywhere, Category = "Paradox Outline")
     EParadoxOutlineOcclusionMode OcclusionMode =
         EParadoxOutlineOcclusionMode::VisibleOnly;
+
+    /** Independent occlusion policy for Puzzle Input/Output stencil categories. Hover and Selection continue to use OcclusionMode. */
+    UPROPERTY(
+        EditAnywhere,
+        Category = "Paradox Outline",
+        meta = (
+            DisplayName = "Puzzle Wire Occlusion Mode",
+            ToolTip = "Occluded Only outlines circuit wires only while opaque Scene Depth geometry hides them. The wire surface itself remains controlled by its normal material."))
+    EParadoxOutlineOcclusionMode PuzzleWireOcclusionMode =
+        EParadoxOutlineOcclusionMode::OccludedOnly;
 
     UPROPERTY(
         EditAnywhere,

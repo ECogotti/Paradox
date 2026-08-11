@@ -1,17 +1,19 @@
 #include "Perception/ParadoxTemporalVisionComponent.h"
 
 #include "Components/PrimitiveComponent.h"
+#include "Components/SphereComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Engine/EngineTypes.h"
+#include "Engine/World.h"
 #include "GameFramework/Actor.h"
 #include "Paradox.h"
+#include "ProfilingDebugging/CpuProfilerTrace.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
 
 UParadoxTemporalVisionComponent::UParadoxTemporalVisionComponent(
 	const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
 {
-	bUseAsyncCooking = false;
 	OnlyOneArc = true;
 	Only_Z_Rotation = true;
 	IgnoreOwnerActorInTraceLine = true;
@@ -20,6 +22,8 @@ UParadoxTemporalVisionComponent::UParadoxTemporalVisionComponent(
 	Angle2 = 35.0f;
 	Radius1 = 0.0f;
 	Radius2 = 900.0f;
+	SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SetGenerateOverlapEvents(false);
 	SetCanEverAffectNavigation(false);
 }
 
@@ -28,7 +32,16 @@ void UParadoxTemporalVisionComponent::TickComponent(
 	const ELevelTick TickType,
 	FActorComponentTickFunction* ThisTickFunction)
 {
-	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	{
+		TRACE_CPUPROFILER_EVENT_SCOPE(ParadoxTemporalVision_VisualMeshTick);
+		Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	}
+	SynchronizeCandidateSphere();
+	if (bDetectionAuthoritative)
+	{
+		QuerySphereCandidates();
+		EvaluateSphereCandidates();
+	}
 
 	if (bEnableDebug && IsParadoxTimeLoopDebugEnabled())
 	{
@@ -36,10 +49,103 @@ void UParadoxTemporalVisionComponent::TickComponent(
 	}
 }
 
+void UParadoxTemporalVisionComponent::SetCandidateSphereComponent(
+	USphereComponent* InCandidateSphere)
+{
+	if (CandidateSphere == InCandidateSphere)
+	{
+		SynchronizeCandidateSphere();
+		return;
+	}
+
+	if (CandidateSphere)
+	{
+		CandidateSphere->SetGenerateOverlapEvents(false);
+		CandidateSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	}
+	CandidateSphere = InCandidateSphere;
+	if (!CandidateSphere)
+	{
+		return;
+	}
+
+	CandidateSphere->SetCanEverAffectNavigation(false);
+	CandidateSphere->SetCollisionObjectType(ECC_WorldDynamic);
+	CandidateSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+	CandidateSphere->SetCollisionResponseToChannel(
+		TemporalTargetObjectChannel,
+		ECR_Overlap);
+	CandidateSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	CandidateSphere->SetGenerateOverlapEvents(false);
+	SynchronizeCandidateSphere();
+}
+
+void UParadoxTemporalVisionComponent::SynchronizeCandidateSphere()
+{
+	if (!CandidateSphere)
+	{
+		return;
+	}
+
+	const float RequiredRadius = GetConfiguredOuterRadius();
+	if (!FMath::IsNearlyEqual(
+		CandidateSphere->GetUnscaledSphereRadius(),
+		RequiredRadius))
+	{
+		CandidateSphere->SetSphereRadius(
+			RequiredRadius,
+			CandidateSphere->IsQueryCollisionEnabled());
+	}
+}
+
+void UParadoxTemporalVisionComponent::RefreshTemporalCandidateFilter()
+{
+	SynchronizeCandidateSphere();
+	if (!CandidateSphere)
+	{
+		return;
+	}
+
+	QuerySphereCandidates();
+	if (bDetectionAuthoritative)
+	{
+		EvaluateSphereCandidates();
+	}
+}
+
+bool UParadoxTemporalVisionComponent::IsWorldLocationWithinConfiguredCone(
+	const FVector& WorldLocation) const
+{
+	const FVector ToTarget = WorldLocation - GetComponentLocation();
+	const float Distance = ToTarget.Size();
+	if (Distance > GetConfiguredOuterRadius()
+		|| Distance < GetConfiguredInnerRadius())
+	{
+		return false;
+	}
+
+	FVector DirectionToTarget = ToTarget;
+	FVector Forward = GetForwardVector();
+	if (Only_Z_Rotation)
+	{
+		DirectionToTarget.Z = 0.0f;
+		Forward.Z = 0.0f;
+	}
+	if (!DirectionToTarget.Normalize() || !Forward.Normalize())
+	{
+		return true;
+	}
+
+	const float MinimumDot = FMath::Cos(
+		FMath::DegreesToRadians(GetConfiguredHalfAngle()));
+	return FVector::DotProduct(Forward, DirectionToTarget) >= MinimumDot;
+}
+
 bool UParadoxTemporalVisionComponent::PrepareTemporalVision(FString& OutFailure)
 {
 	OutFailure.Reset();
 	DisableTemporalDetection(true);
+	bTemporalVisionPrepared = false;
 
 	if (!GetOwner() || !GetWorld())
 	{
@@ -51,25 +157,19 @@ bool UParadoxTemporalVisionComponent::PrepareTemporalVision(FString& OutFailure)
 		OutFailure = TEXT("Temporal Vision trace resolution must be at least one.");
 		return false;
 	}
-
-	if (!bPhysicalDelegatesBound)
+	if (!CandidateSphere)
 	{
-		OnComponentBeginOverlap.AddDynamic(
-			this,
-			&UParadoxTemporalVisionComponent::HandlePhysicalBeginOverlap);
-		OnComponentEndOverlap.AddDynamic(
-			this,
-			&UParadoxTemporalVisionComponent::HandlePhysicalEndOverlap);
-		bPhysicalDelegatesBound = true;
+		OutFailure = TEXT("Temporal Vision has no configured Pawn candidate sphere.");
+		return false;
 	}
+	TemporalTargetObjectChannel = ECC_Pawn;
 
 	SetBeginAndEndOverlapEvent(false);
-	SetDynamicMeshCollisionEnabled(true);
-	SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-	SetCollisionObjectType(ECC_WorldDynamic);
-	SetCollisionResponseToAllChannels(ECR_Ignore);
-	SetCollisionResponseToChannel(TemporalTargetObjectChannel, ECR_Overlap);
-	SetGenerateOverlapEvents(true);
+	SetDynamicMeshCollisionEnabled(false);
+	SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SetGenerateOverlapEvents(false);
+	ConfigureCandidateSphereShape();
+	SynchronizeCandidateSphere();
 
 	if (LineOfSightIsActive())
 	{
@@ -81,41 +181,33 @@ bool UParadoxTemporalVisionComponent::PrepareTemporalVision(FString& OutFailure)
 	StartBuildMesh();
 	if (!MeshIsBuilt() || !RefreshLineTraceAndMesh())
 	{
-		OutFailure = TEXT("LineOfSight failed to build and refresh its procedural collision mesh.");
+		OutFailure = TEXT("LineOfSight failed to build and refresh its procedural visual mesh.");
 		StopLineTrace();
+		CandidateSphere->SetGenerateOverlapEvents(false);
+		CandidateSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		return false;
 	}
 
-	UpdateOverlaps();
+	bTemporalVisionPrepared = true;
+	QuerySphereCandidates();
 	return true;
 }
 
 void UParadoxTemporalVisionComponent::EnableTemporalDetection(
 	const int32 InDetectionSessionId)
 {
+	if (!bTemporalVisionPrepared || !CandidateSphere)
+	{
+		PARADOX_LOG_ERROR(
+			TEXT("Temporal Vision '%s' cannot enable detection before successful preparation."),
+			*GetNameSafe(this));
+		return;
+	}
+
 	DisableTemporalDetection(true);
 	DetectionSessionId = InDetectionSessionId;
-	UpdateOverlaps();
-	ReconcileExistingOverlaps();
 	bDetectionAuthoritative = true;
-
-	for (TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
-		ActorOverlapStates)
-	{
-		if (AActor* Actor = Pair.Key.Get())
-		{
-			UPrimitiveComponent* Representative = nullptr;
-			for (const TWeakObjectPtr<UPrimitiveComponent>& Component : Pair.Value.Components)
-			{
-				if (Component.IsValid())
-				{
-					Representative = Component.Get();
-					break;
-				}
-			}
-			BroadcastActorCandidate(*Actor, Representative, Pair.Value);
-		}
-	}
+	RefreshTemporalCandidateFilter();
 }
 
 void UParadoxTemporalVisionComponent::DisableTemporalDetection(
@@ -132,9 +224,21 @@ void UParadoxTemporalVisionComponent::DisableTemporalDetection(
 		for (TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
 			ActorOverlapStates)
 		{
+			Pair.Value.bPassesConeFilter = false;
 			Pair.Value.bBroadcastForCurrentAuthority = false;
 		}
 	}
+}
+
+int32 UParadoxTemporalVisionComponent::GetDeduplicatedOverlapActorCount() const
+{
+	int32 Count = 0;
+	for (const TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
+		ActorOverlapStates)
+	{
+		Count += Pair.Key.IsValid() && Pair.Value.bPassesConeFilter ? 1 : 0;
+	}
+	return Count;
 }
 
 FParadoxTemporalVisionDebugSnapshot
@@ -143,7 +247,7 @@ UParadoxTemporalVisionComponent::GetDebugSnapshot() const
 	FParadoxTemporalVisionDebugSnapshot Snapshot;
 	Snapshot.Observer = GetOwner();
 	Snapshot.DetectionSessionId = DetectionSessionId;
-	Snapshot.DeduplicatedActorPairCount = ActorOverlapStates.Num();
+	Snapshot.DeduplicatedActorPairCount = GetDeduplicatedOverlapActorCount();
 	Snapshot.bDetectionAuthoritative = bDetectionAuthoritative;
 	Snapshot.bLocalDebugEnabled = bEnableDebug;
 	Snapshot.bGlobalDebugEnabled = IsParadoxTimeLoopDebugEnabled();
@@ -158,7 +262,10 @@ UParadoxTemporalVisionComponent::GetDebugSnapshot() const
 	for (const TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
 		ActorOverlapStates)
 	{
-		Snapshot.OverlappingPrimitiveCount += Pair.Value.Components.Num();
+		if (Pair.Value.bPassesConeFilter)
+		{
+			Snapshot.OverlappingPrimitiveCount += Pair.Value.Components.Num();
+		}
 	}
 	return Snapshot;
 }
@@ -167,15 +274,11 @@ void UParadoxTemporalVisionComponent::EndPlay(
 	const EEndPlayReason::Type EndPlayReason)
 {
 	DisableTemporalDetection(true);
-	if (bPhysicalDelegatesBound)
+	bTemporalVisionPrepared = false;
+	if (CandidateSphere)
 	{
-		OnComponentBeginOverlap.RemoveDynamic(
-			this,
-			&UParadoxTemporalVisionComponent::HandlePhysicalBeginOverlap);
-		OnComponentEndOverlap.RemoveDynamic(
-			this,
-			&UParadoxTemporalVisionComponent::HandlePhysicalEndOverlap);
-		bPhysicalDelegatesBound = false;
+		CandidateSphere->SetGenerateOverlapEvents(false);
+		CandidateSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	}
 	StopLineTrace();
 	SetGenerateOverlapEvents(false);
@@ -183,76 +286,188 @@ void UParadoxTemporalVisionComponent::EndPlay(
 	Super::EndPlay(EndPlayReason);
 }
 
-void UParadoxTemporalVisionComponent::HandlePhysicalBeginOverlap(
-	UPrimitiveComponent* OverlappedComponent,
-	AActor* OtherActor,
-	UPrimitiveComponent* OtherComponent,
-	int32 OtherBodyIndex,
-	bool bFromSweep,
-	const FHitResult& SweepResult)
+void UParadoxTemporalVisionComponent::ConfigureCandidateSphereShape()
 {
-	TrackPhysicalOverlap(OtherActor, OtherComponent);
+	if (!CandidateSphere)
+	{
+		return;
+	}
+
+	CandidateSphere->SetCollisionObjectType(ECC_WorldDynamic);
+	CandidateSphere->SetCollisionResponseToAllChannels(ECR_Ignore);
+	CandidateSphere->SetCollisionResponseToChannel(
+		TemporalTargetObjectChannel,
+		ECR_Overlap);
+	CandidateSphere->SetGenerateOverlapEvents(false);
+	CandidateSphere->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 
-void UParadoxTemporalVisionComponent::HandlePhysicalEndOverlap(
-	UPrimitiveComponent* OverlappedComponent,
-	AActor* OtherActor,
-	UPrimitiveComponent* OtherComponent,
-	int32 OtherBodyIndex)
+void UParadoxTemporalVisionComponent::QuerySphereCandidates()
 {
-	if (!IsValid(OtherActor))
+	TRACE_CPUPROFILER_EVENT_SCOPE(ParadoxTemporalVision_PawnSphereQuery);
+
+	UWorld* World = GetWorld();
+	if (!CandidateSphere || !World)
 	{
+		ActorOverlapStates.Reset();
 		return;
 	}
 
-	FParadoxTemporalActorOverlapState* State = ActorOverlapStates.Find(OtherActor);
-	if (!State)
+	for (TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
+		ActorOverlapStates)
 	{
-		return;
+		Pair.Value.Components.Reset();
 	}
-	State->Components.Remove(OtherComponent);
-	for (auto It = State->Components.CreateIterator(); It; ++It)
+
+	CandidateOverlapBuffer.Reset();
+	FCollisionObjectQueryParams ObjectQueryParams;
+	ObjectQueryParams.AddObjectTypesToQuery(TemporalTargetObjectChannel);
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(ParadoxTemporalVisionPawnSphere),
+		false,
+		GetOwner());
+	World->OverlapMultiByObjectType(
+		CandidateOverlapBuffer,
+		CandidateSphere->GetComponentLocation(),
+		FQuat::Identity,
+		ObjectQueryParams,
+		FCollisionShape::MakeSphere(
+			CandidateSphere->GetScaledSphereRadius()),
+		QueryParams);
+
+	for (const FOverlapResult& Result : CandidateOverlapBuffer)
 	{
-		if (!It->IsValid())
+		UPrimitiveComponent* Component = Result.Component.Get();
+		TrackSphereOverlap(
+			Component ? Component->GetOwner() : Result.GetActor(),
+			Component);
+	}
+
+	for (auto It = ActorOverlapStates.CreateIterator(); It; ++It)
+	{
+		if (!It.Key().IsValid() || It.Value().Components.IsEmpty())
 		{
 			It.RemoveCurrent();
 		}
 	}
-	if (State->Components.IsEmpty())
-	{
-		ActorOverlapStates.Remove(OtherActor);
-	}
 }
 
-void UParadoxTemporalVisionComponent::ReconcileExistingOverlaps()
-{
-	TArray<UPrimitiveComponent*> Components;
-	GetOverlappingComponents(Components);
-	for (UPrimitiveComponent* Component : Components)
-	{
-		TrackPhysicalOverlap(Component ? Component->GetOwner() : nullptr, Component);
-	}
-}
-
-void UParadoxTemporalVisionComponent::TrackPhysicalOverlap(
+void UParadoxTemporalVisionComponent::TrackSphereOverlap(
 	AActor* OtherActor,
 	UPrimitiveComponent* OtherComponent)
 {
-	if (!IsValid(OtherActor) || !IsValid(OtherComponent))
+	if (!IsValid(OtherActor)
+		|| OtherActor == GetOwner()
+		|| !IsValid(OtherComponent)
+		|| OtherComponent->GetCollisionObjectType() != TemporalTargetObjectChannel)
 	{
 		return;
 	}
 
 	FParadoxTemporalActorOverlapState& State =
 		ActorOverlapStates.FindOrAdd(OtherActor);
-	const int32 PreviousCount = State.Components.Num();
 	State.Components.Add(OtherComponent);
-	if (bDetectionAuthoritative
-		&& PreviousCount == 0
-		&& !State.bBroadcastForCurrentAuthority)
+}
+
+void UParadoxTemporalVisionComponent::EvaluateSphereCandidates()
+{
+	for (auto It = ActorOverlapStates.CreateIterator(); It; ++It)
 	{
-		BroadcastActorCandidate(*OtherActor, OtherComponent, State);
+		AActor* Actor = It.Key().Get();
+		FParadoxTemporalActorOverlapState& State = It.Value();
+		UPrimitiveComponent* Representative = nullptr;
+		for (auto ComponentIt = State.Components.CreateIterator(); ComponentIt; ++ComponentIt)
+		{
+			if (!ComponentIt->IsValid())
+			{
+				ComponentIt.RemoveCurrent();
+				continue;
+			}
+			if (!Representative)
+			{
+				Representative = ComponentIt->Get();
+			}
+		}
+
+		if (!IsValid(Actor) || State.Components.IsEmpty())
+		{
+			It.RemoveCurrent();
+			continue;
+		}
+
+		const bool bPassesFilter =
+			PassesDistanceAndAngleFilter(*Actor, Representative);
+		if (!bPassesFilter)
+		{
+			State.bPassesConeFilter = false;
+			State.bBroadcastForCurrentAuthority = false;
+			continue;
+		}
+
+		if (!State.bPassesConeFilter)
+		{
+			State.bPassesConeFilter = true;
+			State.bBroadcastForCurrentAuthority = false;
+		}
+		BroadcastActorCandidate(*Actor, Representative, State);
 	}
+}
+
+bool UParadoxTemporalVisionComponent::PassesDistanceAndAngleFilter(
+	const AActor& OtherActor,
+	const UPrimitiveComponent* RepresentativeComponent) const
+{
+	const FVector TargetLocation = RepresentativeComponent
+		? RepresentativeComponent->Bounds.Origin
+		: OtherActor.GetActorLocation();
+	if (!IsWorldLocationWithinConfiguredCone(TargetLocation))
+	{
+		return false;
+	}
+
+	return HasClearTemporalLine(OtherActor, TargetLocation);
+}
+
+bool UParadoxTemporalVisionComponent::HasClearTemporalLine(
+	const AActor& OtherActor,
+	const FVector& TargetLocation) const
+{
+	const UWorld* World = GetWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	FCollisionQueryParams QueryParams(
+		SCENE_QUERY_STAT(ParadoxTemporalVisionOcclusion),
+		TraceComplex,
+		GetOwner());
+	QueryParams.AddIgnoredActor(&OtherActor);
+	return !World->LineTraceTestByChannel(
+		GetComponentLocation(),
+		TargetLocation,
+		MeshOcclusionTraceChannel,
+		QueryParams);
+}
+
+float UParadoxTemporalVisionComponent::GetConfiguredOuterRadius() const
+{
+	return FMath::Max(FMath::Abs(GetRadius1()), FMath::Abs(GetRadius2()));
+}
+
+float UParadoxTemporalVisionComponent::GetConfiguredInnerRadius() const
+{
+	return OnlyOneArc
+		? 0.0f
+		: FMath::Min(FMath::Abs(GetRadius1()), FMath::Abs(GetRadius2()));
+}
+
+float UParadoxTemporalVisionComponent::GetConfiguredHalfAngle() const
+{
+	const float HalfAngle = OnlyOneArc || FMath::Abs(GetRadius2()) >= FMath::Abs(GetRadius1())
+		? FMath::Abs(GetAngle2())
+		: FMath::Abs(GetAngle1());
+	return FMath::Clamp(HalfAngle, 0.0f, 180.0f);
 }
 
 void UParadoxTemporalVisionComponent::BroadcastActorCandidate(
@@ -331,7 +546,7 @@ void UParadoxTemporalVisionComponent::DrawTemporalDebug() const
 		TemporalIndex,
 		*AuthorityLabel,
 		DetectionSessionId,
-		ActorOverlapStates.Num());
+		GetDeduplicatedOverlapActorCount());
 
 	DrawDebugString(
 		World,
@@ -345,6 +560,10 @@ void UParadoxTemporalVisionComponent::DrawTemporalDebug() const
 	for (const TPair<TWeakObjectPtr<AActor>, FParadoxTemporalActorOverlapState>& Pair :
 		ActorOverlapStates)
 	{
+		if (!Pair.Value.bPassesConeFilter)
+		{
+			continue;
+		}
 		const AActor* Target = Pair.Key.Get();
 		if (!Target)
 		{

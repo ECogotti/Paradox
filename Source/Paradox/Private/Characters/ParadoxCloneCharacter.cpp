@@ -1,6 +1,7 @@
 #include "Characters/ParadoxCloneCharacter.h"
 
 #include "Behavior/ParadoxCloneBehaviorCoordinatorComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/ParadoxCloneController.h"
 #include "Components/IntentReplayComponent.h"
@@ -20,6 +21,10 @@ AParadoxCloneCharacter::AParadoxCloneCharacter()
 	TemporalVisionComponent = CreateDefaultSubobject<UParadoxTemporalVisionComponent>(
 		TEXT("TemporalVisionComponent"));
 	TemporalVisionComponent->SetupAttachment(GetRootComponent());
+	TemporalVisionCandidateSphere = CreateDefaultSubobject<USphereComponent>(
+		TEXT("TemporalVisionCandidateSphere"));
+	TemporalVisionCandidateSphere->SetupAttachment(TemporalVisionComponent);
+	TemporalVisionComponent->SetCandidateSphereComponent(TemporalVisionCandidateSphere);
 	InvestigationComponent =
 		CreateDefaultSubobject<UParadoxCloneInvestigationComponent>(
 			TEXT("ParadoxCloneInvestigationComponent"));
@@ -35,5 +40,17 @@ AParadoxCloneCharacter::AParadoxCloneCharacter()
 	{
 		Replay->ExecutionStrategyClass =
 			UParadoxCloneReplayExecutionStrategy::StaticClass();
+	}
+}
+
+void AParadoxCloneCharacter::OnConstruction(const FTransform& Transform)
+{
+	Super::OnConstruction(Transform);
+
+	if (TemporalVisionComponent)
+	{
+		TemporalVisionComponent->SetCandidateSphereComponent(
+			TemporalVisionCandidateSphere);
+		TemporalVisionComponent->SynchronizeCandidateSphere();
 	}
 }

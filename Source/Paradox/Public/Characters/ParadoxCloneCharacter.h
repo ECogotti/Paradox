@@ -7,6 +7,7 @@ class UWorldStateParticipantComponent;
 class UParadoxTemporalVisionComponent;
 class UParadoxCloneBehaviorCoordinatorComponent;
 class UParadoxCloneInvestigationComponent;
+class USphereComponent;
 
 /** Loop-owned replay avatar with explicit World State participation and no player-only components. */
 UCLASS(Blueprintable)
@@ -16,6 +17,7 @@ class PARADOX_API AParadoxCloneCharacter : public AParadoxCharacter
 
 public:
 	AParadoxCloneCharacter();
+	virtual void OnConstruction(const FTransform& Transform) override;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
 	UWorldStateParticipantComponent* GetWorldStateParticipantComponent() const
@@ -27,6 +29,12 @@ public:
 	UParadoxTemporalVisionComponent* GetTemporalVisionComponent() const
 	{
 		return TemporalVisionComponent.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	USphereComponent* GetTemporalVisionCandidateSphere() const
+	{
+		return TemporalVisionCandidateSphere.Get();
 	}
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
@@ -49,9 +57,13 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWorldStateParticipantComponent> WorldStateParticipantComponent;
 
-	/** Dynamic LineOfSight mesh used as the clone's authoritative temporal perception geometry. */
+	/** Collisionless dynamic LineOfSight mesh used as the clone's temporal view geometry. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UParadoxTemporalVisionComponent> TemporalVisionComponent;
+
+	/** Pawn-only broad phase; its radius follows the Temporal Vision cone settings automatically. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<USphereComponent> TemporalVisionCandidateSphere;
 
 	/** Sole authority for Replay, Investigating, and terminal future GOAP handoff. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))

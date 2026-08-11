@@ -9,6 +9,7 @@
 #include "Components/EntityIdentityComponent.h"
 #include "Components/GameplayActionComponent.h"
 #include "Components/IntentReplayComponent.h"
+#include "Components/SphereComponent.h"
 #include "Components/TacticalPauseActionQueueComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/ParadoxCloneController.h"
@@ -110,6 +111,51 @@ bool FParadoxCharacterComponentOwnershipTest::RunTest(const FString& Parameters)
 			TEXT("Clone owns authoritative Temporal Vision"),
 			TemporalVision))
 		{
+			const USphereComponent* CandidateSphere =
+				CloneDefaults->GetTemporalVisionCandidateSphere();
+			if (TestNotNull(
+				TEXT("Clone owns the Temporal Vision Pawn candidate sphere"),
+				CandidateSphere))
+			{
+				TestTrue(
+					TEXT("Candidate sphere is attached to Temporal Vision"),
+					CandidateSphere->GetAttachParent() == TemporalVision);
+				TestEqual(
+					TEXT("Candidate sphere follows the configured outer cone radius"),
+					CandidateSphere->GetUnscaledSphereRadius(),
+					900.0f);
+				TestEqual(
+					TEXT("Candidate sphere retains the Pawn-only query mask"),
+					CandidateSphere->GetCollisionResponseToChannel(ECC_Pawn),
+					ECR_Overlap);
+				TestEqual(
+					TEXT("Candidate sphere ignores WorldStatic"),
+					CandidateSphere->GetCollisionResponseToChannel(ECC_WorldStatic),
+					ECR_Ignore);
+				TestEqual(
+					TEXT("Candidate sphere owns no persistent moving physics body"),
+					CandidateSphere->GetCollisionEnabled(),
+					ECollisionEnabled::NoCollision);
+				TestFalse(
+					TEXT("Candidate sphere does not generate component overlap maintenance"),
+					CandidateSphere->GetGenerateOverlapEvents());
+			}
+			TestFalse(
+				TEXT("Temporal Vision procedural mesh has no dynamic collision"),
+				TemporalVision->IsDynamicMeshCollisionEnabled());
+			TestEqual(
+				TEXT("Temporal Vision procedural mesh uses NoCollision"),
+				TemporalVision->GetCollisionEnabled(),
+				ECollisionEnabled::NoCollision);
+			TestTrue(
+				TEXT("A point in front and inside the configured radius passes the cone filter"),
+				TemporalVision->IsWorldLocationWithinConfiguredCone(FVector(450.0, 0.0, 0.0)));
+			TestFalse(
+				TEXT("A point outside the configured radius fails the cone filter"),
+				TemporalVision->IsWorldLocationWithinConfiguredCone(FVector(901.0, 0.0, 0.0)));
+			TestFalse(
+				TEXT("A point outside the configured half-angle fails the cone filter"),
+				TemporalVision->IsWorldLocationWithinConfiguredCone(FVector(450.0, 450.0, 0.0)));
 			const FParadoxTemporalVisionDebugSnapshot DebugSnapshot =
 				TemporalVision->GetDebugSnapshot();
 			TestFalse(
@@ -122,6 +168,21 @@ bool FParadoxCharacterComponentOwnershipTest::RunTest(const FString& Parameters)
 				TEXT("Temporal Vision CDO has no overlap pairs"),
 				DebugSnapshot.DeduplicatedActorPairCount,
 				0);
+		}
+
+		UParadoxTemporalVisionComponent* RuntimeVision =
+			NewObject<UParadoxTemporalVisionComponent>();
+		USphereComponent* RuntimeCandidateSphere = NewObject<USphereComponent>();
+		if (TestNotNull(TEXT("Runtime Temporal Vision test component exists"), RuntimeVision)
+			&& TestNotNull(TEXT("Runtime candidate sphere test component exists"), RuntimeCandidateSphere))
+		{
+			RuntimeVision->SetCandidateSphereComponent(RuntimeCandidateSphere);
+			RuntimeVision->SetRadius2(1234.0f);
+			RuntimeVision->SynchronizeCandidateSphere();
+			TestEqual(
+				TEXT("Runtime cone radius changes resize the candidate sphere"),
+				RuntimeCandidateSphere->GetUnscaledSphereRadius(),
+				1234.0f);
 		}
 		TestNull(
 			TEXT("Clone has no player-only Tactical Pause planning"),

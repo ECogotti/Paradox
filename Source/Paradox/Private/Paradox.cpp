@@ -47,6 +47,12 @@ namespace
 		0,
 		TEXT("Enables event-driven Smart Object slot and GridWorld interaction diagnostics when local debug is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxPuzzleOverlayDebug(
+		TEXT("Paradox.PuzzleOverlay.Debug"),
+		0,
+		TEXT("Enables selected puzzle-circuit routing diagnostics when the renderer's local debug flag is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -77,6 +83,11 @@ bool IsParadoxVerticalBarrierDebugEnabled()
 bool IsParadoxInteractionDebugEnabled()
 {
 	return CVarParadoxInteractionDebug.GetValueOnGameThread() != 0;
+}
+
+bool IsParadoxPuzzleOverlayDebugEnabled()
+{
+	return CVarParadoxPuzzleOverlayDebug.GetValueOnGameThread() != 0;
 }
 
 namespace ParadoxGameplayTags

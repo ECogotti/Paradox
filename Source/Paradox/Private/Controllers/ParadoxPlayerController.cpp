@@ -43,6 +43,7 @@
 #include "Interaction/ParadoxSelectionComponent.h"
 #include "Interaction/ParadoxWidgetInteractionComponent.h"
 #include "Presentation/ParadoxOutcomePresentationComponent.h"
+#include "PuzzleOverlay/ParadoxPuzzleCircuitRendererComponent.h"
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
@@ -167,6 +168,9 @@ AParadoxPlayerController::AParadoxPlayerController()
 		TEXT("Grid Path Preview Component"));
 	SelectionComponent = CreateDefaultSubobject<UParadoxSelectionComponent>(
 		TEXT("Selection Component"));
+	PuzzleCircuitRendererComponent =
+		CreateDefaultSubobject<UParadoxPuzzleCircuitRendererComponent>(
+			TEXT("Puzzle Circuit Renderer Component"));
 	WidgetInteractionComponent = CreateDefaultSubobject<UParadoxWidgetInteractionComponent>(
 		TEXT("Widget Interaction Component"));
 	WidgetInteractionComponent->InteractionSource = EWidgetInteractionSource::Custom;

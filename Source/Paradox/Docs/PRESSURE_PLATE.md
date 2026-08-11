@@ -17,6 +17,15 @@ The native Actor also owns `SelectableComponent`. It outlines the direct `FloorM
 configured. Do not add a second selectable component in the Blueprint. See
 [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
 
+The native selectable also enables `bShowPuzzleConnectionsWhenSelected`. Selecting the plate shows
+its incoming primary/gate wires and outgoing primary wires through the Player Controller's shared
+[Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md); the renderer is read-only and does not alter
+the plate signal.
+
+Wire ports use the union of `FloorMesh` and `PlateMesh` by default. If that visual union is not the
+desired circuit boundary, add exactly one `UBoxComponent` to the Blueprint and give it Component
+Tag `WireTarget`; the box may remain hidden and collision-disabled.
+
 It also owns one native `SmartObjectComponent` attached to `BillboardRoot` and one
 `InteractionComponent`. Assign an engine-valid Smart Object Definition on the inherited Smart
 Object component, then add any number of `InteractionDefinitions` to the Paradox component. One

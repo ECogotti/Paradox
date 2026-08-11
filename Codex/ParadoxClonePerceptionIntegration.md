@@ -280,10 +280,18 @@ AI Perception Sight must never:
 Paradox generation remains exclusively based on:
 
 ```text
-overlap with the dynamic visual-cone mesh
+explicit Pawn-only sphere overlap query with no persistent moving physics body
++
+distance, angle, and occlusion filtering derived from the dynamic visual-cone configuration
 +
 project-specific Temporal Index comparison
 ```
+
+The dynamic procedural cone remains collisionless and visual. Its line traces still deform the
+mesh around occluders; it must never create or cook a gameplay physics body. The candidate sphere
+is also collisionless and supplies only the transform and radius for an object-type query limited
+to Pawn. Its radius must follow Blueprint-authored and runtime cone radius changes without a
+duplicated designer setting.
 
 This invariant must be documented and protected by module boundaries.
 
@@ -1711,7 +1719,7 @@ Verify:
 
 - AI Sight observation never invokes paradox-generation APIs;
 - hearing renderer has no paradox collision;
-- dynamic paradox cone remains separate;
+- dynamic paradox cone and its collisionless Pawn broad phase remain separate;
 - unexpected state causes Investigating, not paradox generation.
 
 ---
@@ -1942,7 +1950,8 @@ Blackboard mirrors the coordinator; it is not the authority.
 
 AI Perception Sight never generates paradoxes.
 
-Paradox generation remains dynamic-cone overlap plus Temporal Index policy.
+Paradox generation remains Pawn broad phase plus cone geometry/occlusion filtering and Temporal
+Index policy.
 
 Replay and Investigation never issue actions concurrently.
 

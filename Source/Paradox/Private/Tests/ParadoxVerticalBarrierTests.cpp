@@ -126,6 +126,9 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Vertical Barrier opts into selected interaction-cell presentation"),
 		Defaults->SelectableComponent
 			&& Defaults->SelectableComponent->bShowInteractionCellsWhenSelected);
+	TestTrue(TEXT("Vertical Barrier opts into selected puzzle-circuit presentation"),
+		Defaults->SelectableComponent
+			&& Defaults->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
 	TestNotNull(TEXT("Smart Object Component exists"), Defaults->SmartObjectComponent.Get());
 	TestTrue(TEXT("Smart Object Component attaches to inherited root"),
 		Defaults->SmartObjectComponent

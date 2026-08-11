@@ -1,5 +1,6 @@
 #include "Interaction/ParadoxSelectableComponent.h"
 
+#include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -8,6 +9,7 @@
 #include "GameFramework/PlayerController.h"
 #include "Interaction/ParadoxInteractionWidgetBase.h"
 #include "Interaction/ParadoxSelectionComponent.h"
+#include "Misc/DataValidation.h"
 #include "Paradox.h"
 
 UParadoxSelectableComponent::UParadoxSelectableComponent()
@@ -26,6 +28,107 @@ EParadoxSelectionPresentationState UParadoxSelectableComponent::GetSelectionPres
 		? EParadoxSelectionPresentationState::Hovered
 		: EParadoxSelectionPresentationState::None;
 }
+
+#if WITH_EDITOR
+EDataValidationResult UParadoxSelectableComponent::IsDataValid(FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = Super::IsDataValid(Context);
+	if (!bShowPuzzleConnectionsWhenSelected)
+	{
+		return Result;
+	}
+	if (Result == EDataValidationResult::NotValidated)
+	{
+		Result = EDataValidationResult::Valid;
+	}
+
+	const AActor* OwnerActor = GetOwner();
+	if (!OwnerActor)
+	{
+		return Result;
+	}
+	TArray<UBoxComponent*> WireTargets;
+	OwnerActor->GetComponents<UBoxComponent>(WireTargets);
+	WireTargets.RemoveAll([OwnerActor](const UBoxComponent* Box)
+	{
+		return !IsValid(Box) || Box->GetOwner() != OwnerActor || !Box->ComponentHasTag(TEXT("WireTarget"));
+	});
+	WireTargets.Sort([](const UBoxComponent& A, const UBoxComponent& B)
+	{
+		return A.GetPathName() < B.GetPathName();
+	});
+	if (WireTargets.Num() > 1)
+	{
+		Context.AddWarning(NSLOCTEXT(
+			"ParadoxSelectable",
+			"MultipleWireTargets",
+			"Multiple UBoxComponent instances are tagged WireTarget. Runtime uses the first component in stable component-path order; keep a single tag to avoid ambiguous authoring."));
+	}
+	if (!WireTargets.IsEmpty())
+	{
+		const FVector Extent = WireTargets[0]->GetUnscaledBoxExtent()
+			* WireTargets[0]->GetComponentScale().GetAbs();
+		if (Extent.ContainsNaN()
+			|| Extent.X <= KINDA_SMALL_NUMBER
+			|| Extent.Y <= KINDA_SMALL_NUMBER
+			|| Extent.Z <= KINDA_SMALL_NUMBER)
+		{
+			Context.AddError(NSLOCTEXT(
+				"ParadoxSelectable",
+				"InvalidWireTargetExtent",
+				"The WireTarget box must have finite, positive extent on every axis. Invalid tagged boxes are ignored at runtime."));
+			Result = EDataValidationResult::Invalid;
+		}
+		else
+		{
+			return Result;
+		}
+	}
+
+	bool bHasVisualBounds = false;
+	TInlineComponentArray<UStaticMeshComponent*> StaticMeshes(OwnerActor);
+	for (const UStaticMeshComponent* Mesh : StaticMeshes)
+	{
+		FVector LocalMin = FVector::ZeroVector;
+		FVector LocalMax = FVector::ZeroVector;
+		if (IsValid(Mesh))
+		{
+			Mesh->GetLocalBounds(LocalMin, LocalMax);
+		}
+		if (IsValid(Mesh) && Mesh->GetOwner() == OwnerActor && Mesh->GetStaticMesh()
+			&& Mesh->IsVisible() && !Mesh->bHiddenInGame
+			&& (LocalMax.X - LocalMin.X) > KINDA_SMALL_NUMBER
+			&& (LocalMax.Y - LocalMin.Y) > KINDA_SMALL_NUMBER)
+		{
+			bHasVisualBounds = true;
+			break;
+		}
+	}
+	if (!bHasVisualBounds)
+	{
+		TInlineComponentArray<USkeletalMeshComponent*> SkeletalMeshes(OwnerActor);
+		for (const USkeletalMeshComponent* Mesh : SkeletalMeshes)
+		{
+			if (IsValid(Mesh) && Mesh->GetOwner() == OwnerActor && Mesh->GetSkeletalMeshAsset()
+				&& Mesh->IsVisible() && !Mesh->bHiddenInGame
+				&& Mesh->GetLocalBounds().BoxExtent.X > KINDA_SMALL_NUMBER
+				&& Mesh->GetLocalBounds().BoxExtent.Y > KINDA_SMALL_NUMBER)
+			{
+				bHasVisualBounds = true;
+				break;
+			}
+		}
+	}
+	if (!bHasVisualBounds)
+	{
+		Context.AddWarning(NSLOCTEXT(
+			"ParadoxSelectable",
+			"MissingPuzzleWireBounds",
+			"Puzzle connections are enabled but the Actor has neither one valid WireTarget box nor usable direct Static/Skeletal Mesh bounds. Runtime rendering will use Actor Location as a point fallback."));
+	}
+	return Result;
+}
+#endif
 
 void UParadoxSelectableComponent::TickComponent(
 	const float DeltaTime,

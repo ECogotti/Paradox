@@ -160,6 +160,9 @@ bool FPressurePlateArchitectureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Pressure Plate opts into selected interaction-cell presentation"),
 		Defaults->SelectableComponent
 			&& Defaults->SelectableComponent->bShowInteractionCellsWhenSelected);
+	TestTrue(TEXT("Pressure Plate opts into selected puzzle-circuit presentation"),
+		Defaults->SelectableComponent
+			&& Defaults->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
 	TestNotNull(TEXT("Pressure Plate owns one Smart Object Component"), Defaults->SmartObjectComponent.Get());
 	TestTrue(TEXT("Pressure Plate Smart Object attaches to BillboardRoot"),
 		Defaults->SmartObjectComponent

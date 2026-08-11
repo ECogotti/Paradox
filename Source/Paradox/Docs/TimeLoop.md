@@ -271,19 +271,35 @@ intended `GoalLocation` for `MoveToGridCell` intents.
 ## Temporal Vision and paradox authority
 
 Every clone's `UParadoxTemporalVisionComponent` derives from `ULineOfSightComponent`. Line traces
-shape its procedural field-of-view mesh around occluders, but trace-derived `BeginOverlap` and
-`EndOverlap` events are disabled and never authorize a paradox. The authority is procedural-mesh
-collision delivered through native `OnComponentBeginOverlap` and `OnComponentEndOverlap`.
+shape its procedural field-of-view mesh around occluders. That mesh is visual and always uses
+`NoCollision`; trace-derived `BeginOverlap` and `EndOverlap` events are also disabled and never
+authorize a paradox. Mesh deformation therefore remains exact without creating or cooking a
+procedural physics body.
 
-The component is `QueryOnly`, object type `WorldDynamic`, overlaps the configurable temporal target
-channel (`Pawn` by default), ignores every other channel, and uses synchronous collision cooking.
-At the synchronized barrier the loop builds and refreshes all meshes with detection passive. After
-recorder and ready replay sessions start and the loop enters `ActiveRun`, it enables detection and
-immediately reconciles already-existing physical overlaps in the same logical frame.
+Each clone instead owns `TemporalVisionCandidateSphere`, a collisionless query shape attached to
+the Temporal Vision component. It never registers a large moving body in the physics broad phase.
+Temporal Vision performs one explicit sphere overlap query restricted to the `Pawn` object channel
+and ignores every other channel. Its unscaled radius is synchronized to the largest
+configured cone radius during native construction, Blueprint construction, preparation, and
+runtime tick, so changing `Radius1` or `Radius2` on the inherited component requires no duplicated
+sphere setting.
 
-Overlap state is deduplicated per Observer Actor/Target Actor while retaining the number of
-overlapping target primitives. Collision rebuilds or multiple target components therefore do not
-produce duplicate candidates for one authorized session.
+Normal runtime changes are observed on the next Temporal Vision tick. Blueprint code that requires
+same-frame reconciliation after changing cone parameters can call `Refresh Temporal Candidate
+Filter`; it resizes the shape, executes the Pawn-only query, and reevaluates active candidates once.
+
+A Pawn inside the sphere becomes authoritative only after it passes the configured inner/outer
+distance and half-angle checks and a clear-line query on `MeshOcclusionTraceChannel`. The filter is
+reevaluated while detection is authoritative, so a Pawn already inside the sphere is detected when
+the clone rotates toward it and is rejected again when it leaves the cone or becomes occluded.
+At the synchronized barrier the loop builds and refreshes the collisionless visual meshes with
+detection passive. After recorder and ready replay sessions start and the loop enters `ActiveRun`,
+it enables detection and immediately queries already-existing sphere candidates in the same
+logical frame.
+
+Candidate state is deduplicated per Observer Actor/Target Actor while retaining the number of
+overlapping Pawn primitives. Multiple target components therefore do not produce duplicate
+candidates for one authorized session.
 
 `/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations` is the per-world
 `UEntityRelationPolicySet`. Its `UParadoxTemporalOrderingPolicy` evaluates the
@@ -296,7 +312,8 @@ produce duplicate candidates for one authorized session.
   relation queries are ignored with a copied diagnostic snapshot.
 
 The first valid future-observation candidate creates an immutable `FParadoxContext` with both
-actors and physical overlap components, Temporal Indices, generation, detection session, cause,
+actors and the representative Pawn broad-phase components, Temporal Indices, generation, detection
+session, cause,
 a copied `FEntityRelationResult`, positions, and diagnostics. The loop accepts only one paradox
 per run, enters `ParadoxFailure`, blocks player gameplay, disables every detection component,
 cancels the partial player recording, stops clone replay and Gameplay Actions, and invalidates
@@ -354,7 +371,7 @@ Primary loop queries:
 - whether temporal detection is authoritative, how many vision participants exist, and the
   aggregate deduplicated actor-pair count;
 - a copied Temporal Vision debug snapshot by Temporal Index, including local/global debug gates,
-  detection session, authority, actor pairs, and physical primitive count;
+  detection session, authority, filtered actor pairs, and broad-phase primitive count;
 - last copied temporal candidate and last paradox context;
 - copied Game Over and Level Complete contexts.
 
@@ -413,11 +430,12 @@ second World State participant in `BP_CloneCharacter`.
   and the loop returned to selection.
 - `PlaybackFailed`: inspect `Get Last Clone Playback Failure`; only the indicated clone was frozen.
 - `TemporalDetectionFailed`: verify that reconstructed clones inherit exactly one
-  `UParadoxTemporalVisionComponent`, collision cooking succeeded, and the target channel overlaps
-  the target primitive's object channel.
-- A visible actor that produces no paradox should be checked with physical collision
-  visualization, not the plugin's trace-derived events. Temporal authority requires actual
-  procedural-mesh overlap during `ActiveRun`.
+  `UParadoxTemporalVisionComponent` and one `TemporalVisionCandidateSphere`, and that the target
+  primitive uses the `Pawn` object channel with query collision enabled. Target-side overlap events
+  are not required.
+- A visible actor that produces no paradox should be checked against sphere range, configured cone
+  half-angle, and `MeshOcclusionTraceChannel`. The procedural mesh itself is deliberately
+  collisionless and the plugin's trace-derived events are not temporal authority.
 - `RelationQueryFailed`: verify that
   `/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations` loads, validates, contains
   `UParadoxTemporalOrderingPolicy`, and both actors have registered
@@ -458,9 +476,9 @@ Temporal Vision visual debugging is off by default and requires both controls:
 2. set `Paradox.TimeLoop.Debug 1`.
 
 The one-frame overlay labels the clone, Temporal Index, passive/authoritative state, detection
-session, and deduplicated pair count. Lines to current physical targets show whether a candidate
-was already delivered; target labels show the overlapping primitive count. Setting
+session, and filtered pair count. Lines to accepted sphere candidates show whether a candidate was
+already delivered; target labels show the overlapping Pawn primitive count. Setting
 `Paradox.TimeLoop.Debug 0` immediately disables all Paradox temporal debug draw.
 
 Line-of-sight trace drawing has its own global gate, `LineOfSight.Debug`, and is not evidence that a
-physical temporal overlap occurred.
+filtered temporal candidate was accepted.

@@ -36,6 +36,55 @@ dynamic/destroyed mesh cleanup, idempotent reset, World State reset-start cleanu
 creation/context/teardown, selected interaction-cell refresh/cleanup, and native composition on
 Pressure Plate, Vertical Barrier, and Chrono Spawn.
 
+`Paradox.PuzzleOverlay.Router.*` is the deprecated `LegacyIndependent` regression suite.
+`Paradox.PuzzleOverlay.OrderedBundles.*` covers the Distributed default contract plus explicit
+Ordered/legacy dispatch, all six faces,
+orthogonal terminals, endpoint-only bounds protection, point fallback, centered and `N+1` ports,
+bundle attraction, independent link identity, metro ordering, symmetric lane nudging, bend cost,
+void and multi-level routing, bounded crossing resolution, absence of unrelated-Actor obstacle
+avoidance, opt-in candidate debug data, registration-order determinism, candidate/pass limits, and
+the 32-link synchronous benchmark.
+`Paradox.PuzzleOverlay.DistributedRepulsive.*` covers the reflected enum and per-algorithm Details
+visibility, `WireTarget` preservation, boundary ports, orthogonal terminals, endpoint protection,
+N+1 port distribution, shared/proximity negotiation, solve-local history, rotating stable order,
+best-pass retention, bounded orthogonal nudging, structural-floor separation, bridge fallback,
+void routing, signal-state independence, candidate/pass bounds, determinism, the single-wire fast
+path, coarse-to-fine face pruning, strategy isolation, incremental global-context bounds and
+spatial-index use on a subdivided multi-wire fixture. It also verifies the public defaults and
+algorithm-specific Details visibility of every quality/performance optimization control.
+`Paradox.PuzzleOverlay.Renderer.*` covers native controller ownership, render defaults, stencil
+contracts, Actor opt-in, rotated `WireTarget` projection, global Ordered Bundles transform
+invalidation, deterministic warning/fallback behavior for ambiguous tagged boxes, the default
+GridWorld subdivision preset, removal of editable runtime-derived X/Y pitch, batched ISM
+publication and coalescing of multiple endpoint transforms into one routing generation. The async
+lifecycle fixture blocks the worker deterministically, deselects while it is active, and verifies
+immediate cleanup, cooperative cancellation, balanced Game Thread delegates and stale-result
+rejection. `Router.StandardAndWorkerEquivalenceAllAlgorithms` compares geometry for Legacy,
+Ordered Bundles and Distributed Repulsive. Run all with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.PuzzleOverlay; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+The UE 5.8 Development benchmark prints the measured P95 into the Automation log. It also verifies
+the 128-per-link candidate bound and bounded optimization/ordering/reroute termination.
+
+For subdivision acceptance in PIE, use a GridWorld region with a known cell size (for example
+100 cm), select `2 x 2` on the renderer, and verify 50 cm routing increments. The GridWorld cell
+count, navigation, occupancy, reservations, and presentation must remain unchanged because only the
+wire lattice is subdivided.
+
+For bounds acceptance in PIE, add a single `UBoxComponent` with Component Tag `WireTarget` when the
+automatic visual-mesh boundary is unsuitable. Select an endpoint and enable overlay debug. Each
+wire must begin/end on the yellow endpoint box, its arrow must point outward to the clearance
+point, and no terminal may run parallel to the selected face. Multiple ports on one face must stay
+separated where its usable span permits. A face with one link must use its exact centre. Inspect the
+complete route after lane assignment: no main, terminal, or bridge segment may enter the open
+volume of either endpoint, and every segment must remain aligned to routing-frame X, Y, or Z.
+With Ordered Bundles, also inspect magenta bundle centerlines, final lane order, symmetric nudge
+offsets and the optimization diagnostics. Moving one endpoint must reroute the selected subgraph;
+changing only signal state must leave routing generation and geometry unchanged.
+
 `Paradox.Interaction.*` covers several slots, several definitions on the same slot, Activity Tag and
 interaction-tag filtering, runtime slot transforms, deterministic ordering, GridWorld projection,
 Smart Object claims, ordinary occupancy/reservations, requester-owned state, traffic reservations,

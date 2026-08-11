@@ -24,6 +24,8 @@ PARADOX_API bool IsParadoxPressurePlateDebugEnabled();
 PARADOX_API bool IsParadoxVerticalBarrierDebugEnabled();
 /** Global half of the Smart Object/GridWorld interaction-query debug gate. */
 PARADOX_API bool IsParadoxInteractionDebugEnabled();
+/** Global half of the selected puzzle-circuit overlay debug gate. */
+PARADOX_API bool IsParadoxPuzzleOverlayDebugEnabled();
 
 namespace ParadoxGameplayTags
 {

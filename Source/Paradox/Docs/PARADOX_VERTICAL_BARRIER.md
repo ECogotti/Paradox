@@ -18,6 +18,15 @@ an optional world-space widget. A frame authored as a separate Actor is outside 
 needs its own selectable component. Do not add a duplicate selectable component to the barrier
 Blueprint. See [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
 
+The native selectable enables `bShowPuzzleConnectionsWhenSelected`. Selecting the barrier renders
+its incoming primary and gate relationships as Input wires through the shared
+[Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md). No extra renderer component is required in the
+Blueprint, and circuit presentation never drives the inherited Receiver.
+
+Wire ports use `BarrierMesh` bounds by default. Add exactly one collision-disabled
+`UBoxComponent` with Component Tag `WireTarget` when the desired terminal boundary should remain
+independent from the moving door mesh. The overlay observes that box's transform without Tick.
+
 It also owns one native `SmartObjectComponent` attached to `BillboardRoot` and one
 `InteractionComponent`. Assign an engine-valid Smart Object Definition and configure any number of
 Paradox `InteractionDefinitions` in the Blueprint defaults. A definition can match several slots,

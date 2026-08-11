@@ -34,6 +34,7 @@ ULineOfSightComponent::ULineOfSightComponent(const FObjectInitializer& ObjectIni
 	IgnoreOwnerActorInTraceLine = true;
 	BeginAndEndOverlapEvent = true;
 	Tolerance = 0.00005f;
+	MeshUpdatePositionTolerance = 0.1f;
 
 	FlipDirection = false;
 	bBuildMeshActive = false;
@@ -108,11 +109,37 @@ void ULineOfSightComponent::BuildMesh()
 {
 	TRACE_CPUPROFILER_EVENT_SCOPE(LineOfSightBuildMesh);
 
+	if (!HasMeshVertexDataChanged())
+	{
+		return;
+	}
+
 	UpdateMeshSection_LinearColor(0, PointArray1, NormalVertex, UV0, VertexColors, Tangents);
+	LastSubmittedPointArray = PointArray1;
 	if (bEnableDynamicMeshCollision)
 	{
 		RebuildDynamicMeshCollision();
 	}
+}
+
+bool ULineOfSightComponent::HasMeshVertexDataChanged() const
+{
+	if (PointArray1.Num() != LastSubmittedPointArray.Num())
+	{
+		return true;
+	}
+
+	const float SafeTolerance = FMath::Max(0.0f, MeshUpdatePositionTolerance);
+	for (int32 VertexIndex = 0; VertexIndex < PointArray1.Num(); ++VertexIndex)
+	{
+		if (!PointArray1[VertexIndex].Equals(
+			LastSubmittedPointArray[VertexIndex],
+			SafeTolerance))
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 void ULineOfSightComponent::SetDynamicMeshCollisionEnabled(const bool bEnabled)
@@ -145,6 +172,7 @@ void ULineOfSightComponent::SetDynamicMeshCollisionEnabled(const bool bEnabled)
 			VertexColors,
 			Tangents,
 			bEnableDynamicMeshCollision);
+		LastSubmittedPointArray = PointArray1;
 		SetMaterial(0, Material);
 	}
 	if (bEnableDynamicMeshCollision)
@@ -335,6 +363,7 @@ void ULineOfSightComponent::StartBuildMesh()
 		VertexColors,
 		Tangents,
 		bEnableDynamicMeshCollision);
+	LastSubmittedPointArray = PointArray1;
 	if (bEnableDynamicMeshCollision)
 	{
 		RebuildDynamicMeshCollision();
@@ -355,6 +384,7 @@ void ULineOfSightComponent::StopBuildMesh()
 	UpdateOverlaps();
 	NormalVertex.Reset();
 	Triangle.Reset();
+	LastSubmittedPointArray.Reset();
 	//PointArray1.Reset(SlackArray);
 }
 
@@ -413,6 +443,7 @@ void ULineOfSightComponent::StartLineTrace(ETraceTypeQuery TraceChannel, int32 N
 	}
 
 	PointArray1.Empty();
+	LastSubmittedPointArray.Reset();
 	PointArray1.Init(FVector(0.0f, 0.0f, 0.0f), SlackArray);
 
 	TraceChannelGlobal = UEngineTypes::ConvertToCollisionChannel(TraceChannel);
@@ -780,6 +811,7 @@ void ULineOfSightComponent::ZStartCloneTo(ULineOfSightComponent* OtherLineOfSigh
 			VertexColors,
 			Tangents,
 			LineOfSightComponentForClone->bEnableDynamicMeshCollision);
+		LineOfSightComponentForClone->LastSubmittedPointArray = PointArray1;
 		if (LineOfSightComponentForClone->bEnableDynamicMeshCollision)
 		{
 			LineOfSightComponentForClone->RebuildDynamicMeshCollision();
@@ -799,6 +831,7 @@ void ULineOfSightComponent::CloneTick()
 	{
 		LineOfSightComponentForClone->SetWorldRotation(GetComponentRotation());
 		LineOfSightComponentForClone->UpdateMeshSection_LinearColor(0, PointArray1, NormalVertex, UV0, VertexColors, Tangents);
+		LineOfSightComponentForClone->LastSubmittedPointArray = PointArray1;
 		if (LineOfSightComponentForClone->bEnableDynamicMeshCollision)
 		{
 			LineOfSightComponentForClone->RebuildDynamicMeshCollision();
@@ -815,6 +848,7 @@ void ULineOfSightComponent::StopLineTrace()
 	StartLineTraceActive = false;
 	bBuildMeshActive = false;
 	PointArray1.Empty();
+	LastSubmittedPointArray.Reset();
 	WasStartOverlapArray.Empty();
 	TraceParamsGlobal.ClearIgnoredSourceObjects();
 	TraceParamsGlobal.ClearIgnoredComponents();
@@ -888,6 +922,7 @@ void ULineOfSightComponent::BeginDestroy()
 	Super::BeginDestroy();
 	TraceParamsGlobal.ClearIgnoredSourceObjects();
 	PointArray1.Empty();
+	LastSubmittedPointArray.Reset();
 	WasStartOverlapArray.Empty();
 }
 
@@ -1714,6 +1749,7 @@ void ULineOfSightComponent::SetNormals(const FVector Normals)
 	{
 		NormalVertex.Reset(SlackArray);
 		NormalVertex.Init(Normals, SlackArray);
+		LastSubmittedPointArray.Reset();
 	}
 }
 

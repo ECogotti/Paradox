@@ -6,7 +6,7 @@
 class AActor;
 class UPrimitiveComponent;
 
-/** Physical dynamic-mesh overlap candidate before Entity Relations evaluates temporal order. */
+/** Filtered temporal-cone candidate before Entity Relations evaluates temporal order. */
 USTRUCT(BlueprintType)
 struct PARADOX_API FParadoxTemporalOverlapSnapshot
 {

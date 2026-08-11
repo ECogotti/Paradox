@@ -24,6 +24,8 @@ presentation around that authority; it does not add a Paradox Smart Object behav
 `AParadoxPlayerController` owns:
 
 - `UParadoxSelectionComponent`, the authority for one hovered and one selected Actor;
+- `UParadoxPuzzleCircuitRendererComponent`, the read-only circuit presentation for that same
+  selected Actor;
 - `UParadoxWidgetInteractionComponent`, a thin `UWidgetInteractionComponent` adapter using the
   controller's shared custom hit rather than a second world trace.
 
@@ -33,6 +35,10 @@ capability without adding another component.
 
 Pressure Plate and Vertical Barrier additionally own `USmartObjectComponent` and
 `UParadoxInteractionComponent`. Chrono Spawn deliberately remains selectable-only.
+
+Pressure Plate and Vertical Barrier also enable `bShowPuzzleConnectionsWhenSelected`; Chrono Spawn
+does not. Circuit rendering, stencil ownership, routing, lifecycle, and troubleshooting are
+documented in [Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md).
 
 ## Input behavior
 
@@ -61,7 +67,8 @@ stencil value, and stencil write mask are cached. They are restored exactly when
 selection remains. Meshes added during an active state are reconciled on the next meaningful state
 transition; no component scan runs every frame. Destroyed meshes are skipped safely during cleanup.
 
-Custom Stencil ranges `230-239` and `240-249` are reserved for Paradox hover and selection.
+Custom Stencil ranges `210-219`, `220-229`, `230-239`, and `240-249` are reserved respectively for
+Puzzle Input, Puzzle Output, hover, and selection.
 `r.CustomDepth=3` must remain enabled. Rendering is authored in a camera or Post Process Volume
 using:
 
@@ -296,3 +303,5 @@ default and never logs per frame.
 - Interaction cell remains orange/red: inspect Smart Object claim state, GridWorld
   occupancy/reservations, and traffic reservations. The query ignores only identities belonging to
   the supplied requester.
+- No puzzle wires: verify `bShowPuzzleConnectionsWhenSelected`, initialized Puzzle Controller
+  topology, and the post-process stencil setup. See [Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md).

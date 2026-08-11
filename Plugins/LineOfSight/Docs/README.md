@@ -74,6 +74,8 @@ La mesh resta una rappresentazione visiva e senza collisione per default, preser
 comportamento 1.1. La collisione procedurale è ora opt-in tramite
 `bEnableDynamicMeshCollision`/`SetDynamicMeshCollisionEnabled`:
 
+- i risultati dei trace vengono confrontati con l'ultima geometria inviata; se nessun vertice si
+  sposta oltre `MeshUpdatePositionTolerance`, l'upload ridondante della sezione viene saltato;
 - `false` crea la sezione senza collisione e mantiene il profilo iniziale `NoCollision`;
 - `true` crea o ricrea la sezione collisionabile e aggiorna in modo sincrono il body fisico;
 - il body usa l'unione esatta di prismi triangolari semplici, uno per triangolo visibile, estrusi
@@ -108,6 +110,7 @@ scegliere esplicitamente quale sorgente usare.
 | `IgnoreOwnerActorInTraceLine` | `true` | Ignora l'Actor proprietario quando il trace viene avviato. |
 | `BeginAndEndOverlapEvent` | `true` | Mantiene lo stato degli Actor visti ed emette gli eventi di ingresso/uscita. |
 | `FrameTracing` | `EveryTick` | Esegue i trace ogni frame oppure solo sui frame pari/dispari. |
+| `MeshUpdatePositionTolerance` | `0.1` | Spostamento locale minimo, in cm, necessario per reinviare i vertici della sezione al renderer. Non riduce o sospende i trace. |
 | `Material` | nessuno | Materiale applicato alla sezione `0` della mesh. |
 | `bEnableDynamicMeshCollision` | `false` | Crea la sezione procedurale con collisione fisica opt-in. |
 | `DynamicMeshCollisionHalfThickness` | `5.0` | Semispessore dei prismi triangolari usati dall'overlap fisico. |
@@ -272,6 +275,10 @@ Per la mesh procedurale usare un materiale compatibile con una surface mesh. Gli
 ## Prestazioni e profiling
 
 Il costo principale è dato da `NumberOfLines + 1` multi-trace per aggiornamento. Aumentare la risoluzione rende il bordo sugli ostacoli più preciso ma aumenta il costo CPU e il numero di vertici aggiornati.
+
+La sezione procedurale viene aggiornata soltanto quando almeno un vertice locale cambia oltre
+`MeshUpdatePositionTolerance`. Un componente che si muove in spazio libero continua quindi a
+tracciare e resta pronto a deformarsi, ma non reinvia ogni frame una geometria locale identica.
 
 Indicazioni pratiche:
 

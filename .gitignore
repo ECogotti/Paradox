@@ -25,6 +25,10 @@
 # Binaries folders are intentionally tracked: DLLs, executables, .target and
 # .modules receipts let non-programmers open the project without compiling it.
 /Binaries/Win64/Paradox.exe
+# Local Shipping build output is reproducible and the executable exceeds
+# GitHub's regular-file size limit. Keep Editor binaries tracked as intended.
+/Binaries/Win64/*-Win64-Shipping.exe
+/Binaries/Win64/*-Win64-Shipping.target
 *.pdb
 *.ipdb
 *.iobj

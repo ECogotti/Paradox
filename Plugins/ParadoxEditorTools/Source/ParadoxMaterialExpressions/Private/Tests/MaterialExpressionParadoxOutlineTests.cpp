@@ -10,6 +10,8 @@ namespace
     enum class ETestOutlineCategory : uint8
     {
         None,
+        PuzzleInput,
+        PuzzleOutput,
         Hover,
         Selection,
     };
@@ -36,10 +38,51 @@ namespace
         const float HoverMaximum = FMath::Max(
             Expression.DefaultHoverStencilMin,
             Expression.DefaultHoverStencilMax);
+        if (Stencil >= HoverMinimum && Stencil <= HoverMaximum)
+        {
+            return ETestOutlineCategory::Hover;
+        }
 
-        return Stencil >= HoverMinimum && Stencil <= HoverMaximum
-            ? ETestOutlineCategory::Hover
+        const float PuzzleOutputMinimum = FMath::Min(
+            Expression.DefaultPuzzleOutputStencilMin,
+            Expression.DefaultPuzzleOutputStencilMax);
+        const float PuzzleOutputMaximum = FMath::Max(
+            Expression.DefaultPuzzleOutputStencilMin,
+            Expression.DefaultPuzzleOutputStencilMax);
+        if (Stencil >= PuzzleOutputMinimum && Stencil <= PuzzleOutputMaximum)
+        {
+            return ETestOutlineCategory::PuzzleOutput;
+        }
+
+        const float PuzzleInputMinimum = FMath::Min(
+            Expression.DefaultPuzzleInputStencilMin,
+            Expression.DefaultPuzzleInputStencilMax);
+        const float PuzzleInputMaximum = FMath::Max(
+            Expression.DefaultPuzzleInputStencilMin,
+            Expression.DefaultPuzzleInputStencilMax);
+
+        return Stencil >= PuzzleInputMinimum && Stencil <= PuzzleInputMaximum
+            ? ETestOutlineCategory::PuzzleInput
             : ETestOutlineCategory::None;
+    }
+
+    bool IsDepthSampleAllowedForContractTest(
+        const EParadoxOutlineOcclusionMode Mode,
+        const float CustomDepth,
+        const float SceneDepth,
+        const float Bias)
+    {
+        const bool bVisible = CustomDepth <= SceneDepth + FMath::Max(0.0f, Bias);
+        switch (Mode)
+        {
+        case EParadoxOutlineOcclusionMode::ThroughWalls:
+            return true;
+        case EParadoxOutlineOcclusionMode::OccludedOnly:
+            return !bVisible;
+        case EParadoxOutlineOcclusionMode::VisibleOnly:
+        default:
+            return bVisible;
+        }
     }
 }
 
@@ -61,8 +104,8 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         return false;
     }
 
-    TestEqual(TEXT("Input count"), Expression->CountInputs(), 13);
-    TestEqual(TEXT("Output count"), Expression->Outputs.Num(), 4);
+    TestEqual(TEXT("Input count"), Expression->CountInputs(), 21);
+    TestEqual(TEXT("Output count"), Expression->Outputs.Num(), 6);
     TestEqual(
         TEXT("Creation name"),
         Expression->GetCreationName().ToString(),
@@ -83,6 +126,14 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("HoverStencilMax"),
         TEXT("SelectionStencilMin"),
         TEXT("SelectionStencilMax"),
+        TEXT("PuzzleInputIntensity"),
+        TEXT("PuzzleOutputIntensity"),
+        TEXT("PuzzleInputColor"),
+        TEXT("PuzzleOutputColor"),
+        TEXT("PuzzleInputStencilMin"),
+        TEXT("PuzzleInputStencilMax"),
+        TEXT("PuzzleOutputStencilMin"),
+        TEXT("PuzzleOutputStencilMax"),
     };
 
     for (int32 InputIndex = 0;
@@ -101,6 +152,8 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("SelectionMask"),
         TEXT("CombinedMask"),
         TEXT("OutlineColor"),
+        TEXT("PuzzleInputMask"),
+        TEXT("PuzzleOutputMask"),
     };
 
     for (int32 OutputIndex = 0;
@@ -129,6 +182,8 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("OutlineColor output type"),
         Expression->GetOutputValueType(3),
         MCT_Float3);
+    TestEqual(TEXT("PuzzleInputMask output type"), Expression->GetOutputValueType(4), MCT_Float1);
+    TestEqual(TEXT("PuzzleOutputMask output type"), Expression->GetOutputValueType(5), MCT_Float1);
     TestEqual(
         TEXT("HoverColor input type"),
         Expression->GetInputValueType(6),
@@ -137,6 +192,8 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("SelectionColor input type"),
         Expression->GetInputValueType(7),
         MCT_Float3);
+    TestEqual(TEXT("PuzzleInputColor input type"), Expression->GetInputValueType(15), MCT_Float3);
+    TestEqual(TEXT("PuzzleOutputColor input type"), Expression->GetInputValueType(16), MCT_Float3);
 
     TestEqual(TEXT("Default thickness"), Expression->DefaultThickness, 1.0f);
     TestEqual(TEXT("Default softness"), Expression->DefaultSoftness, 0.0f);
@@ -160,10 +217,36 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("Default Selection maximum"),
         Expression->DefaultSelectionStencilMax,
         249.0f);
+    TestEqual(TEXT("Default Puzzle Input minimum"), Expression->DefaultPuzzleInputStencilMin, 210.0f);
+    TestEqual(TEXT("Default Puzzle Input maximum"), Expression->DefaultPuzzleInputStencilMax, 219.0f);
+    TestEqual(TEXT("Default Puzzle Output minimum"), Expression->DefaultPuzzleOutputStencilMin, 220.0f);
+    TestEqual(TEXT("Default Puzzle Output maximum"), Expression->DefaultPuzzleOutputStencilMax, 229.0f);
     TestEqual(
         TEXT("Default occlusion mode"),
         Expression->OcclusionMode,
         EParadoxOutlineOcclusionMode::VisibleOnly);
+    TestEqual(
+        TEXT("Puzzle wires default to occluded-only outline"),
+        Expression->PuzzleWireOcclusionMode,
+        EParadoxOutlineOcclusionMode::OccludedOnly);
+    TestEqual(TEXT("VisibleOnly serialized ordinal remains zero"),
+        static_cast<uint8>(EParadoxOutlineOcclusionMode::VisibleOnly), uint8(0));
+    TestEqual(TEXT("ThroughWalls serialized ordinal remains one"),
+        static_cast<uint8>(EParadoxOutlineOcclusionMode::ThroughWalls), uint8(1));
+    TestEqual(TEXT("OccludedOnly is append-only"),
+        static_cast<uint8>(EParadoxOutlineOcclusionMode::OccludedOnly), uint8(2));
+    TestFalse(TEXT("Visible wire sample is suppressed by OccludedOnly"),
+        IsDepthSampleAllowedForContractTest(
+            Expression->PuzzleWireOcclusionMode, 100.0f, 100.0f, Expression->DefaultOcclusionBias));
+    TestTrue(TEXT("Wire behind opaque Scene Depth is retained by OccludedOnly"),
+        IsDepthSampleAllowedForContractTest(
+            Expression->PuzzleWireOcclusionMode, 200.0f, 100.0f, Expression->DefaultOcclusionBias));
+    TestTrue(TEXT("Hover/Selection VisibleOnly remains visible when unobstructed"),
+        IsDepthSampleAllowedForContractTest(
+            Expression->OcclusionMode, 100.0f, 100.0f, Expression->DefaultOcclusionBias));
+    TestFalse(TEXT("Hover/Selection VisibleOnly remains hidden behind opaque depth"),
+        IsDepthSampleAllowedForContractTest(
+            Expression->OcclusionMode, 200.0f, 100.0f, Expression->DefaultOcclusionBias));
     TestFalse(
         TEXT("Internal depth edges are disabled by default"),
         Expression->bEnableInternalDepthEdges);
@@ -184,13 +267,16 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("Stencil 249 is Selection"),
         ClassifyStencilForContractTest(249.0f, *Expression),
         ETestOutlineCategory::Selection);
+    TestEqual(TEXT("Stencil 210 is Puzzle Input"), ClassifyStencilForContractTest(210.0f, *Expression), ETestOutlineCategory::PuzzleInput);
+    TestEqual(TEXT("Stencil 219 is Puzzle Input"), ClassifyStencilForContractTest(219.0f, *Expression), ETestOutlineCategory::PuzzleInput);
+    TestEqual(TEXT("Stencil 220 is Puzzle Output"), ClassifyStencilForContractTest(220.0f, *Expression), ETestOutlineCategory::PuzzleOutput);
+    TestEqual(TEXT("Stencil 229 is Puzzle Output"), ClassifyStencilForContractTest(229.0f, *Expression), ETestOutlineCategory::PuzzleOutput);
 
     static const float OutsideValues[] =
     {
         0.0f,
         1.0f,
         100.0f,
-        229.0f,
         250.0f,
         255.0f,
     };
@@ -199,7 +285,7 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
     {
         TestEqual(
             FString::Printf(
-                TEXT("Stencil %.0f is outside both ranges"),
+                TEXT("Stencil %.0f is outside all ranges"),
                 OutsideValue),
             ClassifyStencilForContractTest(OutsideValue, *Expression),
             ETestOutlineCategory::None);
@@ -220,6 +306,21 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
         TEXT("Selection has priority when custom ranges overlap"),
         ClassifyStencilForContractTest(242.0f, *Expression),
         ETestOutlineCategory::Selection);
+
+    Expression->DefaultHoverStencilMin = 220.0f;
+    Expression->DefaultHoverStencilMax = 225.0f;
+    TestEqual(
+        TEXT("Hover has priority when custom ranges overlap Puzzle Output"),
+        ClassifyStencilForContractTest(222.0f, *Expression),
+        ETestOutlineCategory::Hover);
+    Expression->DefaultHoverStencilMin = 230.0f;
+    Expression->DefaultHoverStencilMax = 239.0f;
+    Expression->DefaultPuzzleOutputStencilMin = 210.0f;
+    Expression->DefaultPuzzleOutputStencilMax = 215.0f;
+    TestEqual(
+        TEXT("Puzzle Output has priority when custom ranges overlap Puzzle Input"),
+        ClassifyStencilForContractTest(212.0f, *Expression),
+        ETestOutlineCategory::PuzzleOutput);
 
     UMaterial* PostProcessMaterial = NewObject<UMaterial>();
     PostProcessMaterial->MaterialDomain = MD_PostProcess;

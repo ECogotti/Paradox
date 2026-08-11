@@ -87,6 +87,7 @@ APressurePlate::APressurePlate(const FObjectInitializer& ObjectInitializer)
 	PerceptionSource = CreateDefaultSubobject<UPerceptionKnowledgeSourceComponent>(TEXT("PerceptionSource"));
 	SelectableComponent = CreateDefaultSubobject<UParadoxSelectableComponent>(TEXT("SelectableComponent"));
 	SelectableComponent->bShowInteractionCellsWhenSelected = true;
+	SelectableComponent->bShowPuzzleConnectionsWhenSelected = true;
 	SmartObjectComponent = CreateDefaultSubobject<USmartObjectComponent>(TEXT("SmartObjectComponent"));
 	SmartObjectComponent->SetupAttachment(BillboardRoot);
 	InteractionComponent = CreateDefaultSubobject<UParadoxInteractionComponent>(TEXT("InteractionComponent"));

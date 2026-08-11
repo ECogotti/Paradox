@@ -26,6 +26,7 @@ class UPerceptionKnowledgeHearingRangeRendererComponent;
 class UPerceptionKnowledgeListenerComponent;
 class UPerceptionKnowledgeProfile;
 class UParadoxSelectionComponent;
+class UParadoxPuzzleCircuitRendererComponent;
 class UParadoxWidgetInteractionComponent;
 class AParadoxCameraBoundsVolume;
 class AParadoxCameraRig;
@@ -58,6 +59,10 @@ protected:
 	/** Authoritative owner of local mouse hover and single-Actor selection. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UParadoxSelectionComponent> SelectionComponent;
+
+	/** Read-only PuzzleSystem circuit presentation for the currently selected Actor. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UParadoxPuzzleCircuitRendererComponent> PuzzleCircuitRendererComponent;
 
 	/** Virtual pointer used to interact with selected Actors' world-space widgets. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
@@ -284,6 +289,12 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	UParadoxSelectionComponent* GetSelectionComponent() const { return SelectionComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Puzzle Overlay")
+	UParadoxPuzzleCircuitRendererComponent* GetPuzzleCircuitRendererComponent() const
+	{
+		return PuzzleCircuitRendererComponent.Get();
+	}
 
 	UFUNCTION(BlueprintPure, Category = "Grid World|Presentation")
 	UGridCellVisualStyle* GetRuntimeGridCellVisualStyle() const

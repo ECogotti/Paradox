@@ -156,6 +156,14 @@ public:
 	UPROPERTY(EditAnywhere, Category = "LineOfSight Component|Advanced")
 	EFrameTracingSight FrameTracing;
 
+	/**
+	 * Minimum local-space vertex displacement required before resubmitting the procedural section.
+	 * Trace results still refresh normally; identical visual geometry avoids a redundant render upload.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "LineOfSight Component|Performance",
+		meta = (ClampMin = "0.0", UIMin = "0.0"))
+	float MeshUpdatePositionTolerance;
+
 
 #if WITH_EDITORONLY_DATA
 	/* Only available in the editor. Draws tracing lines. */
@@ -511,6 +519,7 @@ private:
 
 	void BuildArcVectorLenghtFlat();
 
+	bool HasMeshVertexDataChanged() const;
 	void BuildMesh();
 	void RebuildDynamicMeshCollision();
 	void ClearDynamicMeshCollision();
@@ -520,5 +529,7 @@ private:
 	bool bDynamicMeshCollisionPaused = false;
 	ECollisionEnabled::Type CollisionModeBeforeDynamicPause =
 		ECollisionEnabled::NoCollision;
+
+	TArray<FVector> LastSubmittedPointArray;
 
 };

@@ -97,6 +97,12 @@ multi-interaction Smart Object catalogs, exact Gameplay Action requests, claim l
 Intent Replay, selected GridWorld cells, World State cleanup, and input arbitration are documented in
 [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
 
+The selected Actor's read-only PuzzleSystem circuit, default multi-threaded Distributed Repulsive,
+Standard/Multi-Thread execution, calculation lifecycle delegates, Ordered Bundles and deprecated
+legacy routing strategies, WireTarget authoring, GridWorld surface use, Input/Output stencil
+ranges, and wire-material contract are documented in
+[Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md).
+
 ## Player movement
 
 `AParadoxPlayerController` no longer applies direct movement input or calls `SimpleMoveToLocation`.

@@ -9,6 +9,13 @@
 - The time loop initializes player observation recording, stores the resulting Timeline Bundle,
   and initializes clone comparison against the matching bundle.
 
+Clone temporal-paradox vision remains separate from native AI Sight. Its line traces deform a
+collisionless procedural cone around occluders. A clone-owned collisionless sphere shape,
+automatically sized from the cone radii in Blueprint construction and at runtime, drives an
+explicit Pawn-only overlap query; it is not a persistent moving physics body. Distance, angle, and
+occlusion filters decide whether a candidate reaches Temporal Index evaluation. Native AI Sight
+still cannot generate a paradox.
+
 The listener profile is shared data. The hearing renderer reads profile, effective range, and Body
 Actor through read-only listener APIs; it follows possession changes without ticking. Its mesh has
 no collision, overlap, or navigation effect. Gameplay visibility and debug visibility are separate;

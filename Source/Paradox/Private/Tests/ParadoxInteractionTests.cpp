@@ -1,44 +1,7 @@
 #include "Misc/AutomationTest.h"
-
-#if WITH_DEV_AUTOMATION_TESTS
-
-#include "Actions/GameplayActionDefinition.h"
-#include "Components/GameplayActionComponent.h"
-#include "Components/GridNavigationOccupancyComponent.h"
-#include "Components/SceneComponent.h"
-#include "Components/WidgetComponent.h"
-#include "Controllers/PuzzleController.h"
-#include "Emitters/PuzzleEmitterComponent.h"
-#include "Engine/Engine.h"
-#include "Engine/World.h"
-#include "EngineUtils.h"
-#include "GameFramework/Pawn.h"
 #include "GameplayActionTags.h"
-#include "Interaction/ParadoxInteractionComponent.h"
-#include "Interaction/ParadoxInteractionActionDefinition.h"
-#include "Interaction/ParadoxEmitterInteractionAction.h"
-#include "Interaction/ParadoxReceiverInteractionAction.h"
-#include "IntentReplayTags.h"
-#include "Journal/IntentExecutionJournal.h"
-#include "Navigation/GridNavigationData.h"
-#include "Navigation/GridTrafficReservation.h"
 #include "Paradox.h"
 #include "ParadoxInteractionTestTypes.h"
-#include "ParadoxSelectionTestTypes.h"
-#include "Presentation/GridCellVisualStyle.h"
-#include "Receivers/PuzzleReceiverComponent.h"
-#include "Components/IntentReplayComponent.h"
-#include "Playback/IntentReplayPlaybackSession.h"
-#include "Recording/IntentReplayTrack.h"
-#include "SmartObjectComponent.h"
-#include "SmartObjectDefinition.h"
-#include "SmartObjectRuntime.h"
-#include "SmartObjectSubsystem.h"
-#include "StructUtils/PropertyBag.h"
-
-#if WITH_EDITOR
-#include "Misc/DataValidation.h"
-#endif
 
 namespace ParadoxInteractionTestTags
 {
@@ -85,6 +48,43 @@ void UParadoxInteractionTestSuccessAction::ExecuteInteraction_Implementation()
 		GameplayActionTags::Result_Success,
 		TEXT("Immediate test interaction succeeded."));
 }
+
+#if WITH_DEV_AUTOMATION_TESTS
+
+#include "Actions/GameplayActionDefinition.h"
+#include "Components/GameplayActionComponent.h"
+#include "Components/GridNavigationOccupancyComponent.h"
+#include "Components/SceneComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Controllers/PuzzleController.h"
+#include "Emitters/PuzzleEmitterComponent.h"
+#include "Engine/Engine.h"
+#include "Engine/World.h"
+#include "EngineUtils.h"
+#include "GameFramework/Pawn.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxInteractionActionDefinition.h"
+#include "Interaction/ParadoxEmitterInteractionAction.h"
+#include "Interaction/ParadoxReceiverInteractionAction.h"
+#include "IntentReplayTags.h"
+#include "Journal/IntentExecutionJournal.h"
+#include "Navigation/GridNavigationData.h"
+#include "Navigation/GridTrafficReservation.h"
+#include "ParadoxSelectionTestTypes.h"
+#include "Presentation/GridCellVisualStyle.h"
+#include "Receivers/PuzzleReceiverComponent.h"
+#include "Components/IntentReplayComponent.h"
+#include "Playback/IntentReplayPlaybackSession.h"
+#include "Recording/IntentReplayTrack.h"
+#include "SmartObjectComponent.h"
+#include "SmartObjectDefinition.h"
+#include "SmartObjectRuntime.h"
+#include "SmartObjectSubsystem.h"
+#include "StructUtils/PropertyBag.h"
+
+#if WITH_EDITOR
+#include "Misc/DataValidation.h"
+#endif
 
 namespace UE::Paradox::Interaction::Tests
 {

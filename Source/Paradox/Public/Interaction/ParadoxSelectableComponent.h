@@ -40,6 +40,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Interaction")
 	bool bShowInteractionCellsWhenSelected = false;
 
+	/** Shows the read-only PuzzleSystem circuit overlay while this Actor is selected. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Puzzle Overlay")
+	bool bShowPuzzleConnectionsWhenSelected = false;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
 	TSubclassOf<UParadoxInteractionWidgetBase> SelectionWidgetClass;
 
@@ -84,6 +88,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	UWidgetComponent* GetInteractionWidget() const { return InteractionWidgetComponent.Get(); }
+
+#if WITH_EDITOR
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
 
 protected:
 	virtual void TickComponent(

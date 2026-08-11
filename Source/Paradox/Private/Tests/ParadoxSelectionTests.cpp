@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Components/WidgetComponent.h"
+#include "Controllers/ParadoxPlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -17,6 +18,7 @@
 #include "Presentation/GridRuntimeVisualizationSubsystem.h"
 #include "Puzzles/ParadoxVerticalBarrier.h"
 #include "Puzzles/PressurePlate.h"
+#include "PuzzleOverlay/ParadoxPuzzleCircuitRendererComponent.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
 #include "SmartObjectComponent.h"
@@ -449,6 +451,15 @@ bool FParadoxSelectionNativeCompositionTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Pressure Plate owns native Selectable Component"), PressurePlate ? PressurePlate->SelectableComponent.Get() : nullptr);
 	TestNotNull(TEXT("Vertical Barrier owns native Selectable Component"), VerticalBarrier ? VerticalBarrier->SelectableComponent.Get() : nullptr);
 	TestNotNull(TEXT("Chrono Spawn owns native Selectable Component"), ChronoSpawn ? ChronoSpawn->GetSelectableComponent() : nullptr);
+	TestTrue(TEXT("Pressure Plate enables puzzle-circuit presentation"),
+		PressurePlate && PressurePlate->SelectableComponent
+			&& PressurePlate->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
+	TestTrue(TEXT("Vertical Barrier enables puzzle-circuit presentation"),
+		VerticalBarrier && VerticalBarrier->SelectableComponent
+			&& VerticalBarrier->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
+	TestFalse(TEXT("Chrono Spawn does not enable puzzle-circuit presentation"),
+		ChronoSpawn && ChronoSpawn->GetSelectableComponent()
+			&& ChronoSpawn->GetSelectableComponent()->bShowPuzzleConnectionsWhenSelected);
 	TestNotNull(TEXT("Pressure Plate owns native Paradox Interaction Component"), PressurePlate ? PressurePlate->InteractionComponent.Get() : nullptr);
 	TestNotNull(TEXT("Vertical Barrier owns native Paradox Interaction Component"), VerticalBarrier ? VerticalBarrier->InteractionComponent.Get() : nullptr);
 	TestNotNull(TEXT("Pressure Plate owns native Smart Object Component"), PressurePlate ? PressurePlate->SmartObjectComponent.Get() : nullptr);
@@ -457,6 +468,9 @@ bool FParadoxSelectionNativeCompositionTest::RunTest(const FString& Parameters)
 		ChronoSpawn ? ChronoSpawn->FindComponentByClass<UParadoxInteractionComponent>() : nullptr);
 	TestNull(TEXT("Chrono Spawn intentionally has no Smart Object Component"),
 		ChronoSpawn ? ChronoSpawn->FindComponentByClass<USmartObjectComponent>() : nullptr);
+	const AParadoxPlayerController* Controller = GetDefault<AParadoxPlayerController>();
+	TestNotNull(TEXT("Paradox Player Controller owns the puzzle-circuit renderer"),
+		Controller ? Controller->GetPuzzleCircuitRendererComponent() : nullptr);
 	return true;
 }
 

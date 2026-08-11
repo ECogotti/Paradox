@@ -4,6 +4,7 @@
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
+#include "Controllers/ParadoxPlayerController.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
 #include "Interaction/ParadoxInteractionWidgetBase.h"
@@ -85,4 +86,11 @@ public:
 
 	UPROPERTY()
 	TObjectPtr<UParadoxSelectionComponent> Selection;
+};
+
+/** Concrete native controller used to exercise ParadoxPlayerController default subobjects in runtime tests. */
+UCLASS()
+class AParadoxPuzzleOverlayTestController : public AParadoxPlayerController
+{
+	GENERATED_BODY()
 };
