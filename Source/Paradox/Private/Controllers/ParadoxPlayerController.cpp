@@ -42,6 +42,9 @@
 #include "Paradox.h"
 #include "Interaction/ParadoxSelectionComponent.h"
 #include "Interaction/ParadoxWidgetInteractionComponent.h"
+#include "Inventory/ParadoxDropTargetingComponent.h"
+#include "Inventory/ParadoxDropAction.h"
+#include "HUD/ParadoxGameplayHUDComponent.h"
 #include "Presentation/ParadoxOutcomePresentationComponent.h"
 #include "PuzzleOverlay/ParadoxPuzzleCircuitRendererComponent.h"
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
@@ -176,6 +179,10 @@ AParadoxPlayerController::AParadoxPlayerController()
 	WidgetInteractionComponent->InteractionSource = EWidgetInteractionSource::Custom;
 	WidgetInteractionComponent->bEnableHitTesting = true;
 	WidgetInteractionComponent->bShowDebug = false;
+	DropTargetingComponent = CreateDefaultSubobject<UParadoxDropTargetingComponent>(
+		TEXT("Drop Targeting Component"));
+	GameplayHUDComponent = CreateDefaultSubobject<UParadoxGameplayHUDComponent>(
+		TEXT("Gameplay HUD Component"));
 	OutcomePresentationComponent =
 		CreateDefaultSubobject<UParadoxOutcomePresentationComponent>(
 			TEXT("Outcome Presentation Component"));
@@ -217,6 +224,12 @@ AParadoxPlayerController::AParadoxPlayerController()
 	if (TimeTravelDefinitionFinder.Succeeded())
 	{
 		TimeTravelActionDefinition = TimeTravelDefinitionFinder.Object;
+	}
+	static ConstructorHelpers::FObjectFinder<UParadoxDropActionDefinition> DropDefinitionFinder(
+		TEXT("/Game/Data/GameplayActions/DA_ParadoxDrop.DA_ParadoxDrop"));
+	if (DropDefinitionFinder.Succeeded())
+	{
+		DropTargetingComponent->DropActionDefinition = DropDefinitionFinder.Object;
 	}
 	GridPathPreviewComponent->GoalContentionPolicy = MoveGoalContentionPolicy;
 }
@@ -373,7 +386,11 @@ void AParadoxPlayerController::PlayerTick(float DeltaTime)
 	else
 	{
 		UpdateMousePointerState();
-		if (bEnablePointerPathPrediction
+		if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
+		{
+			DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
+		}
+		else if (bEnablePointerPathPrediction
 			&& IsMovementInputAllowed())
 		{
 			UpdatePointerPrediction(false);
@@ -431,6 +448,16 @@ void AParadoxPlayerController::SetupInputComponent()
 		if (UEnhancedInputLocalPlayerSubsystem* Subsystem = ULocalPlayer::GetSubsystem<UEnhancedInputLocalPlayerSubsystem>(GetLocalPlayer()))
 		{
 			Subsystem->AddMappingContext(DefaultMappingContext, 0);
+		}
+		if (InputComponent && ToggleHUDModeKey.IsValid())
+		{
+			FInputKeyBinding& ToggleHUDBinding = InputComponent->BindKey(
+				ToggleHUDModeKey,
+				IE_Pressed,
+				this,
+				&AParadoxPlayerController::OnToggleHUDModeTriggered);
+			ToggleHUDBinding.bExecuteWhenPaused = true;
+			ToggleHUDBinding.bConsumeInput = true;
 		}
 
 		// Set up action bindings
@@ -553,6 +580,12 @@ void AParadoxPlayerController::OnInputStarted()
 			return;
 		}
 	}
+	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
+	{
+		bHasCachedDestination = false;
+		DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
+		return;
+	}
 	if (!IsMovementInputAllowed())
 	{
 		bHasCachedDestination = false;
@@ -573,6 +606,12 @@ void AParadoxPlayerController::OnSetDestinationTriggered()
 	if (IsChronoSpawnSelectionActive())
 	{
 		UpdateChronoSpawnHover(bIsTouch);
+		return;
+	}
+	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
+	{
+		UpdateMousePointerState();
+		DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
 		return;
 	}
 	if (!IsMovementInputAllowed())
@@ -603,6 +642,19 @@ void AParadoxPlayerController::OnSetDestinationReleased()
 			WidgetInteractionComponent->ReleasePointerKey(EKeys::LeftMouseButton);
 		}
 		bPrimaryPointerConsumedByWidget = false;
+		FollowTime = 0.0f;
+		bHasCachedDestination = false;
+		return;
+	}
+	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
+	{
+		UpdateMousePointerState();
+		DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
+		const FParadoxDropTargetingResult Result = DropTargetingComponent->ConfirmDropTarget();
+		if (Result.Status == EParadoxDropTargetingStatus::SubmissionRejected)
+		{
+			PARADOX_LOG_WARNING(TEXT("Drop submission failed for controller '%s': %s"), *GetNameSafe(this), *Result.DiagnosticMessage);
+		}
 		FollowTime = 0.0f;
 		bHasCachedDestination = false;
 		return;
@@ -715,6 +767,11 @@ void AParadoxPlayerController::OnSelectionTriggered()
 	{
 		return;
 	}
+	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
+	{
+		DropTargetingComponent->CancelDropTargeting();
+		return;
+	}
 	UpdateMousePointerState();
 	if (SelectionComponent)
 	{
@@ -731,6 +788,14 @@ void AParadoxPlayerController::OnRewindTriggered()
 			TEXT("Rewind input was rejected for controller '%s': %s"),
 			*GetNameSafe(this),
 			*Result.DiagnosticMessage);
+	}
+}
+
+void AParadoxPlayerController::OnToggleHUDModeTriggered()
+{
+	if (GameplayHUDComponent && GameplayHUDComponent->CanToggleHUDModeFromInput())
+	{
+		GameplayHUDComponent->ToggleHUDMode();
 	}
 }
 

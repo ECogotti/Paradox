@@ -35,6 +35,14 @@ enum class EGridPartialPathPreviewPolicy : uint8
 	HideAndBlockCommit UMETA(DisplayName = "Hide and Block Commit")
 };
 
+/** Selects whether the requested terminal cell belongs to the movement path. */
+UENUM(BlueprintType)
+enum class EGridPathPreviewTerminalPolicy : uint8
+{
+	IncludeRequestedGoal UMETA(DisplayName = "Include Requested Goal"),
+	StopBeforeRequestedGoal UMETA(DisplayName = "Stop Before Requested Goal")
+};
+
 /** Failure specific to preview request construction and lifetime. */
 UENUM(BlueprintType)
 enum class EGridPathPreviewFailureReason : uint8
@@ -47,6 +55,7 @@ enum class EGridPathPreviewFailureReason : uint8
 	NoPath,
 	PartialPathBlocked,
 	GoalOccupied,
+	TerminalGoalUnavailable,
 	Stale,
 	PresentationUnavailable,
 	InternalError
@@ -93,6 +102,10 @@ struct GRIDWORLD_API FGridPathPreviewResult
 	/** True when GoalCell is the preceding cell selected by Stop Before Occupied. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Preview")
 	bool bGoalAdjustedForContention = false;
+
+	/** True when GoalCell excludes the requested terminal cell by explicit preview policy. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Preview")
+	bool bGoalAdjustedForTerminalPolicy = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Grid World|Path Preview")
 	FGridPathQueryResult Path;
@@ -183,6 +196,17 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Grid World|Path Preview")
 	FGridPathPreviewResult UpdatePreviewForController(AController* Controller, const FGridCellId& GoalCell);
 
+	/**
+	 * Updates or reuses a preview with an explicit terminal-cell policy. Stop Before Requested Goal
+	 * queries the requested cell normally, then exports and presents the complete prefix ending at
+	 * its ordinary predecessor.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Grid World|Path Preview")
+	FGridPathPreviewResult UpdatePreviewForControllerWithTerminalPolicy(
+		AController* Controller,
+		const FGridCellId& GoalCell,
+		EGridPathPreviewTerminalPolicy TerminalPolicy);
+
 	/** Re-evaluates the retained request even when its controller and goal are unchanged. */
 	UFUNCTION(BlueprintCallable, Category = "Grid World|Path Preview")
 	FGridPathPreviewResult RefreshPreview();
@@ -210,6 +234,8 @@ private:
 	TWeakObjectPtr<AGridNavigationData> PreviewNavigationData;
 	FGridCellId PreviewGoalCell;
 	TSubclassOf<UNavigationQueryFilter> PreviewFilterClass;
+	EGridPathPreviewTerminalPolicy PreviewTerminalPolicy =
+		EGridPathPreviewTerminalPolicy::IncludeRequestedGoal;
 	FGridPathPreviewResult LatestResult;
 	FGridInjectedPath LatestInjectedPath;
 	FGridPathPresentationHandle PresentationHandle;
@@ -222,6 +248,8 @@ private:
 	EGridPartialPathPreviewPolicy LastPartialPathPolicy = EGridPartialPathPreviewPolicy::ShowAndAllowCommit;
 	EGridInjectedPathInvalidationPolicy LastInjectedPathInvalidationPolicy = EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal;
 	EGridGoalContentionPolicy LastGoalContentionPolicy = EGridGoalContentionPolicy::StopBeforeOccupied;
+	EGridPathPreviewTerminalPolicy LastTerminalPolicy =
+		EGridPathPreviewTerminalPolicy::IncludeRequestedGoal;
 	float LastAdditionalGoalSeparation = 5.0f;
 	int32 RequestGeneration = 0;
 	bool bRefreshInProgress = false;

@@ -1,11 +1,23 @@
 # Clone behavior verification
 
+## Gameplay HUD
+
+Run `Paradox.GameplayHUD.*` to validate the native root, root-owned Tactical Pause and Inventory
+descendants, absence of coordinator section-class overrides, fixed switcher indices,
+Normal/Collapsed transitions, default section state, Blueprint reflection contract and Player
+Controller-owned component defaults. `TacticalPause.Runtime.Widget.*` covers the persistent
+`UUserWidget` lifecycle.
+Inventory regressions under `Paradox.Inventory.*` cover empty/equipped state sources, Drop and
+pickupable action requests. PIE acceptance should additionally verify `Tab` during ordinary play and
+Tactical Pause, automatic hiding during Chrono Spawn/reset, and preservation of Collapsed mode after
+a temporary hide.
+
 ## Automation
 
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Interaction+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -94,9 +106,44 @@ Definition defaults, standard Receiver/Emitter effects, reachability/effect pref
 claim acquisition only at start, every terminal release path, selection-reset separation,
 requester/target teardown, the non-implemented base fallback, one semantic recorded intent, fresh
 replay resolution/claim, immutable source tracks, replay origin/journal, and moved-requester
-failure without movement. `GridWorld.Presentation.CellOverlay.*` covers owner-lifetime sessions,
+failure without movement. Hardening also distinguishes genuinely runtime-spawned targets from
+world-authored Interaction Components duplicated into PIE.
+`Paradox.Interaction.Context.PreflightAndCloneReplayRequester` verifies
+that requester, target, and origin are available before Action Init and that a replayed interaction
+uses the recipient clone rather than the source request context.
+`GridWorld.Presentation.CellOverlay.*` covers owner-lifetime sessions,
 priority, Primary/Secondary resolution, path coexistence, navigation immutability, and renderer
 reuse.
+
+`Paradox.Inventory.*` contains 23 focused scenarios covering empty/occupied Pickup, atomic Swap,
+adjacent and exact-injected Drop contracts, terminal-prefix validation, invalidation without retarget,
+no-path failure, shared-preview/ghost cleanup, the authored `BP_PlayerController` ghost material,
+a visible transient ghost owner independent from the hidden Player Controller, passive effects
+exactly once, special and empty configurations,
+player/clone parity, explicit widget rebinding and the explicit Drop source contract, reset
+before/during movement and targeting, item destruction, native component composition, real asset
+resolution without Blueprint hooks, non-blocking positive-cost GridWorld occupancy, collisionless
+and nav-irrelevant pickupable primitives, preservation of the query-only interaction widget after
+Drop normalization, reentrancy rejection, real Pickup submission followed by clone Intent Replay,
+and Swap preflight with the submitting Character as inventory owner. Manual
+input acceptance additionally verifies that invalid LMB keeps Drop Mode active while RMB cancels
+from valid, invalid, and no-hit cursor locations. Run it with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -ExecCmds="Automation RunTests Paradox.Inventory; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+`Paradox.ItemSlots.*` contains 29 focused scenarios covering the requested 25 behavioral cases plus
+reentrancy, destruction, native asset resolution, and absence of Tick. It verifies atomic
+Inventory-to-Slot ownership, compatible/incompatible and requester-relative queries, exactly-once
+passives, lock and internal release, source-specialized Pickup, anchor presentation, empty/occupied
+WorldState baselines, reset/abort behavior, persistent perception states, Blueprint-safe extension
+hooks, receiver-gated puzzle activation, emitter output, and unchanged controller-local puzzle
+gates. Run it with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -ExecCmds="Automation RunTests Paradox.ItemSlots; Quit" -TestExit="Automation Test Queue Empty" -log
+```
 
 `GameplayActionsGridWorld.Execution.*` verifies the reusable non-journaled executor contract; the
 existing runtime tests continue to cover the Grid Move adapter's AI and Player path-following

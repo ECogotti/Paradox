@@ -66,10 +66,22 @@ FGridPathPreviewResult UGridPathPreviewComponent::UpdatePreviewForController(
 	AController* Controller,
 	const FGridCellId& GoalCell)
 {
+	return UpdatePreviewForControllerWithTerminalPolicy(
+		Controller,
+		GoalCell,
+		EGridPathPreviewTerminalPolicy::IncludeRequestedGoal);
+}
+
+FGridPathPreviewResult UGridPathPreviewComponent::UpdatePreviewForControllerWithTerminalPolicy(
+	AController* Controller,
+	const FGridCellId& GoalCell,
+	const EGridPathPreviewTerminalPolicy TerminalPolicy)
+{
 	if (!IsValid(Controller) || Controller->GetWorld() != GetWorld())
 	{
 		PreviewController.Reset();
 		PreviewGoalCell = FGridCellId();
+		PreviewTerminalPolicy = TerminalPolicy;
 		PublishFailure(EGridQueryStatus::InvalidInput, EGridPathPreviewFailureReason::InvalidController);
 		return LatestResult;
 	}
@@ -77,11 +89,13 @@ FGridPathPreviewResult UGridPathPreviewComponent::UpdatePreviewForController(
 	{
 		PreviewController = Controller;
 		PreviewGoalCell = FGridCellId();
+		PreviewTerminalPolicy = TerminalPolicy;
 		PublishFailure(EGridQueryStatus::GoalNotNavigable, EGridPathPreviewFailureReason::InvalidGoal);
 		return LatestResult;
 	}
 	PreviewController = Controller;
 	PreviewGoalCell = GoalCell;
+	PreviewTerminalPolicy = TerminalPolicy;
 	PreviewFilterClass = NavigationFilter;
 	if (PreviewFilterClass == nullptr)
 	{
@@ -109,6 +123,7 @@ void UGridPathPreviewComponent::ClearPreview()
 	PreviewController.Reset();
 	PreviewGoalCell = FGridCellId();
 	PreviewFilterClass = nullptr;
+	PreviewTerminalPolicy = EGridPathPreviewTerminalPolicy::IncludeRequestedGoal;
 	UnbindNavigationData();
 	LastFilterSignature = 0;
 	LastRelevantRevisions = FGridRevisionSet();
@@ -352,6 +367,7 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 		&& LastPartialPathPolicy == PartialPathPolicy
 		&& LastInjectedPathInvalidationPolicy == InjectedPathInvalidationPolicy
 		&& LastGoalContentionPolicy == GoalContentionPolicy
+		&& LastTerminalPolicy == PreviewTerminalPolicy
 		&& FMath::IsNearlyEqual(LastAdditionalGoalSeparation, AdditionalGoalSeparation)
 		&& (NativePreviewPath.IsValid()
 			|| LatestResult.FailureReason == EGridPathPreviewFailureReason::GoalOccupied);
@@ -371,6 +387,7 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 		LastPartialPathPolicy = PartialPathPolicy;
 		LastInjectedPathInvalidationPolicy = InjectedPathInvalidationPolicy;
 		LastGoalContentionPolicy = GoalContentionPolicy;
+		LastTerminalPolicy = PreviewTerminalPolicy;
 		LastAdditionalGoalSeparation = AdditionalGoalSeparation;
 	};
 	bool bRequestedGoalContested = false;
@@ -389,7 +406,10 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 			return LatestResult;
 		}
 		bRequestedGoalContested = !NavData->CanClaimTrafficGoal(GoalClaimRequest);
-		if (bRequestedGoalContested && GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied)
+		if (bRequestedGoalContested
+			&& (GoalContentionPolicy == EGridGoalContentionPolicy::RejectOccupied
+				|| PreviewTerminalPolicy
+					== EGridPathPreviewTerminalPolicy::StopBeforeRequestedGoal))
 		{
 			NativePreviewPath.Reset();
 			LatestInjectedPath = FGridInjectedPath();
@@ -435,8 +455,12 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 	TArray<FGridCellId> EffectiveCells = GridPath->CellPath;
 	FGridCellId EffectiveGoalCell = PreviewGoalCell;
 	bool bGoalAdjustedForContention = false;
-	if (bRequestedGoalContested
-		&& GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied)
+	const bool bGoalAdjustedForTerminalPolicy =
+		PreviewTerminalPolicy == EGridPathPreviewTerminalPolicy::StopBeforeRequestedGoal;
+	const bool bStopBeforeRequestedGoal = bGoalAdjustedForTerminalPolicy
+		|| (bRequestedGoalContested
+			&& GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied);
+	if (bStopBeforeRequestedGoal)
 	{
 		if (GridPath->IsPartial()
 			|| EffectiveCells.Num() < 2
@@ -447,7 +471,9 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 			LatestResult = FGridPathPreviewResult();
 			LatestResult.Status = EGridQueryStatus::Unreachable;
 			LatestResult.Path.Status = EGridQueryStatus::Unreachable;
-			LatestResult.FailureReason = EGridPathPreviewFailureReason::GoalOccupied;
+			LatestResult.FailureReason = bGoalAdjustedForTerminalPolicy
+				? EGridPathPreviewFailureReason::TerminalGoalUnavailable
+				: EGridPathPreviewFailureReason::GoalOccupied;
 			LatestResult.StartCell = StartCell;
 			LatestResult.GoalCell = PreviewGoalCell;
 			LatestResult.RequestedGoalCell = PreviewGoalCell;
@@ -465,8 +491,23 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 			EffectiveCells,
 			EffectiveGoalCell))
 		{
-			PublishFailure(EGridQueryStatus::Unreachable, EGridPathPreviewFailureReason::GoalOccupied);
+			PublishFailure(
+				EGridQueryStatus::Unreachable,
+				bGoalAdjustedForTerminalPolicy
+					? EGridPathPreviewFailureReason::TerminalGoalUnavailable
+					: EGridPathPreviewFailureReason::GoalOccupied);
 			return LatestResult;
+		}
+		if (bGoalAdjustedForTerminalPolicy)
+		{
+			const int32* EffectiveGoalIndex = Snapshot->CellIndexById.Find(EffectiveGoalCell);
+			if (EffectiveGoalIndex == nullptr || !GoalData->Neighbors.Contains(*EffectiveGoalIndex))
+			{
+				PublishFailure(
+					EGridQueryStatus::Unreachable,
+					EGridPathPreviewFailureReason::TerminalGoalUnavailable);
+				return LatestResult;
+			}
 		}
 		const FGridCellData* EffectiveGoalData = Snapshot->FindCell(EffectiveGoalCell);
 		FGridTrafficGoalClaimRequest EffectiveClaimRequest;
@@ -490,7 +531,8 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 			OnPreviewChanged.Broadcast(LatestResult);
 			return LatestResult;
 		}
-		bGoalAdjustedForContention = true;
+		bGoalAdjustedForContention = bRequestedGoalContested
+			&& GoalContentionPolicy == EGridGoalContentionPolicy::StopBeforeOccupied;
 	}
 
 	const FGridInjectedPathValidationResult InjectionResult = NavData->CreateExactInjectedPath(
@@ -500,18 +542,20 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 		Controller->GetNavAgentLocation(),
 		EffectiveCells,
 		EffectiveGoalCell,
-		true,
-		GridPath->IsPartial(),
+		!bGoalAdjustedForTerminalPolicy,
+		bGoalAdjustedForTerminalPolicy ? false : GridPath->IsPartial(),
 		InjectedPathInvalidationPolicy,
 		QuerySignature,
 		LatestInjectedPath);
 	if (InjectionResult.bIsValid)
 	{
-		LatestInjectedPath.RequestedGoalCell = PreviewGoalCell;
+		LatestInjectedPath.RequestedGoalCell = bGoalAdjustedForTerminalPolicy
+			? EffectiveGoalCell
+			: PreviewGoalCell;
 	}
 
 	FGridNavigationPath* PresentedGridPath = GridPath;
-	if (InjectionResult.bIsValid && bGoalAdjustedForContention)
+	if (InjectionResult.bIsValid && bStopBeforeRequestedGoal)
 	{
 		const FPathFindingResult MaterializedPath = NavData->MaterializeInjectedPath(
 			LatestInjectedPath,
@@ -547,6 +591,7 @@ FGridPathPreviewResult UGridPathPreviewComponent::ExecutePreview(bool bForce)
 	LatestResult.GoalCell = EffectiveGoalCell;
 	LatestResult.RequestedGoalCell = PreviewGoalCell;
 	LatestResult.bGoalAdjustedForContention = bGoalAdjustedForContention;
+	LatestResult.bGoalAdjustedForTerminalPolicy = bGoalAdjustedForTerminalPolicy;
 	LatestResult.QuerySignature = QuerySignature;
 	LatestResult.RequestGeneration = RequestGeneration;
 	LatestResult.Path.Status = LatestResult.Status;

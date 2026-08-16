@@ -26,17 +26,21 @@ class PARADOX_API UParadoxInteractionActionBase : public UGameplayActionInstance
 public:
 	UParadoxInteractionActionBase();
 
+	/**
+	 * Returns the Actor that owns the authoritative Gameplay Action Component.
+	 * This is phase-safe and already resolves during CanStartAction, before Action Init caches exist.
+	 * RequestSource/GetRequester remains origin metadata and is intentionally not the spatial actor.
+	 */
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
-	AActor* GetInteractionRequester() const { return InteractionRequester.Get(); }
+	AActor* GetInteractionRequester() const;
 
+	/** Returns the semantic soft Target during preflight as well as after Action Init. */
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
-	AActor* GetInteractionTarget() const { return InteractionTarget.Get(); }
+	AActor* GetInteractionTarget() const;
 
+	/** Resolves the Target's interaction capability without requiring Action Init to have run. */
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
-	UParadoxInteractionComponent* GetInteractionComponent() const
-	{
-		return InteractionComponent.Get();
-	}
+	UParadoxInteractionComponent* GetInteractionComponent() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
 	FGameplayTag GetInteractionTag() const { return SemanticParameters.InteractionTag; }

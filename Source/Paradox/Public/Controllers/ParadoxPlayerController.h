@@ -5,6 +5,7 @@
 #include "Camera/ParadoxCameraTypes.h"
 #include "CoreMinimal.h"
 #include "GameFramework/PlayerController.h"
+#include "InputCoreTypes.h"
 #include "Navigation/GridPathInjectionTypes.h"
 #include "TimeLoop/ParadoxTimeLoopTypes.h"
 #include "Types/GameplayActionTypes.h"
@@ -28,6 +29,8 @@ class UPerceptionKnowledgeProfile;
 class UParadoxSelectionComponent;
 class UParadoxPuzzleCircuitRendererComponent;
 class UParadoxWidgetInteractionComponent;
+class UParadoxDropTargetingComponent;
+class UParadoxGameplayHUDComponent;
 class AParadoxCameraBoundsVolume;
 class AParadoxCameraRig;
 struct FInputActionValue;
@@ -68,6 +71,14 @@ protected:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
 	TObjectPtr<UParadoxWidgetInteractionComponent> WidgetInteractionComponent;
 
+	/** Temporary owner-scoped GridWorld cell targeting used by the inventory Drop request. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UParadoxDropTargetingComponent> DropTargetingComponent;
+
+	/** Local lifetime and visibility authority for the persistent project Gameplay HUD. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components")
+	TObjectPtr<UParadoxGameplayHUDComponent> GameplayHUDComponent;
+
 	/** Shared style for path overlays and selected interaction cells. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Grid World|Presentation")
 	TSoftObjectPtr<UGridCellVisualStyle> RuntimeGridCellVisualStyle;
@@ -82,6 +93,10 @@ protected:
 	/** Time Threshold to know if it was a short press */
 	UPROPERTY(EditAnywhere, Category="Input")
 	float ShortPressThreshold;
+
+	/** Toggles the Gameplay HUD between Normal and Collapsed. Bound directly so it also works while paused. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Input|HUD")
+	FKey ToggleHUDModeKey = EKeys::Tab;
 
 	/** FX Class that we will spawn when clicking */
 	UPROPERTY(EditAnywhere, Category="Input")
@@ -290,6 +305,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	UParadoxSelectionComponent* GetSelectionComponent() const { return SelectionComponent.Get(); }
 
+	UFUNCTION(BlueprintPure, Category = "Grid World|Pointer")
+	UGridCellPointerComponent* GetGridCellPointerComponent() const { return GridCellPointerComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Grid World|Path Preview")
+	UGridPathPreviewComponent* GetGridPathPreviewComponent() const { return GridPathPreviewComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Inventory")
+	UParadoxDropTargetingComponent* GetDropTargetingComponent() const { return DropTargetingComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Gameplay HUD")
+	UParadoxGameplayHUDComponent* GetGameplayHUDComponent() const { return GameplayHUDComponent.Get(); }
+
 	UFUNCTION(BlueprintPure, Category = "Paradox|Puzzle Overlay")
 	UParadoxPuzzleCircuitRendererComponent* GetPuzzleCircuitRendererComponent() const
 	{
@@ -344,6 +371,7 @@ protected:
 	void OnSelectionTriggered();
 	void OnRewindTriggered();
 	void OnCrouchTriggered();
+	void OnToggleHUDModeTriggered();
 	void OnCameraMoveTriggered(const FInputActionValue& Value);
 	void OnCameraMoveCompleted();
 	void OnCameraZoomTriggered(const FInputActionValue& Value);

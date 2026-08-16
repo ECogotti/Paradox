@@ -35,6 +35,8 @@ void UTacticalPauseControlsWidget::NativeConstruct()
 {
 	Super::NativeConstruct();
 	BindButtonEvents();
+	BindToSubsystem();
+	RefreshPresentation();
 }
 
 void UTacticalPauseControlsWidget::NativeDestruct()
@@ -43,20 +45,6 @@ void UTacticalPauseControlsWidget::NativeDestruct()
 	UnbindButtonEvents();
 	Super::NativeDestruct();
 }
-
-void UTacticalPauseControlsWidget::NativeOnActivated()
-{
-	Super::NativeOnActivated();
-	BindToSubsystem();
-	RefreshPresentation();
-}
-
-void UTacticalPauseControlsWidget::NativeOnDeactivated()
-{
-	UnbindFromSubsystem();
-	Super::NativeOnDeactivated();
-}
-
 UTacticalPauseWorldSubsystem* UTacticalPauseControlsWidget::GetTacticalPauseSubsystem() const
 {
 	if (BoundSubsystem)
@@ -196,7 +184,7 @@ void UTacticalPauseControlsWidget::BindToSubsystem()
 	BoundSubsystem = GetWorld() ? GetWorld()->GetSubsystem<UTacticalPauseWorldSubsystem>() : nullptr;
 	if (!BoundSubsystem)
 	{
-		TACTICALPAUSE_LOG_WARNING("Tactical Pause Common UI widget %s could not bind to a World subsystem.", *GetNameSafe(this));
+		TACTICALPAUSE_LOG_WARNING("Tactical Pause controls widget %s could not bind to a World subsystem.", *GetNameSafe(this));
 		return;
 	}
 	BoundSubsystem->OnPlaybackStateChangedNative().AddUObject(this, &UTacticalPauseControlsWidget::HandleStateChanged);

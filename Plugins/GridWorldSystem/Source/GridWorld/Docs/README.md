@@ -272,6 +272,17 @@ Prediction uses the normal `AGridNavigationData` query, `UGridNavigationQueryFil
 
 The component exposes `FGridPathPreviewResult`, including status, ordered path data, start/goal, opaque query signature, request generation, stale state and commit eligibility. `StalePolicy` selects **Keep but Mark Stale**, **Clear Immediately**, or **Recalculate Automatically**. Partial results independently select **Show and Allow Commit** (default), **Show but Block Commit**, or **Hide and Block Commit**. A stale preview is never exported as executable: **Prepare Preview for Commit** synchronously refreshes when the current start or revisions changed and returns false when the current policy blocks commit.
 
+**Update Preview for Controller with Terminal Policy** is the opt-in variant for interactions whose
+pointed cell is a semantic target but not the movement destination. The default
+`IncludeRequestedGoal` policy is identical to **Update Preview for Controller**.
+`StopBeforeRequestedGoal` performs the same single full query and uses the same cache and renderers,
+then exposes and injects only the prefix ending at the immediate ordinary predecessor. The result
+retains the pointed cell in `RequestedGoalCell`; the injected path stores the predecessor as both
+its requested and original goal so exact-path fallback cannot drift onto the semantic target.
+Partial paths, paths with fewer than two cells, and final segments that are not ordinary GridWorld
+neighbors are non-committable. An adjacent request therefore exports the valid one-cell path whose
+only cell is the requester's current approach cell.
+
 **Goal Contention Policy** defaults to `StopBeforeOccupied`. Prediction resolves the requester's occupancy identity and asks `AGridNavigationData` to inspect both final-cell `OccupancyOwners` and traffic claims. When the requested goal is foreign-owned, A* still computes the complete route to it; prediction then removes exactly that final cell. `FGridPathPreviewResult::RequestedGoalCell` retains the input, `GoalCell` becomes the immediate predecessor, and `bGoalAdjustedForContention` is true. Both presentation backends and the injected payload use this exact prefix.
 
 The predecessor must itself be claimable. Execution repeats the check atomically and also handles occupancy that changes after preview by shortening an unadjusted injected path once. An already shortened path is never shortened again. `RejectOccupied` remains the strict failure policy and produces `GoalOccupied` without a fallback.
@@ -283,6 +294,7 @@ Blueprint flow:
 ```text
 Grid Cell Pointer target changed
     -> Update Preview for Controller(Controller, CellId)
+    -> or Update Preview for Controller with Terminal Policy(Controller, CellId, Stop Before Requested Goal)
 click/confirm
     -> Prepare Preview for Commit
     -> Move Along Exact Grid Path (AI task), or pass InjectedPath to the gameplay action bridge

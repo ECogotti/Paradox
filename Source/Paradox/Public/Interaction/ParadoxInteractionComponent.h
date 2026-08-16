@@ -88,12 +88,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Interaction")
 	void RefreshInteractionSources();
 
+	/** Broadcasts that requester-relative effect preconditions may have changed. */
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Interaction")
+	void NotifyInteractionAffordanceChanged();
+
 	FParadoxInteractionAffordanceChangedNative& OnInteractionAffordanceChangedNative()
 	{
 		return InteractionAffordanceChangedNative;
 	}
 
 protected:
+	virtual void PostLoad() override;
+	virtual void PostDuplicate(EDuplicateMode::Type DuplicateMode) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 
@@ -102,6 +108,7 @@ protected:
 #endif
 
 private:
+	bool HasReplayStableTargetIdentity() const;
 	FParadoxInteractionQueryResult QueryInteractionOptionsInternal(
 		AActor* Requester,
 		const FGameplayTag* InteractionTag) const;
@@ -155,6 +162,9 @@ private:
 	TArray<TWeakObjectPtr<UPuzzleReceiverComponent>> ReceiverAffordanceSources;
 	TArray<TWeakObjectPtr<UPuzzleEmitterComponent>> EmitterAffordanceSources;
 	FParadoxInteractionAffordanceChangedNative InteractionAffordanceChangedNative;
+
+	/** True only when this instance was loaded from authored data or duplicated for PIE. */
+	bool bHasAuthoredTargetProvenance = false;
 
 	friend class UParadoxInteractionActionBase;
 };

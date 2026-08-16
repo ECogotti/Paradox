@@ -44,5 +44,5 @@ public:
 
 private:
 	/** Game-thread-only suppression for the required once-per-intent recovery warning. */
-	mutable TSet<FGuid> WarnedDifferentStartIntents;
+	mutable TSet<FGuid> WarnedExactPathRecoveryIntents;
 };

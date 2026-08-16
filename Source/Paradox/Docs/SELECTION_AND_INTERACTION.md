@@ -52,6 +52,21 @@ documented in [Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md).
 - Touch and Chrono Spawn selection retain their existing dedicated input paths. During the
   `ChronoSpawnSelection` phase the controller clears generic mouse hover and routes the pointer to
   the time-loop authority.
+- While Drop targeting is active, it has higher input/presentation priority than ordinary selection
+  and movement: LMB confirms the current valid GridWorld cell and RMB cancels. Invalid LMB keeps
+  targeting active. World widgets and Chrono Spawn selection retain their earlier arbitration.
+
+Pickupable Actors use the same selection and Smart Object interaction pipeline. Their native
+catalog always offers Pickup and Swap; availability is decided by the Character's inherited
+single-slot inventory. Held pickupables disable selection, Smart Object interaction and occupancy.
+See [Paradox single-slot inventory](INVENTORY.md) for authoring, Drop targeting, replay and reset.
+
+Item Slot Actors use that pipeline as semantic targets for Insert and Pickup-from-Slot. Their
+native four-position Smart Object and action catalog require no Blueprint assembly. Occupancy and
+activity transitions call `NotifyInteractionAffordanceChanged`, so a selected slot immediately
+refreshes its requester-relative options. Inserted items disable their own selection, Smart Object,
+interaction and GridWorld occupancy; only the slot remains interactable. See
+[Paradox insertable items and item slots](ITEM_SLOTS.md).
 
 ## Outline setup
 
@@ -93,7 +108,9 @@ invalid, or empty reference falls back to that Actor's root. Do not use a Pressu
 gameplay Actor as the anchor for a Door widget. By default, the widget forward vector follows the
 selecting camera's inverted forward vector (`-CameraForwardVector`); disable
 `bFaceOwningPlayerCamera` to use `WidgetRelativeRotation` instead. Its UI collision remains
-queryable by the widget pointer but never generates gameplay overlap events.
+queryable by the widget pointer but never generates gameplay overlap events, blocks Pawns, or
+affects navigation. Pickupable collision normalization does not overwrite this selection-owned UI
+query state, so a dropped item can expose the same hoverable/clickable widget again.
 
 Before showing the widget, the native base receives read-only context for the selected Actor,
 selectable component, interaction component, selection authority, owning Player Controller, and
@@ -162,9 +179,11 @@ Every non-empty catalog entry must reference a `UGameplayActionDefinition` confi
 `QueryInteractionOptionsByTag` deliberately accepts a tag subtree for presentation. Execution is
 stricter: `CanRequestInteraction` and `RequestInteraction` require a concrete exact catalog tag and
 never choose a child interaction implicitly. They also require the requester to directly own a
-`UGameplayActionComponent`, the target to be world-authored (`RF_WasLoaded`), and at least one free
-matching slot whose exact GridWorld cell is reachable by a complete controller-aware path. No
-interaction rotates or teleports the requester.
+`UGameplayActionComponent`, the target to have a replay-stable world-authored identity, and at least
+one free matching slot whose exact GridWorld cell is reachable by a complete controller-aware path.
+In normal runtime Worlds this identity is represented by `RF_WasLoaded`; the Interaction Component
+also preserves authored provenance across its load/PIE-duplication lifecycle. Actors actually
+spawned at runtime remain unrecordable. No interaction rotates or teleports the requester.
 
 The Gameplay Action Definition soft reference is loaded synchronously only during explicit
 availability validation or request submission. Hover and the raw cell-overlay query do not load
@@ -175,7 +194,11 @@ submission result, and a diagnostic so rejection is not reduced to a boolean.
 
 `UParadoxInteractionActionBase` treats the Actor owning the requester's
 `UGameplayActionComponent` as the spatial requester. `RequestSource` records where the request came
-from; it does not replace that spatial identity. `CanStartAction` repeats semantic, effect and
+from; it does not replace that spatial identity. The public requester, target, and interaction
+component getters are phase-safe: during `CanStartAction`, which runs before `OnActionInit`, they
+resolve from the already initialized owning Action Component and immutable semantic Property Bag.
+Concrete precondition hooks must therefore use these getters instead of assuming the runtime caches
+have already been populated. `CanStartAction` repeats semantic, effect and
 reachability preflight without claiming. `OnActionStarted` orders free candidates by complete-path
 cost, cell identity and slot identity, then acquires a normal-priority Smart Object claim before
 movement. A candidate lost to a claim or movement contention race is released and the next
@@ -198,6 +221,11 @@ callback, forwards pause/resume/cancel to its transient movement executor, and o
 changes. An outcome completed externally during movement succeeds; lost Activate prerequisites
 fail immediately. Selection reset only removes hover, outline, widget, cache, and
 cell overlay; it never cancels a Gameplay Action or releases its claim.
+
+During Intent Replay the newly created instance belongs to the recipient Character's Action
+Component. A clone therefore becomes the requester automatically; the Player Controller stored as
+the original request source is neither recorded as spatial authority nor reused for inventory,
+movement, slot resolution, or effects.
 
 ### Standard Receiver and Emitter actions
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "CommonActivatableWidget.h"
+#include "Blueprint/UserWidget.h"
 #include "Types/TacticalPauseTypes.h"
 #include "TacticalPauseControlsWidget.generated.h"
 
@@ -8,12 +8,12 @@ class UCommonButtonBase;
 class UTacticalPauseWorldSubsystem;
 
 /**
- * Common UI control surface whose layout and style are supplied entirely by its Widget Blueprint.
+ * Persistent Common UI control surface whose layout and style are supplied by its Widget Blueprint.
  * The Blueprint must bind the six named Common UI buttons declared below; this class owns only
- * command routing, selection state, activation lifecycle, and subsystem observation.
+ * command routing, selection state, ordinary widget lifecycle, and subsystem observation.
  */
 UCLASS(Blueprintable)
-class TACTICALPAUSE_API UTacticalPauseControlsWidget : public UCommonActivatableWidget
+class TACTICALPAUSE_API UTacticalPauseControlsWidget : public UUserWidget
 {
 	GENERATED_BODY()
 
@@ -45,8 +45,6 @@ public:
 protected:
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
-	virtual void NativeOnActivated() override;
-	virtual void NativeOnDeactivated() override;
 
 	/** Required Common UI button named PlayButton in the Widget Blueprint hierarchy. */
 	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidget), Category = "Tactical Pause|Widget")
@@ -77,9 +75,9 @@ private:
 	void BindButtonEvents();
 	/** Removes every Common UI click binding before destruction. */
 	void UnbindButtonEvents();
-	/** Subscribes while this activatable widget is active; no Tick or polling is used. */
+	/** Subscribes while the ordinary widget is constructed; no Tick or polling is used. */
 	void BindToSubsystem();
-	/** Symmetrically removes every subsystem observer when deactivated or destroyed. */
+	/** Symmetrically removes every subsystem observer before destruction. */
 	void UnbindFromSubsystem();
 	/** Returns one of the four required preset buttons without allocating a temporary array. */
 	UCommonButtonBase* GetSpeedButton(int32 SlotIndex) const;
@@ -96,7 +94,7 @@ private:
 	void HandleSpeedButton3Clicked();
 	void HandleSpeedButton4Clicked();
 
-	/** GC-tracked authority observed only while the Common UI widget is active. */
+	/** GC-tracked authority observed only while the widget is constructed. */
 	UPROPERTY(Transient)
 	TObjectPtr<UTacticalPauseWorldSubsystem> BoundSubsystem = nullptr;
 

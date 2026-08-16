@@ -52,3 +52,47 @@ class PARADOX_API UParadoxEmitterInteractionActionDefinition
 public:
 	UParadoxEmitterInteractionActionDefinition();
 };
+
+/** Ready-to-author Definition for pickup into an empty inventory slot. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxPickupInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxPickupInteractionActionDefinition();
+};
+
+/** Ready-to-author Definition for atomically swapping the held and world pickupables. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxSwapInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxSwapInteractionActionDefinition();
+};
+
+/** Ready-to-author Definition for Inventory-to-Item-Slot insertion. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxInsertItemInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxInsertItemInteractionActionDefinition();
+};
+
+/** Ready-to-author Definition for Item-Slot-to-Inventory Pickup. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxPickupFromItemSlotInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxPickupFromItemSlotInteractionActionDefinition();
+};

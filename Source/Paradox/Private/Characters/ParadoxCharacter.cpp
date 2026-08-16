@@ -11,6 +11,7 @@
 #include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Footsteps/ParadoxFootstepNoiseComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Inventory/ParadoxInventoryComponent.h"
 #include "NiagaraComponent.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
 
@@ -33,6 +34,7 @@ AParadoxCharacter::AParadoxCharacter()
 
 	// Create semantic action and replay components on the entity whose behavior is recorded.
 	GameplayActionComponent = CreateDefaultSubobject<UGameplayActionComponent>(TEXT("GameplayActionComponent"));
+	InventoryComponent = CreateDefaultSubobject<UParadoxInventoryComponent>(TEXT("InventoryComponent"));
 	IntentReplayComponent = CreateDefaultSubobject<UIntentReplayComponent>(TEXT("IntentReplayComponent"));
 	IntentReplayComponent->ActionComponentOverride = GameplayActionComponent;
 	ObservationReplayComponent =

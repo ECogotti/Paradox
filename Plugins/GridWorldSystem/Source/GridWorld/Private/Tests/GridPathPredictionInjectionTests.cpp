@@ -180,6 +180,54 @@ bool FGridExactPathInjectionTest::RunTest(const FString& Parameters)
 				Snapshot->Cells[0].WorldCenter).bIsValid);
 	}
 
+	FGridInjectedPath DropTerminalPath;
+	const FGridInjectedPathValidationResult DropTerminalCreated =
+		NavData->CreateExactInjectedPath(
+			Querier,
+			AgentProperties,
+			nullptr,
+			Snapshot->Cells[0].WorldCenter,
+			AdjustedCells,
+			AdjustedCells.Last(),
+			false,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			FGuid::NewGuid(),
+			DropTerminalPath);
+	TestTrue(
+		TEXT("A stop-before-terminal preview stamps the complete route prefix"),
+		DropTerminalCreated.bIsValid);
+	if (DropTerminalCreated.bIsValid)
+	{
+		TestEqual(
+			TEXT("Drop movement recovery retains the approach cell as its requested goal"),
+			DropTerminalPath.RequestedGoalCell,
+			AdjustedCells.Last());
+		TestTrue(
+			TEXT("The excluded terminal cell ordinarily neighbors the movement endpoint"),
+			Snapshot->Cells.Last().Neighbors.Contains(AdjustedCells.Num() - 1));
+	}
+
+	TArray<FGridCellId> AdjacentPrefix;
+	AdjacentPrefix.Add(Cells[0]);
+	FGridInjectedPath AdjacentDropPath;
+	const FGridInjectedPathValidationResult AdjacentDropCreated =
+		NavData->CreateExactInjectedPath(
+			Querier,
+			AgentProperties,
+			nullptr,
+			Snapshot->Cells[0].WorldCenter,
+			AdjacentPrefix,
+			AdjacentPrefix[0],
+			false,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			FGuid::NewGuid(),
+			AdjacentDropPath);
+	TestTrue(
+		TEXT("An already-adjacent Drop exports a valid one-cell exact path"),
+		AdjacentDropCreated.bIsValid);
+
 	TestTrue(
 		TEXT("Topology replacement publishes"),
 		NavData->PublishSnapshot(

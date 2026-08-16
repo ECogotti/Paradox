@@ -205,6 +205,42 @@ UParadoxInteractionComponent::UParadoxInteractionComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+void UParadoxInteractionComponent::PostLoad()
+{
+	Super::PostLoad();
+	bHasAuthoredTargetProvenance = !IsTemplate();
+}
+
+void UParadoxInteractionComponent::PostDuplicate(
+	const EDuplicateMode::Type DuplicateMode)
+{
+	Super::PostDuplicate(DuplicateMode);
+	bHasAuthoredTargetProvenance =
+		DuplicateMode == EDuplicateMode::PIE && !IsTemplate();
+}
+
+bool UParadoxInteractionComponent::HasReplayStableTargetIdentity() const
+{
+	const AActor* Target = GetOwner();
+	if (!IsValid(Target))
+	{
+		return false;
+	}
+	if (Target->HasAnyFlags(RF_WasLoaded))
+	{
+		return true;
+	}
+
+#if WITH_EDITOR
+	const UWorld* World = Target->GetWorld();
+	return World
+		&& World->WorldType == EWorldType::PIE
+		&& bHasAuthoredTargetProvenance;
+#else
+	return false;
+#endif
+}
+
 FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOptions(
 	AActor* Requester) const
 {
@@ -496,6 +532,11 @@ void UParadoxInteractionComponent::RefreshInteractionSources()
 			&ThisClass::HandleSmartObjectTransformUpdated);
 	}
 	BindPuzzleAffordanceSources();
+	BroadcastInteractionAffordanceChanged();
+}
+
+void UParadoxInteractionComponent::NotifyInteractionAffordanceChanged()
+{
 	BroadcastInteractionAffordanceChanged();
 }
 
@@ -797,6 +838,12 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 	ResolveRequesterAgentShape(*Requester, RequesterRadius, RequesterHeight);
 	const FSmartObjectActorUserData RequesterUserData(Requester);
 	const FConstStructView RequesterView = FConstStructView::Make(RequesterUserData);
+	int32 RegisteredSourceCount = 0;
+	int32 SlotCount = 0;
+	int32 EnabledSlotCount = 0;
+	int32 SelectableSlotCount = 0;
+	int32 TransformedSlotCount = 0;
+	int32 MatchingDefinitionCount = 0;
 
 	for (const TWeakObjectPtr<USmartObjectComponent>& WeakSource : InteractionSources)
 	{
@@ -810,9 +857,11 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 		{
 			continue;
 		}
+		++RegisteredSourceCount;
 
 		TArray<FSmartObjectSlotHandle> SlotHandles;
 		SmartObjects->GetAllSlots(SmartObjectHandle, SlotHandles);
+		SlotCount += SlotHandles.Num();
 		SlotHandles.Sort();
 		for (const FSmartObjectSlotHandle& SlotHandle : SlotHandles)
 		{
@@ -834,11 +883,16 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 						bSlotOwnedByRequester = ActorUserData->UserActor.Get() == Requester;
 					}
 				});
-			if (!bReadSlot || !bSlotEnabled
-				|| !SmartObjects->EvaluateSelectionConditions(SlotHandle, RequesterView))
+			if (!bReadSlot || !bSlotEnabled)
 			{
 				continue;
 			}
+			++EnabledSlotCount;
+			if (!SmartObjects->EvaluateSelectionConditions(SlotHandle, RequesterView))
+			{
+				continue;
+			}
+			++SelectableSlotCount;
 
 			const TOptional<FTransform> SlotTransform =
 				SmartObjects->GetSlotTransform(SlotHandle);
@@ -846,6 +900,7 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 			{
 				continue;
 			}
+			++TransformedSlotCount;
 			const FGridCellQueryResult Projected = GridWorld->ProjectPoint(
 				SlotTransform->GetLocation(),
 				GridProjectionExtent);
@@ -861,7 +916,7 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 				{
 					continue;
 				}
-
+				++MatchingDefinitionCount;
 				FParadoxInteractionOption& Option = Result.Options.AddDefaulted_GetRef();
 				Option.InteractionTag = Definition.InteractionTag;
 				Option.GameplayActionDefinition = Definition.GameplayActionDefinition;
@@ -930,7 +985,14 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 		? EParadoxInteractionQueryStatus::NoOptions
 		: EParadoxInteractionQueryStatus::Success;
 	Result.DiagnosticMessage = Result.Options.IsEmpty()
-		? TEXT("No configured interaction matched an enabled current Smart Object slot.")
+		? FString::Printf(
+			TEXT("No interaction options: registered=%d, slots=%d, enabled=%d, selectable=%d, transformed=%d, tag-matched=%d."),
+			RegisteredSourceCount,
+			SlotCount,
+			EnabledSlotCount,
+			SelectableSlotCount,
+			TransformedSlotCount,
+			MatchingDefinitionCount)
 		: FString::Printf(TEXT("Resolved %d interaction option(s)."), Result.Options.Num());
 
 #if ENABLE_DRAW_DEBUG
@@ -997,7 +1059,6 @@ bool UParadoxInteractionComponent::ResolveCurrentExecutionOption(
 		OutDiagnostic = Query.DiagnosticMessage;
 		return false;
 	}
-
 	TArray<const FParadoxInteractionOption*, TInlineAllocator<8>> ExactOptions;
 	for (const FParadoxInteractionOption& Option : Query.Options)
 	{
@@ -1009,7 +1070,12 @@ bool UParadoxInteractionComponent::ResolveCurrentExecutionOption(
 	if (ExactOptions.IsEmpty())
 	{
 		OutStatus = EParadoxInteractionRequestStatus::NoMatchingInteraction;
-		OutDiagnostic = TEXT("No current interaction option matches the exact requested tag.");
+		OutDiagnostic = Query.Options.IsEmpty()
+			? Query.DiagnosticMessage
+			: FString::Printf(
+				TEXT("Interaction tag mismatch: requested='%s', current='%s'."),
+				*InteractionTag.ToString(),
+				*Query.Options[0].InteractionTag.ToString());
 		return false;
 	}
 
@@ -1099,7 +1165,6 @@ bool UParadoxInteractionComponent::ResolveBestReachableExecutionOption(
 		OutDiagnostic = Query.DiagnosticMessage;
 		return false;
 	}
-
 	TArray<const FParadoxInteractionOption*, TInlineAllocator<8>> ExactOptions;
 	bool bHasExactOption = false;
 	for (const FParadoxInteractionOption& Option : Query.Options)
@@ -1117,7 +1182,12 @@ bool UParadoxInteractionComponent::ResolveBestReachableExecutionOption(
 	if (!bHasExactOption)
 	{
 		OutStatus = EParadoxInteractionRequestStatus::NoMatchingInteraction;
-		OutDiagnostic = TEXT("No current interaction option matches the exact requested tag.");
+		OutDiagnostic = Query.Options.IsEmpty()
+			? Query.DiagnosticMessage
+			: FString::Printf(
+				TEXT("Interaction tag mismatch: requested='%s', current='%s'."),
+				*InteractionTag.ToString(),
+				*Query.Options[0].InteractionTag.ToString());
 		return false;
 	}
 	if (ExactOptions.IsEmpty())
@@ -1288,7 +1358,12 @@ bool UParadoxInteractionComponent::ResolveExactFreeCatalogOption(
 		: EParadoxInteractionRequestStatus::NoMatchingInteraction;
 	OutDiagnostic = bHasExactOption
 		? TEXT("No exact matching Smart Object slot is currently free.")
-		: TEXT("No current interaction option matches the exact requested tag.");
+		: (Query.Options.IsEmpty()
+			? Query.DiagnosticMessage
+			: FString::Printf(
+				TEXT("Interaction tag mismatch: requested='%s', current='%s'."),
+				*InteractionTag.ToString(),
+				*Query.Options[0].InteractionTag.ToString()));
 	return false;
 }
 
@@ -1317,11 +1392,11 @@ bool UParadoxInteractionComponent::BuildGameplayActionRequest(
 		OutResult.DiagnosticMessage = TEXT("The interaction target is invalid.");
 		return false;
 	}
-	if (!Target->HasAnyFlags(RF_WasLoaded))
+	if (!HasReplayStableTargetIdentity())
 	{
 		OutResult.Status = EParadoxInteractionRequestStatus::UnrecordableTarget;
 		OutResult.DiagnosticMessage = FString::Printf(
-			TEXT("Target '%s' is runtime-created and has no supported replay-stable identity."),
+			TEXT("Target '%s' has no supported replay-stable identity."),
 			*GetNameSafe(Target));
 		return false;
 	}

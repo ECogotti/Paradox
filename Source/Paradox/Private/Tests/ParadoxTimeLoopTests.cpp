@@ -24,6 +24,7 @@
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameModes/ParadoxGameMode.h"
+#include "Inventory/ParadoxDropAction.h"
 #include "Navigation/GridNavigationData.h"
 #include "Navigation/GridNavigationQueryFilter.h"
 #include "Navigation/GridWorldSnapshot.h"
@@ -966,6 +967,101 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 	ActionComponent->OnActionEvent.AddDynamic(
 		EventObserver,
 		&UParadoxTimeLoopActionEventObserver::HandleActionEvent);
+
+	TArray<FGridCellId> RecordedDropCells = Cells;
+	RecordedDropCells.Pop(EAllowShrinking::No);
+	FGridInjectedPath RecordedDropPath;
+	const FGridInjectedPathValidationResult DropPathStamp =
+		GridWorld->CreateExactInjectedPath(
+			SourceController,
+			RecordedDropCells,
+			RecordedDropCells.Last(),
+			BalancedFilterClass,
+			false,
+			false,
+			EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal,
+			RecordedDropPath);
+	if (!TestTrue(
+		TEXT("Source controller stamps the recorded Drop approach path"),
+		DropPathStamp.bIsValid))
+	{
+		AddError(DropPathStamp.DiagnosticMessage);
+		return false;
+	}
+	UParadoxDropActionDefinition* DropDefinition =
+		NewObject<UParadoxDropActionDefinition>(TestWorld.World);
+	DropDefinition->InstanceClass = UParadoxTimeLoopReplayProbeAction::StaticClass();
+	DropDefinition->ExecutionLocks.Reset();
+	DropDefinition->DefaultParameters.SetValueStruct(
+		ParadoxDropActionParameters::TargetCell,
+		Cells.Last());
+	DropDefinition->DefaultParameters.SetValueEnum(
+		ParadoxDropActionParameters::PathSource,
+		EGridMovePathSource::ExactInjectedPath);
+	DropDefinition->DefaultParameters.SetValueStruct(
+		ParadoxDropActionParameters::InjectedPath,
+		RecordedDropPath);
+	const FGameplayActionRequestCreationResult DropCreation =
+		UGameplayActionBlueprintLibrary::CreateActionRequest(DropDefinition);
+	if (!TestTrue(TEXT("Replay Drop request is created"), DropCreation.WasCreated()))
+	{
+		return false;
+	}
+	const FGameplayActionSubmissionResult DropSubmission =
+		Strategy->SubmitPreparedRequest(ActionComponent, DropCreation.Request);
+	if (!TestTrue(
+		TEXT("Clone replay accepts a Drop request with its recorded exact approach"),
+		DropSubmission.IsAccepted()))
+	{
+		AddError(DropSubmission.DiagnosticMessage);
+		return false;
+	}
+	const FGameplayActionEvent* DropAcceptedEvent =
+		EventObserver->ObservedEvents.FindByPredicate(
+			[&DropSubmission](const FGameplayActionEvent& Event)
+			{
+				return Event.Handle == DropSubmission.Handle
+					&& Event.EventType == EGameplayActionEventType::Accepted;
+			});
+	if (TestNotNull(
+		TEXT("Clone Drop emits an immutable accepted snapshot"),
+		DropAcceptedEvent))
+	{
+		const TValueOrError<FStructView, EPropertyBagResult> RuntimePathValue =
+			DropAcceptedEvent->GetParameters().GetValueStruct(
+				ParadoxDropActionParameters::InjectedPath,
+				FGridInjectedPath::StaticStruct());
+		const FGridInjectedPath* RuntimeDropPath = RuntimePathValue.HasValue()
+			? RuntimePathValue.GetValue().GetPtr<FGridInjectedPath>()
+			: nullptr;
+		if (TestNotNull(TEXT("Runtime clone Drop retains an exact path"), RuntimeDropPath))
+		{
+			TestEqual(
+				TEXT("Clone Drop preserves every recorded approach cell"),
+				RuntimeDropPath->Cells,
+				RecordedDropCells);
+			TestEqual(
+				TEXT("Clone Drop recovery goal remains the predecessor"),
+				RuntimeDropPath->RequestedGoalCell,
+				RecordedDropCells.Last());
+			TestNotEqual(
+				TEXT("Clone Drop receives a freshly stamped path identity"),
+				RuntimeDropPath->PathInstanceId,
+				RecordedDropPath.PathInstanceId);
+		}
+
+		const TValueOrError<FStructView, EPropertyBagResult> RuntimeTargetValue =
+			DropAcceptedEvent->GetParameters().GetValueStruct(
+				ParadoxDropActionParameters::TargetCell,
+				FGridCellId::StaticStruct());
+		const FGridCellId* RuntimeTarget = RuntimeTargetValue.HasValue()
+			? RuntimeTargetValue.GetValue().GetPtr<FGridCellId>()
+			: nullptr;
+		if (TestNotNull(TEXT("Clone Drop retains its semantic final cell"), RuntimeTarget))
+		{
+			TestEqual(TEXT("Semantic Drop target is not replaced by the approach"), *RuntimeTarget, Cells.Last());
+		}
+	}
 	const FGameplayActionSubmissionResult Submission =
 		Strategy->SubmitPreparedRequest(ActionComponent, Creation.Request);
 	if (!TestTrue(
@@ -1144,6 +1240,51 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 				TEXT("Fresh exact path discards the stale runtime identity"),
 				DifferentStartPath->PathInstanceId,
 				RecordedPath.PathInstanceId);
+		}
+	}
+	const FGameplayActionSubmissionResult DifferentStartDropSubmission =
+		Strategy->SubmitPreparedRequest(ActionComponent, DropCreation.Request);
+	if (!TestTrue(
+		TEXT("Replay Drop from a different cell is accepted with a fresh approach path"),
+		DifferentStartDropSubmission.IsAccepted()))
+	{
+		AddError(DifferentStartDropSubmission.DiagnosticMessage);
+		return false;
+	}
+	const FGameplayActionEvent* DifferentStartDropAcceptedEvent =
+		EventObserver->ObservedEvents.FindByPredicate(
+			[&DifferentStartDropSubmission](const FGameplayActionEvent& Event)
+			{
+				return Event.Handle == DifferentStartDropSubmission.Handle
+					&& Event.EventType == EGameplayActionEventType::Accepted;
+			});
+	if (TestNotNull(
+		TEXT("Different-start Drop recovery emits an accepted snapshot"),
+		DifferentStartDropAcceptedEvent))
+	{
+		const TValueOrError<FStructView, EPropertyBagResult> RecoveredDropPathValue =
+			DifferentStartDropAcceptedEvent->GetParameters().GetValueStruct(
+				ParadoxDropActionParameters::InjectedPath,
+				FGridInjectedPath::StaticStruct());
+		const FGridInjectedPath* RuntimeDropPath = RecoveredDropPathValue.HasValue()
+			? RecoveredDropPathValue.GetValue().GetPtr<FGridInjectedPath>()
+			: nullptr;
+		if (TestNotNull(
+			TEXT("Different-start Drop contains a fresh exact approach path"),
+			RuntimeDropPath))
+		{
+			TestEqual(
+				TEXT("Recovered Drop path starts at the clone's current cell"),
+				RuntimeDropPath->Cells[0],
+				Cells[1]);
+			TestEqual(
+				TEXT("Recovered Drop path still ends at the recorded predecessor"),
+				RuntimeDropPath->OriginalGoalCell,
+				RecordedDropCells.Last());
+			TestEqual(
+				TEXT("Recovered Drop fallback goal never becomes the Drop cell"),
+				RuntimeDropPath->RequestedGoalCell,
+				RecordedDropCells.Last());
 		}
 	}
 	RecipientCharacter->SetActorLocation(

@@ -6,6 +6,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameplayActionTags.h"
+#include "Inventory/ParadoxDropAction.h"
 #include "Navigation/GridNavigationData.h"
 #include "Navigation/GridNavigationPath.h"
 #include "NavFilters/NavigationQueryFilter.h"
@@ -76,7 +77,11 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 		return Super::SubmitPreparedRequest(ActionComponent, Request);
 	}
 
-	if (!Request.GetDefinition()->IsA<UGridMoveToCellActionDefinition>())
+	const bool bIsGridMoveDefinition =
+		Request.GetDefinition()->IsA<UGridMoveToCellActionDefinition>();
+	const bool bIsDropDefinition =
+		Request.GetDefinition()->IsA<UParadoxDropActionDefinition>();
+	if (!bIsGridMoveDefinition && !bIsDropDefinition)
 	{
 		return Super::SubmitPreparedRequest(ActionComponent, Request);
 	}
@@ -125,7 +130,8 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 
 	FParadoxCloneReplayGridMoveOverrides Overrides;
 	const bool bPreserveExactPathAcrossDynamicAgents =
-		bOverrideGoalContentionPolicy
+		bIsGridMoveDefinition
+		&& bOverrideGoalContentionPolicy
 		&& GoalContentionPolicyOverride
 			== EGridGoalContentionPolicy::RedirectOnCompletion;
 	FGridInjectedPathValidationResult RestampResult;
@@ -165,9 +171,7 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 	}
 	if (!RestampResult.bIsValid)
 	{
-		if (RestampResult.FailureReason
-				!= EGridInjectedPathFailureReason::InvalidStart
-			|| RecordedPath->InvalidationPolicy
+		if (RecordedPath->InvalidationPolicy
 				!= EGridInjectedPathInvalidationPolicy::RecalculateToOriginalGoal)
 		{
 			return UE::Paradox::CloneReplay::Private::RejectRequest(
@@ -207,16 +211,18 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 		const FGuid WarningIdentity = Request.GetCorrelation().Id.IsValid()
 			? Request.GetCorrelation().Id
 			: RecordedPath->PathInstanceId;
-		if (!WarnedDifferentStartIntents.Contains(WarningIdentity))
+		if (!WarnedExactPathRecoveryIntents.Contains(WarningIdentity))
 		{
-			WarnedDifferentStartIntents.Add(WarningIdentity);
+			WarnedExactPathRecoveryIntents.Add(WarningIdentity);
 			const FGridCellId RecordedStart = RecordedPath->Cells[0];
 			PARADOX_LOG_WARNING(
-				TEXT("Clone '%s' is resuming movement intent '%s' from a different GridWorld cell; "
+				TEXT("Clone '%s' is recovering exact-path intent '%s' after %s; "
 					"recorded=(%d,%d,%d), current=(%d,%d,%d), goal=(%d,%d,%d). "
-					"The stale runtime path is discarded and a fresh ExactInjectedPath is queried."),
+					"The recorded runtime path is discarded and a fresh ExactInjectedPath is queried to the same recovery goal."),
 				*GetNameSafe(ClonePawn),
 				*WarningIdentity.ToString(EGuidFormats::DigitsWithHyphens),
+				*StaticEnum<EGridInjectedPathFailureReason>()->GetNameStringByValue(
+					static_cast<int64>(RestampResult.FailureReason)),
 				RecordedStart.Coord.X,
 				RecordedStart.Coord.Y,
 				RecordedStart.Coord.Layer,
@@ -290,7 +296,7 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 		return UE::Paradox::CloneReplay::Private::RejectRequest(
 			TEXT("Clone replay could not write the re-stamped GridWorld path into its runtime request copy."));
 	}
-	if (bOverrideGoalContentionPolicy
+	if (bIsGridMoveDefinition && bOverrideGoalContentionPolicy
 		&& UE::Paradox::CloneReplay::Private::SetGoalContentionPolicy(
 			AdaptedRequest,
 			*this) != EGameplayActionParameterAccessResult::Success)

@@ -8,7 +8,7 @@ The first milestone targets single-player gameplay. The runtime module has no de
 
 Enable `TacticalPause` in the project or Plugin Browser, then start a Game or PIE world with a local player controller. The plugin declares and enables its Common UI dependency. It does not add a widget to the screen by default: the project explicitly owns placement and lifetime of `WBP_TacticalPauseControls_Default` or a replacement widget.
 
-`UTacticalPauseControlsWidget` derives from `UCommonActivatableWidget` and intentionally creates no layout or style in C++. Populate its Widget Blueprint yourself using Common UI button widgets with these exact variable names:
+`UTacticalPauseControlsWidget` derives from `UUserWidget` and intentionally creates no layout or style in C++. Populate its Widget Blueprint yourself using Common UI button widgets with these exact variable names:
 
 - `PlayButton`
 - `PauseButton`
@@ -17,7 +17,7 @@ Enable `TacticalPause` in the project or Plugin Browser, then start a Game or PI
 - `SpeedButton3`
 - `SpeedButton4`
 
-All six fields are required `meta=(BindWidget)` properties of type `UCommonButtonBase`. They may use any project-specific Blueprint subclass and `UCommonButtonStyle`. Speed buttons map to the first four validated presets in deterministic order. C++ owns click routing, enabled/selected state, visibility, activation, and delegate binding; the Widget Blueprint owns hierarchy, content, animations, and styling.
+All six fields are required `meta=(BindWidget)` properties of type `UCommonButtonBase`. They may use any project-specific Blueprint subclass and `UCommonButtonStyle`. Speed buttons map to the first four validated presets in deterministic order. C++ owns click routing, enabled/selected state, visibility, construction/destruction binding, and delegate cleanup; the Widget Blueprint owns hierarchy, content, animations, and styling.
 
 The default presets are:
 
@@ -103,13 +103,11 @@ In Blueprint, for a simple player-screen integration:
 2. Pass the local PlayerController as **Owning Player**.
 3. Promote the result to a variable owned by that controller, HUD, or root widget.
 4. Call **Add to Player Screen** with the desired Z order.
-5. Call **Activate Widget** so the Common UI widget subscribes to TacticalPause events.
-6. During teardown, call **Deactivate Widget**, then **Remove from Parent**, and clear the stored reference.
+5. During teardown, call **Remove from Parent** and clear the stored reference.
 
-If the project already owns a dedicated `UCommonActivatableWidgetStack`, use its **Push Widget**
-node with the Tactical Pause widget class instead. The container creates and activates the widget;
-remove or deactivate it through that same Common UI navigation owner rather than also adding it to
-the player screen.
+The widget is persistent presentation, not a Common Activatable screen. Embed it in the project's
+ordinary HUD hierarchy or add it directly to the player screen. Do not push it onto a
+`UCommonActivatableWidgetStack`; Common Button widgets and Common UI styles remain fully supported.
 
 Equivalent direct C++ ownership is:
 
@@ -124,15 +122,11 @@ TacticalPauseWidget = CreateWidget<UTacticalPauseControlsWidget>(
     PlayerController,
     TacticalPauseWidgetClass);
 
-if (TacticalPauseWidget && TacticalPauseWidget->AddToPlayerScreen(100))
-{
-    TacticalPauseWidget->ActivateWidget();
-}
+TacticalPauseWidget->AddToPlayerScreen(100);
 ```
 
-The owner must symmetrically call `DeactivateWidget`, `RemoveFromParent`, and clear its reflected
-reference during teardown. Do not create the same controls through both a Common UI container and
-`AddToPlayerScreen`.
+The owner must symmetrically call `RemoveFromParent` and clear its reflected reference during
+teardown. Do not create the same controls through both a project HUD and automatic plugin creation.
 
 ## Building or replacing the widget
 
@@ -140,11 +134,11 @@ Open `WBP_TacticalPauseControls_Default`, or create another Widget Blueprint der
 
 Configure each button's Common UI style and visual content in Blueprint. The native class marks state buttons and the selected speed slot through Common UI selection state; `On Tactical Pause Presentation Updated` is available for additional designer-side animation or text updates.
 
-Keep temporal mutations routed through `RequestPauseFromWidget`, `RequestPlayFromWidget`, and `SelectPlaybackPresetFromWidget`. The base class subscribes only while active and remains polling-free.
+Keep temporal mutations routed through `RequestPauseFromWidget`, `RequestPlayFromWidget`, and `SelectPlaybackPresetFromWidget`. The base class subscribes in `NativeConstruct`, unsubscribes in `NativeDestruct`, and remains polling-free.
 
 To opt back into the plugin's legacy local-player-owned creation, enable
 `bCreateDefaultWidgetAutomatically`. The local-player subsystem then loads `DefaultWidgetClass`,
-adds it using `WidgetZOrder`, activates it, and removes it during teardown.
+adds it using `WidgetZOrder` and removes it during teardown.
 
 ## External ownership and restoration
 
@@ -186,7 +180,7 @@ TacticalPause.SetSpeed <Multiplier>
 - The supplied Common UI contract exposes four speed slots. Presets after the fourth remain available through the subsystem API but need a custom Blueprint control calling `SelectPlaybackPresetFromWidget`.
 - Systems using real time, unpaused ticking, audio-specific clocks, or custom simulation clocks may continue independently and need an owner-specific adapter.
 - Queries read live Unreal state; ownership conflicts are detected on the next mutation request. There is no per-frame monitor.
-- No widget is expected until the project adds one manually or enables automatic creation. For manual creation, verify the owning local PlayerController, player-screen/container insertion, and activation. For automatic creation, verify the opt-in setting, player policy, and configured soft class. In both cases compile the Widget Blueprint and confirm all six required `UCommonButtonBase` variables have exact `BindWidget` names.
+- No widget is expected until the project adds one manually or enables automatic creation. For manual creation, verify the owning local PlayerController and player-screen/HUD insertion. For automatic creation, verify the opt-in setting, player policy, and configured soft class. In both cases compile the Widget Blueprint and confirm all six required `UCommonButtonBase` variables have exact `BindWidget` names.
 - If Play returns `ExternalStateConflict`, another owner still holds pause or changed dilation. Resolve that owner instead of forcing Unreal temporal state directly.
 - If a preset is absent, check `LogTacticalPause` for invalid/duplicate IDs and multiplier bounds.
 

@@ -13,6 +13,7 @@ class UIntentReplayObservationComponent;
 class UNiagaraComponent;
 class UEntityIdentityComponent;
 class UParadoxFootstepNoiseComponent;
+class UParadoxInventoryComponent;
 class UParadoxTemporalEntityComponent;
 class UPerceptionKnowledgeSourceComponent;
 
@@ -65,6 +66,10 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UNiagaraComponent> TimeTravelNiagaraComponent;
 
+	/** Shared authoritative single-slot inventory used identically by players and clones. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxInventoryComponent> InventoryComponent;
+
 public:
 
 	/** Constructor */
@@ -111,6 +116,9 @@ public:
 	{
 		return TimeTravelNiagaraComponent.Get();
 	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxInventoryComponent* GetInventoryComponent() const { return InventoryComponent.Get(); }
 
 };
 

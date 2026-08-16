@@ -49,6 +49,28 @@ protected:
 	virtual void ExecuteInteraction_Implementation() override;
 };
 
+/** Captures the public interaction context while Gameplay Actions is still running preflight. */
+UCLASS()
+class UParadoxInteractionTestPreflightContextAction final
+	: public UParadoxInteractionActionBase
+{
+	GENERATED_BODY()
+
+public:
+	static void ResetObservations();
+	static TWeakObjectPtr<AActor> LastRequester;
+	static TWeakObjectPtr<AActor> LastTarget;
+	static FGameplayTag LastOrigin;
+	static int32 ValidationCount;
+	static int32 ExecutionCount;
+
+protected:
+	virtual bool CanSatisfyInteractionPreconditions_Implementation(
+		FGameplayTag& OutFailureReason,
+		FString& OutDiagnostic) const override;
+	virtual void ExecuteInteraction_Implementation() override;
+};
+
 /** Concrete class that deliberately inherits the base NotImplemented execution fallback. */
 UCLASS()
 class UParadoxInteractionTestDefaultAction final : public UParadoxInteractionActionBase

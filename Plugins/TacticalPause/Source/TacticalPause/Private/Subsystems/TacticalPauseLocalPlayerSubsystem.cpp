@@ -74,7 +74,6 @@ void UTacticalPauseLocalPlayerSubsystem::CreateControlsWidget(APlayerController*
 		ControlsWidget = nullptr;
 		return;
 	}
-	ControlsWidget->ActivateWidget();
 	TACTICALPAUSE_LOG_INFO("Created Tactical Pause widget %s for PlayerController %s in World %s.",
 		*GetNameSafe(ControlsWidget), *GetNameSafe(PlayerController), *GetNameSafe(World));
 }
@@ -83,10 +82,6 @@ void UTacticalPauseLocalPlayerSubsystem::RemoveControlsWidget()
 {
 	if (ControlsWidget)
 	{
-		if (ControlsWidget->IsActivated())
-		{
-			ControlsWidget->DeactivateWidget();
-		}
 		ControlsWidget->RemoveFromParent();
 		ControlsWidget = nullptr;
 	}

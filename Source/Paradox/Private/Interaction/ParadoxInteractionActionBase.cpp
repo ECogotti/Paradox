@@ -55,6 +55,48 @@ UParadoxInteractionActionBase::UParadoxInteractionActionBase()
 	bActionTickEnabled = false;
 }
 
+AActor* UParadoxInteractionActionBase::GetInteractionRequester() const
+{
+	// GameplayAction Requester is generic origin context (for Player requests it is commonly the
+	// PlayerController). Interaction movement and effects instead belong to the Actor whose
+	// GameplayActionComponent accepted this instance. InitializeInstance establishes that owner
+	// before CanStartAction, so this path is also valid for preflight and Intent Replay recipients.
+	UGameplayActionComponent* Actions = GetOwningComponent();
+	AActor* ActionOwner = IsValid(Actions) ? Actions->GetOwner() : nullptr;
+	return IsValid(ActionOwner) ? ActionOwner : InteractionRequester.Get();
+}
+
+AActor* UParadoxInteractionActionBase::GetInteractionTarget() const
+{
+	if (AActor* CachedTarget = InteractionTarget.Get())
+	{
+		return CachedTarget;
+	}
+
+	// CanStartAction intentionally runs before OnActionInit. Read the immutable semantic snapshot
+	// on demand in that phase rather than requiring every concrete action to duplicate a fallback.
+	FParadoxInteractionActionParameters SemanticValues;
+	FGameplayTag FailureReason;
+	FString Diagnostic;
+	return ReadSemanticParameters(SemanticValues, FailureReason, Diagnostic)
+		? SemanticValues.Target.Get()
+		: nullptr;
+}
+
+UParadoxInteractionComponent*
+UParadoxInteractionActionBase::GetInteractionComponent() const
+{
+	if (UParadoxInteractionComponent* CachedComponent = InteractionComponent.Get())
+	{
+		return CachedComponent;
+	}
+
+	AActor* Target = GetInteractionTarget();
+	return IsValid(Target)
+		? Target->FindComponentByClass<UParadoxInteractionComponent>()
+		: nullptr;
+}
+
 bool UParadoxInteractionActionBase::CanStartAction_Implementation(
 	FGameplayTag& OutFailureReason,
 	FString& OutDiagnostic) const
@@ -345,8 +387,12 @@ bool UParadoxInteractionActionBase::ReadSemanticParameters(
 	}
 
 	AActor* Target = OutParameters.Target.Get();
+	const UParadoxInteractionComponent* TargetInteraction = IsValid(Target)
+		? Target->FindComponentByClass<UParadoxInteractionComponent>()
+		: nullptr;
 	if (!IsValid(Target)
-		|| !Target->HasAnyFlags(RF_WasLoaded)
+		|| !IsValid(TargetInteraction)
+		|| !TargetInteraction->HasReplayStableTargetIdentity()
 		|| Target->GetWorld() != GetWorld())
 	{
 		OutFailureReason =

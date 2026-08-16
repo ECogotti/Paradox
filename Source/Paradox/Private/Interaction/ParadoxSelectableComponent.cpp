@@ -359,8 +359,11 @@ bool UParadoxSelectableComponent::EnsureInteractionWidget(
 	InteractionWidgetComponent->SetDrawSize(FVector2D(WidgetDrawSize));
 	InteractionWidgetComponent->SetTwoSided(true);
 	InteractionWidgetComponent->SetCollisionProfileName(TEXT("UI"));
+	InteractionWidgetComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+	InteractionWidgetComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 	InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	InteractionWidgetComponent->SetGenerateOverlapEvents(false);
+	InteractionWidgetComponent->SetCanEverAffectNavigation(false);
 	InteractionWidgetComponent->SetWidgetClass(SelectionWidgetClass);
 	InteractionWidgetComponent->SetVisibility(false, true);
 	if (const APlayerController* PlayerController = InSelectionComponent
@@ -399,6 +402,8 @@ void UParadoxSelectableComponent::ShowInteractionWidget(
 		InteractionWidgetComponent->GetUserWidgetObject()))
 	{
 		Widget->AssignSelectionContext(GetOwner(), this, InSelectionComponent, PlayerController);
+		InteractionWidgetComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
+		InteractionWidgetComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 		InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		InteractionWidgetComponent->SetVisibility(true, true);
 		UpdateInteractionWidgetFacing();

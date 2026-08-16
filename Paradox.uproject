@@ -59,6 +59,10 @@
 			"Enabled": true
 		},
 		{
+			"Name": "CommonUI",
+			"Enabled": true
+		},
+		{
 			"Name": "TacticalPause",
 			"Enabled": true
 		},

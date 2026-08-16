@@ -11,6 +11,7 @@ public class Paradox : ModuleRules
 		PublicDependencyModuleNames.AddRange(new string[] {
 			"Core",
 			"CoreUObject",
+			"CommonUI",
 			"DeveloperSettings",
 			"Engine",
 			"AIModule",

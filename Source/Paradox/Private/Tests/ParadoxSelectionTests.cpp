@@ -1,6 +1,6 @@
 #include "Misc/AutomationTest.h"
 
-#if WITH_DEV_AUTOMATION_TESTS
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
 #include "Components/WidgetComponent.h"
 #include "Controllers/ParadoxPlayerController.h"
@@ -246,7 +246,10 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 	}
 	TestTrue(TEXT("Selected widget is visible"), WidgetComponent->IsVisible());
 	TestEqual(TEXT("Selected widget collision is query-only"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::QueryOnly);
+	TestEqual(TEXT("Selected widget blocks only the cursor Visibility query"), WidgetComponent->GetCollisionResponseToChannel(ECC_Visibility), ECR_Block);
+	TestEqual(TEXT("Selected widget cannot block Pawns"), WidgetComponent->GetCollisionResponseToChannel(ECC_Pawn), ECR_Ignore);
 	TestFalse(TEXT("Selected widget never generates gameplay overlaps"), WidgetComponent->GetGenerateOverlapEvents());
+	TestFalse(TEXT("Selected widget cannot affect navigation"), WidgetComponent->CanEverAffectNavigation());
 	TestEqual(TEXT("Widget uses World space"), WidgetComponent->GetWidgetSpace(), EWidgetSpace::World);
 	TestTrue(TEXT("Widget is rendered from both sides"), WidgetComponent->GetTwoSided());
 	TestEqual(TEXT("External widget anchors fall back to the selected Actor root"), WidgetComponent->GetAttachParent(), Actor->Root.Get());

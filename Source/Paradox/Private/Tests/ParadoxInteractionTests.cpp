@@ -12,6 +12,11 @@ namespace ParadoxInteractionTestTags
 
 int32 UParadoxInteractionTestSuccessAction::ExecutionCount = 0;
 int32 UParadoxInteractionTestSuccessAction::ClaimedExecutionCount = 0;
+TWeakObjectPtr<AActor> UParadoxInteractionTestPreflightContextAction::LastRequester;
+TWeakObjectPtr<AActor> UParadoxInteractionTestPreflightContextAction::LastTarget;
+FGameplayTag UParadoxInteractionTestPreflightContextAction::LastOrigin;
+int32 UParadoxInteractionTestPreflightContextAction::ValidationCount = 0;
+int32 UParadoxInteractionTestPreflightContextAction::ExecutionCount = 0;
 
 void UParadoxInteractionTestHoldAction::ExecuteInteraction_Implementation()
 {
@@ -49,9 +54,48 @@ void UParadoxInteractionTestSuccessAction::ExecuteInteraction_Implementation()
 		TEXT("Immediate test interaction succeeded."));
 }
 
-#if WITH_DEV_AUTOMATION_TESTS
+void UParadoxInteractionTestPreflightContextAction::ResetObservations()
+{
+	LastRequester.Reset();
+	LastTarget.Reset();
+	LastOrigin = FGameplayTag();
+	ValidationCount = 0;
+	ExecutionCount = 0;
+}
+
+bool UParadoxInteractionTestPreflightContextAction::
+CanSatisfyInteractionPreconditions_Implementation(
+	FGameplayTag& OutFailureReason,
+	FString& OutDiagnostic) const
+{
+	LastRequester = GetInteractionRequester();
+	LastTarget = GetInteractionTarget();
+	LastOrigin = GetOriginTag();
+	++ValidationCount;
+	if (!LastRequester.IsValid() || !LastTarget.IsValid())
+	{
+		OutFailureReason =
+			ParadoxGameplayTags::Result_Failure_Interaction_InvalidRequest;
+		OutDiagnostic = TEXT(
+			"The interaction context was unavailable during action preflight.");
+		return false;
+	}
+	return true;
+}
+
+void UParadoxInteractionTestPreflightContextAction::ExecuteInteraction_Implementation()
+{
+	++ExecutionCount;
+	CompleteInteractionSuccess(
+		GameplayActionTags::Result_Success,
+		TEXT("Preflight context test interaction succeeded."));
+}
+
+#if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
 #include "Actions/GameplayActionDefinition.h"
+#include "Characters/ParadoxCharacter.h"
+#include "Characters/ParadoxCloneCharacter.h"
 #include "Components/GameplayActionComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Components/SceneComponent.h"
@@ -90,13 +134,14 @@ namespace UE::Paradox::Interaction::Tests
 {
 	struct FScopedInteractionWorld
 	{
-		FScopedInteractionWorld()
+		explicit FScopedInteractionWorld(
+			const EWorldType::Type WorldType = EWorldType::Game)
 		{
 			Context = GEngine
-				? &GEngine->CreateNewWorldContext(EWorldType::Game)
+				? &GEngine->CreateNewWorldContext(WorldType)
 				: nullptr;
 			World = UWorld::CreateWorld(
-				EWorldType::Game,
+				WorldType,
 				false,
 				TEXT("ParadoxInteractionTestWorld"));
 			if (World)
@@ -191,11 +236,18 @@ namespace UE::Paradox::Interaction::Tests
 
 	struct FInteractionExecutionFixture
 	{
+		explicit FInteractionExecutionFixture(
+			const EWorldType::Type WorldType = EWorldType::Game)
+			: Scope(WorldType)
+		{
+		}
+
 		bool Initialize(
 			const TSubclassOf<UParadoxInteractionActionBase> ActionClass,
 			const bool bReplaySafeTarget = true,
 			const bool bValidParameterSchema = true,
-			const bool bEnableReplay = false)
+			const bool bEnableReplay = false,
+			const TSubclassOf<APawn> RequesterClass = APawn::StaticClass())
 		{
 			NavigationData = Scope.World
 				? Scope.World->SpawnActor<AGridNavigationData>()
@@ -216,7 +268,7 @@ namespace UE::Paradox::Interaction::Tests
 			RequesterParameters.SpawnCollisionHandlingOverride =
 				ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 			Requester = Scope.World->SpawnActor<APawn>(
-				APawn::StaticClass(),
+				RequesterClass,
 				FTransform::Identity,
 				RequesterParameters);
 			SelectionController = Scope.World->SpawnActor<AParadoxSelectionTestController>();
@@ -229,12 +281,15 @@ namespace UE::Paradox::Interaction::Tests
 			{
 				Target->SetFlags(RF_WasLoaded);
 			}
-			USceneComponent* RequesterRoot =
-				NewObject<USceneComponent>(Requester, TEXT("ExecutionRequesterRoot"));
-			Requester->AddInstanceComponent(RequesterRoot);
-			Requester->SetRootComponent(RequesterRoot);
-			RequesterRoot->SetMobility(EComponentMobility::Movable);
-			RequesterRoot->RegisterComponent();
+			if (!Requester->GetRootComponent())
+			{
+				USceneComponent* RequesterRoot =
+					NewObject<USceneComponent>(Requester, TEXT("ExecutionRequesterRoot"));
+				Requester->AddInstanceComponent(RequesterRoot);
+				Requester->SetRootComponent(RequesterRoot);
+				RequesterRoot->SetMobility(EComponentMobility::Movable);
+				RequesterRoot->RegisterComponent();
+			}
 
 			TargetRoot =
 				NewObject<USceneComponent>(Target, TEXT("ExecutionRoot"));
@@ -304,18 +359,26 @@ namespace UE::Paradox::Interaction::Tests
 			CatalogEntry.GameplayActionDefinition = ActionDefinition;
 			Interaction->RegisterComponent();
 
-			Actions = NewObject<UGameplayActionComponent>(
-				Requester,
-				TEXT("ExecutionActions"));
-			Requester->AddInstanceComponent(Actions);
-			Actions->RegisterComponent();
+			Actions = Requester->FindComponentByClass<UGameplayActionComponent>();
+			if (!Actions)
+			{
+				Actions = NewObject<UGameplayActionComponent>(
+					Requester,
+					TEXT("ExecutionActions"));
+				Requester->AddInstanceComponent(Actions);
+				Actions->RegisterComponent();
+			}
 			if (bEnableReplay)
 			{
-				Replay = NewObject<UIntentReplayComponent>(
-					Requester,
-					TEXT("ExecutionReplay"));
-				Requester->AddInstanceComponent(Replay);
-				Replay->RegisterComponent();
+				Replay = Requester->FindComponentByClass<UIntentReplayComponent>();
+				if (!Replay)
+				{
+					Replay = NewObject<UIntentReplayComponent>(
+						Requester,
+						TEXT("ExecutionReplay"));
+					Requester->AddInstanceComponent(Replay);
+					Replay->RegisterComponent();
+				}
 			}
 
 			Scope.StartPlay();
@@ -931,6 +994,38 @@ bool FParadoxInteractionActionHardeningTest::RunTest(const FString& Parameters)
 			EParadoxInteractionRequestStatus::UnrecordableTarget);
 	}
 	{
+		FInteractionExecutionFixture PieAuthoredTargetFixture(EWorldType::PIE);
+		if (!TestTrue(
+			TEXT("PIE authored target fixture initializes"),
+			PieAuthoredTargetFixture.Initialize(
+				UParadoxInteractionTestSuccessAction::StaticClass(),
+				false)))
+		{
+			return false;
+		}
+		TestFalse(
+			TEXT("PIE duplicate does not depend on RF_WasLoaded"),
+			PieAuthoredTargetFixture.Target->HasAnyFlags(RF_WasLoaded));
+		const FParadoxInteractionRequestResult RuntimePieResult =
+			PieAuthoredTargetFixture.Request();
+		TestEqual(
+			TEXT("Runtime-spawned PIE target remains unrecordable"),
+			RuntimePieResult.Status,
+			EParadoxInteractionRequestStatus::UnrecordableTarget);
+		static_cast<UObject*>(PieAuthoredTargetFixture.Interaction)->PostDuplicate(
+			EDuplicateMode::PIE);
+		UParadoxInteractionTestSuccessAction::ResetObservations();
+		const FParadoxInteractionRequestResult Result =
+			PieAuthoredTargetFixture.Request();
+		TestTrue(
+			TEXT("PIE-duplicated authored target is accepted without RF_WasLoaded"),
+			Result.IsAccepted());
+		TestEqual(
+			TEXT("PIE-authored target passes action-side identity validation"),
+			UParadoxInteractionTestSuccessAction::ExecutionCount,
+			1);
+	}
+	{
 		FInteractionExecutionFixture InvalidSchemaFixture;
 		if (!TestTrue(
 			TEXT("Invalid schema fixture initializes"),
@@ -1243,6 +1338,106 @@ bool FParadoxInteractionIntentReplayTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxInteractionPreflightContextCloneReplayTest,
+	"Paradox.Interaction.Context.PreflightAndCloneReplayRequester",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxInteractionPreflightContextCloneReplayTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::Interaction::Tests;
+	FInteractionExecutionFixture Fixture;
+	if (!TestTrue(
+		TEXT("Clone requester fixture initializes"),
+		Fixture.Initialize(
+			UParadoxInteractionTestPreflightContextAction::StaticClass(),
+			true,
+			true,
+			true,
+			AParadoxCloneCharacter::StaticClass())))
+	{
+		return false;
+	}
+	if (!TestTrue(
+		TEXT("Fixture requester is a shared Paradox Character"),
+		Fixture.Requester->IsA<AParadoxCharacter>())
+		|| !TestNotNull(TEXT("Clone Intent Replay component"), Fixture.Replay))
+	{
+		return false;
+	}
+
+	UParadoxInteractionTestPreflightContextAction::ResetObservations();
+	if (!TestTrue(
+		TEXT("Clone recording starts"),
+		Fixture.Replay->StartRecording(FIntentRecordingOptions()).Succeeded()))
+	{
+		return false;
+	}
+	const FParadoxInteractionRequestResult SourceResult = Fixture.Request();
+	TestTrue(TEXT("Clone-owned source interaction is accepted"), SourceResult.IsAccepted());
+	TestTrue(
+		TEXT("Preflight resolves the Gameplay Action Component owner as requester"),
+		UParadoxInteractionTestPreflightContextAction::LastRequester.Get()
+			== Fixture.Requester);
+	TestTrue(
+		TEXT("Preflight resolves the semantic soft Target before Action Init"),
+		UParadoxInteractionTestPreflightContextAction::LastTarget.Get()
+			== Fixture.Target);
+	TestTrue(
+		TEXT("Source preflight preserves Player origin independently from requester identity"),
+		UParadoxInteractionTestPreflightContextAction::LastOrigin
+			== ParadoxGameplayTags::Origin_Player);
+	TestTrue(
+		TEXT("Source action executes after phase-safe preflight"),
+		UParadoxInteractionTestPreflightContextAction::ExecutionCount == 1);
+
+	if (!TestTrue(
+		TEXT("Clone source recording finalizes"),
+		Fixture.Replay->RequestStopRecording(
+			EIntentRecordingFinalizeMode::Immediate).Succeeded()))
+	{
+		return false;
+	}
+	UIntentReplayTrack* Track = Fixture.Replay->GetLastFinalizedTrack();
+	if (!TestNotNull(TEXT("Clone source track exists"), Track))
+	{
+		return false;
+	}
+
+	UParadoxInteractionTestPreflightContextAction::ResetObservations();
+	const FIntentReplayPrepareResult Prepared = Fixture.Replay->PrepareReplay(
+		Track,
+		FIntentReplayPlaybackOptions());
+	TestEqual(
+		TEXT("Clone interaction replay prepares"),
+		Prepared.Status,
+		EIntentReplayPrepareStatus::Ready);
+	TestTrue(
+		TEXT("Clone interaction replay starts"),
+		Fixture.Replay->StartReplay().Succeeded());
+	TestTrue(
+		TEXT("Replay preflight resolves the recipient clone, not the recorded RequestSource"),
+		UParadoxInteractionTestPreflightContextAction::LastRequester.Get()
+			== Fixture.Requester);
+	TestTrue(
+		TEXT("Replay preflight re-resolves the current semantic Target"),
+		UParadoxInteractionTestPreflightContextAction::LastTarget.Get()
+			== Fixture.Target);
+	TestTrue(
+		TEXT("Replay origin remains diagnostic metadata"),
+		UParadoxInteractionTestPreflightContextAction::LastOrigin
+			== IntentReplayTags::Origin_Replay);
+	TestTrue(
+		TEXT("Replay creates and executes a fresh action"),
+		UParadoxInteractionTestPreflightContextAction::ExecutionCount == 1);
+	TestEqual(
+		TEXT("Clone replay completes"),
+		Fixture.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Completed);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxInteractionGridCellStyleAssetTest,
 	"Paradox.Interaction.GridCellStyleAsset",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -1378,4 +1573,4 @@ bool FParadoxInteractionFailureContractTest::RunTest(const FString& Parameters)
 	return true;
 }
 
-#endif // WITH_DEV_AUTOMATION_TESTS
+#endif // WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR

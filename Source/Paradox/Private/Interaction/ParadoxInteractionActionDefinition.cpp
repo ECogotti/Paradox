@@ -4,6 +4,8 @@
 #include "Interaction/ParadoxEmitterInteractionAction.h"
 #include "Interaction/ParadoxInteractionTypes.h"
 #include "Interaction/ParadoxReceiverInteractionAction.h"
+#include "Inventory/ParadoxInventoryInteractionActions.h"
+#include "Inventory/ParadoxItemSlotInteractionActions.h"
 #include "NavFilters/NavigationQueryFilter.h"
 #include "Paradox.h"
 #include "StructUtils/PropertyBag.h"
@@ -115,6 +117,15 @@ EDataValidationResult UParadoxInteractionActionDefinition::IsDataValid(
 		Context.AddError(FText::FromString(TEXT("Standard interaction Definitions require Reject blocked policy to prevent repeated clicks from queuing.")));
 		Result = EDataValidationResult::Invalid;
 	}
+	if ((IsA<UParadoxPickupInteractionActionDefinition>()
+			|| IsA<UParadoxSwapInteractionActionDefinition>()
+			|| IsA<UParadoxInsertItemInteractionActionDefinition>()
+			|| IsA<UParadoxPickupFromItemSlotInteractionActionDefinition>())
+		&& !ExecutionLocks.HasTagExact(ParadoxGameplayTags::Lock_Inventory))
+	{
+		Context.AddError(FText::FromString(TEXT("Inventory and Item Slot interaction Definitions require the Inventory execution lock.")));
+		Result = EDataValidationResult::Invalid;
+	}
 
 	if (IsA<UParadoxReceiverInteractionActionDefinition>())
 	{
@@ -172,4 +183,36 @@ UParadoxEmitterInteractionActionDefinition::UParadoxEmitterInteractionActionDefi
 	UE::Paradox::InteractionDefinition::Private::InitializeMovementDefaults(DefaultParameters);
 	DefaultParameters.SetValueName(EmitterComponentName, NAME_None);
 	DefaultParameters.SetValueEnum(Command, EParadoxInteractionStateCommand::Activate);
+}
+
+UParadoxPickupInteractionActionDefinition::UParadoxPickupInteractionActionDefinition()
+{
+	InstanceClass = UParadoxPickupInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_Interaction_Pickup;
+	ExecutionLocks.AddTag(ParadoxGameplayTags::Lock_Inventory);
+	DebugDescription = TEXT("Moves to a pickupable Smart Object slot and equips it into an empty inventory.");
+}
+
+UParadoxSwapInteractionActionDefinition::UParadoxSwapInteractionActionDefinition()
+{
+	InstanceClass = UParadoxSwapInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_Interaction_Swap;
+	ExecutionLocks.AddTag(ParadoxGameplayTags::Lock_Inventory);
+	DebugDescription = TEXT("Moves to a pickupable Smart Object slot and atomically swaps it with the held item.");
+}
+
+UParadoxInsertItemInteractionActionDefinition::UParadoxInsertItemInteractionActionDefinition()
+{
+	InstanceClass = UParadoxInsertItemInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_ItemSlot_Insert;
+	ExecutionLocks.AddTag(ParadoxGameplayTags::Lock_Inventory);
+	DebugDescription = TEXT("Moves to an Item Slot and atomically inserts the requester's equipped insertable.");
+}
+
+UParadoxPickupFromItemSlotInteractionActionDefinition::UParadoxPickupFromItemSlotInteractionActionDefinition()
+{
+	InstanceClass = UParadoxPickupFromItemSlotInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_ItemSlot_Pickup;
+	ExecutionLocks.AddTag(ParadoxGameplayTags::Lock_Inventory);
+	DebugDescription = TEXT("Moves to an Item Slot and atomically picks its unlocked item into an empty inventory.");
 }

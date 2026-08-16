@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Blueprint/UserWidget.h"
+#include "CommonActivatableWidget.h"
 #include "CommonButtonBase.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
@@ -382,7 +383,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 bool FTacticalPauseWidgetRoutingTest::RunTest(const FString& Parameters)
 {
 	using namespace UE::TacticalPause::Tests;
-	TestTrue(TEXT("native controls derive from Common UI activatable widget"), UTacticalPauseControlsWidget::StaticClass()->IsChildOf(UCommonActivatableWidget::StaticClass()));
+	TestTrue(TEXT("native controls derive from an ordinary User Widget"), UTacticalPauseControlsWidget::StaticClass()->IsChildOf(UUserWidget::StaticClass()));
+	TestFalse(TEXT("native controls are not Common UI activatable widgets"), UTacticalPauseControlsWidget::StaticClass()->IsChildOf(UCommonActivatableWidget::StaticClass()));
 	TestTrue(TEXT("PlayButton is a required Common UI binding"), FTacticalPauseTestAccessor::HasCommonButtonBinding(TEXT("PlayButton")));
 	TestTrue(TEXT("PauseButton is a required Common UI binding"), FTacticalPauseTestAccessor::HasCommonButtonBinding(TEXT("PauseButton")));
 	TestTrue(TEXT("SpeedButton1 is a required Common UI binding"), FTacticalPauseTestAccessor::HasCommonButtonBinding(TEXT("SpeedButton1")));

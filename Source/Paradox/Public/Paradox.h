@@ -26,6 +26,8 @@ PARADOX_API bool IsParadoxVerticalBarrierDebugEnabled();
 PARADOX_API bool IsParadoxInteractionDebugEnabled();
 /** Global half of the selected puzzle-circuit overlay debug gate. */
 PARADOX_API bool IsParadoxPuzzleOverlayDebugEnabled();
+/** Global half of the single-slot inventory and drop-targeting debug gate. */
+PARADOX_API bool IsParadoxInventoryDebugEnabled();
 
 namespace ParadoxGameplayTags
 {
@@ -44,6 +46,31 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Receiver);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Emitter);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Lock_Interaction);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Swap);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_ItemSlot_Insert);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_ItemSlot_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Inventory_Drop);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Lock_Inventory);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Inventory_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Inventory_Swap);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_ItemSlot_Insert);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_ItemSlot_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_InvalidRequest);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Inactive);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Occupied);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Empty);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Locked);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Incompatible);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_OwnershipConflict);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_InvalidRequest);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_SlotOccupied);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_SlotEmpty);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_ItemUnavailable);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_OwnershipConflict);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_InvalidCell);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_NoReachableExecutionCell);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Inventory_TargetInvalidated);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_InvalidRequest);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_TargetUnavailable);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_InvalidPosition);
@@ -54,11 +81,20 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_Prerequisites);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_Interaction_GateClosed);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_Computer_Powered);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_ItemSlot_Active);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_ItemSlot_Occupied);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_ItemSlot_Locked);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(State_ItemSlot_Removable);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Test_State_Active);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Test_Event_Noise);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_Character_Footstep);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cause_CharacterMovement_Footstep);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Puzzle_Signal_Pressed);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Puzzle_Signal_ItemSlotSatisfied);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Item_Type_Battery);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Item_Battery_Voltage_12V);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Item_Type_Key);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Item_Access_Level_2);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_PressurePlate_Press);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Event_Noise_PressurePlate_Release);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Cause_PressurePlate_Movement);

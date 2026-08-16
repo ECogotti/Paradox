@@ -53,6 +53,12 @@ namespace
 		0,
 		TEXT("Enables selected puzzle-circuit routing diagnostics when the renderer's local debug flag is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxInventoryDebug(
+		TEXT("Paradox.Inventory.Debug"),
+		0,
+		TEXT("Enables event-driven inventory and drop diagnostics when the owning object's local flag is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -88,6 +94,11 @@ bool IsParadoxInteractionDebugEnabled()
 bool IsParadoxPuzzleOverlayDebugEnabled()
 {
 	return CVarParadoxPuzzleOverlayDebug.GetValueOnGameThread() != 0;
+}
+
+bool IsParadoxInventoryDebugEnabled()
+{
+	return CVarParadoxInventoryDebug.GetValueOnGameThread() != 0;
 }
 
 namespace ParadoxGameplayTags
@@ -127,6 +138,31 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Receiver, "GameplayAction.Type.Paradox.Interaction.Receiver.SetState");
 	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Emitter, "GameplayAction.Type.Paradox.Interaction.Emitter.SetSignal");
 	UE_DEFINE_GAMEPLAY_TAG(Lock_Interaction, "GameplayAction.Lock.Interaction");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Pickup, "GameplayAction.Type.Paradox.Interaction.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Swap, "GameplayAction.Type.Paradox.Interaction.Swap");
+	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Insert, "GameplayAction.Type.Paradox.ItemSlot.Insert");
+	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Pickup, "GameplayAction.Type.Paradox.ItemSlot.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Inventory_Drop, "GameplayAction.Type.Paradox.Inventory.Drop");
+	UE_DEFINE_GAMEPLAY_TAG(Lock_Inventory, "GameplayAction.Lock.Paradox.Inventory");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Pickup, "Interaction.Paradox.Inventory.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Swap, "Interaction.Paradox.Inventory.Swap");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Insert, "Interaction.Paradox.ItemSlot.Insert");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Pickup, "Interaction.Paradox.ItemSlot.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_InvalidRequest, "GameplayAction.Result.Failure.Paradox.ItemSlot.InvalidRequest");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Inactive, "GameplayAction.Result.Failure.Paradox.ItemSlot.Inactive");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Occupied, "GameplayAction.Result.Failure.Paradox.ItemSlot.Occupied");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Empty, "GameplayAction.Result.Failure.Paradox.ItemSlot.Empty");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Locked, "GameplayAction.Result.Failure.Paradox.ItemSlot.Locked");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Incompatible, "GameplayAction.Result.Failure.Paradox.ItemSlot.Incompatible");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_OwnershipConflict, "GameplayAction.Result.Failure.Paradox.ItemSlot.OwnershipConflict");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_InvalidRequest, "GameplayAction.Result.Failure.Paradox.Inventory.InvalidRequest");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_SlotOccupied, "GameplayAction.Result.Failure.Paradox.Inventory.SlotOccupied");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_SlotEmpty, "GameplayAction.Result.Failure.Paradox.Inventory.SlotEmpty");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_ItemUnavailable, "GameplayAction.Result.Failure.Paradox.Inventory.ItemUnavailable");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_OwnershipConflict, "GameplayAction.Result.Failure.Paradox.Inventory.OwnershipConflict");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_InvalidCell, "GameplayAction.Result.Failure.Paradox.Inventory.InvalidCell");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_NoReachableExecutionCell, "GameplayAction.Result.Failure.Paradox.Inventory.NoReachableExecutionCell");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_TargetInvalidated, "GameplayAction.Result.Failure.Paradox.Inventory.TargetInvalidated");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Failure_Interaction_InvalidRequest,
 		"GameplayAction.Result.Failure.Paradox.Interaction.InvalidRequest");
@@ -151,6 +187,10 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(
 		State_Computer_Powered,
 		"PerceptionKnowledge.State.Paradox.Computer.Powered");
+	UE_DEFINE_GAMEPLAY_TAG(State_ItemSlot_Active, "PerceptionKnowledge.State.Paradox.ItemSlot.Active");
+	UE_DEFINE_GAMEPLAY_TAG(State_ItemSlot_Occupied, "PerceptionKnowledge.State.Paradox.ItemSlot.Occupied");
+	UE_DEFINE_GAMEPLAY_TAG(State_ItemSlot_Locked, "PerceptionKnowledge.State.Paradox.ItemSlot.Locked");
+	UE_DEFINE_GAMEPLAY_TAG(State_ItemSlot_Removable, "PerceptionKnowledge.State.Paradox.ItemSlot.Removable");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Test_State_Active,
 		"PerceptionKnowledge.State.Test.Paradox.Active");
@@ -166,6 +206,11 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(
 		Puzzle_Signal_Pressed,
 		"Puzzle.Signal.Pressed");
+	UE_DEFINE_GAMEPLAY_TAG(Puzzle_Signal_ItemSlotSatisfied, "Puzzle.Signal.Paradox.ItemSlot.Satisfied");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Battery, "Item.Type.Battery");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Battery_Voltage_12V, "Item.Battery.Voltage.12V");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Key, "Item.Type.Key");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Access_Level_2, "Item.Access.Level.2");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Event_Noise_PressurePlate_Press,
 		"PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Press");

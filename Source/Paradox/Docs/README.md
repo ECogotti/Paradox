@@ -28,6 +28,11 @@ responsibility and their implementations use the matching path under `Private`:
 - `Public/Interaction` and `Private/Interaction` contain player selection, selectable Actor
   presentation, the Blueprint-extensible world-space widget base, multi-interaction Smart Object
   slot queries/submission, and the replay-safe interaction Gameplay Action template;
+- `Public/Inventory` and `Private/Inventory` contain the shared single-slot inventory, native
+  pickupables and insertables, authoritative item slots, passive effects, Pickup/Swap/Drop/Insert
+  actions, player Drop targeting, puzzle-slot composition, and the inventory widget base;
+- `Public/HUD` and `Private/HUD` contain the Player Controller-owned Gameplay HUD coordinator,
+  persistent Normal/Collapsed root widget, Tactical Pause section and Equipment presentation;
 - `Public/Paradox.h` exposes the module log category and native gameplay tags;
 - `Private/Tests` contains module automation tests.
 
@@ -48,6 +53,7 @@ runtime roles:
 - `UIntentReplayComponent`, configured to observe that action component;
 - `UEntityIdentityComponent`, the generic Entity Relations identity;
 - `UParadoxTemporalEntityComponent`, the Paradox role, Temporal Index, and optional replay track.
+- `UParadoxInventoryComponent`, the authoritative single slot shared by players and clones.
 
 `AParadoxPlayerCharacter` keeps the character-mounted camera as a fallback for maps without a
 Paradox camera volume and adds `UTacticalPauseActionQueueComponent`. `AParadoxCloneCharacter`
@@ -96,6 +102,18 @@ Hover, RMB single-Actor selection, outline stencil ownership, optional world-spa
 multi-interaction Smart Object catalogs, exact Gameplay Action requests, claim lifecycle, semantic
 Intent Replay, selected GridWorld cells, World State cleanup, and input arbitration are documented in
 [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
+
+The Character-owned single slot, native pickupables, passive effects, special actions, atomic
+Pickup/Swap, semantic GridWorld Drop, targeting, reset behavior and authoring workflow are documented
+in [Paradox single-slot inventory](INVENTORY.md).
+
+Gameplay HUD ownership, automatic visibility, `Tab` Normal/Collapsed mode, root Blueprint contract,
+Tactical Pause embedding and the concrete Equipment section are documented in
+[Paradox Gameplay HUD](GAMEPLAY_HUD.md).
+
+Insertable traits, atomic Inventory-to-Slot transfers, native slot interaction assets, WorldState
+reconstruction, event-driven perception and Puzzle slot output are documented in
+[Paradox insertable items and item slots](ITEM_SLOTS.md).
 
 The selected Actor's read-only PuzzleSystem circuit, default multi-threaded Distributed Repulsive,
 Standard/Multi-Thread execution, calculation lifecycle delegates, Ordered Bundles and deprecated

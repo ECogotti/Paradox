@@ -785,6 +785,16 @@ bool FGridMoveToCellApiTest::RunTest(const FString& Parameters)
 		TEXT("Path preview exposes a dedicated Goal Occupied failure"),
 		StaticEnum<EGridPathPreviewFailureReason>()->IsValidEnumValue(
 			static_cast<int64>(EGridPathPreviewFailureReason::GoalOccupied)));
+	TestTrue(
+		TEXT("Path preview exposes a dedicated stop-before-terminal failure"),
+		StaticEnum<EGridPathPreviewFailureReason>()->IsValidEnumValue(
+			static_cast<int64>(EGridPathPreviewFailureReason::TerminalGoalUnavailable)));
+	TestNotNull(
+		TEXT("Path preview exposes the opt-in terminal-policy update without changing the ordinary API"),
+		UGridPathPreviewComponent::StaticClass()->FindFunctionByName(
+			GET_FUNCTION_NAME_CHECKED(
+				UGridPathPreviewComponent,
+				UpdatePreviewForControllerWithTerminalPolicy)));
 	const UBTTask_MoveToGridCell* DefaultGridMoveTask = GetDefault<UBTTask_MoveToGridCell>();
 	TestEqual(
 		TEXT("Grid move tasks stop before occupied goals by default"),

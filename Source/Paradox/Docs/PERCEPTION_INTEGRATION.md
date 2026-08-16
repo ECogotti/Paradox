@@ -9,6 +9,12 @@
 - The time loop initializes player observation recording, stores the resulting Timeline Bundle,
   and initializes clone comparison against the matching bundle.
 
+`AParadoxItemSlotActor` also owns a native `UPerceptionKnowledgeSourceComponent`. It publishes
+Active, Occupied, Locked, and Removable as persistent event-driven states. It deliberately does not
+publish item compatibility because compatibility depends on the requester inventory and traits.
+Occupancy, lock/activity notification, destruction, and WorldState completion refresh these states
+without Tick. See [Paradox insertable items and item slots](ITEM_SLOTS.md).
+
 Clone temporal-paradox vision remains separate from native AI Sight. Its line traces deform a
 collisionless procedural cone around occluders. A clone-owned collisionless sphere shape,
 automatically sized from the cone radii in Blueprint construction and at runtime, drives an

@@ -16,7 +16,7 @@ Public headers are grouped by responsibility:
 - `Subsystems/TacticalPauseWorldSubsystem.h`: authoritative commands, queries, and Blueprint/native delegates.
 - `Subsystems/TacticalPauseLocalPlayerSubsystem.h`: opt-in automatic widget ownership and query.
 - `Blueprint/TacticalPauseBlueprintLibrary.h`: world-context forwarding nodes.
-- `Widgets/TacticalPauseControlsWidget.h`: Common UI activation, required button bindings, command routing, and presentation hooks.
+- `Widgets/TacticalPauseControlsWidget.h`: persistent UMG lifecycle, required Common Button bindings, command routing, and presentation hooks.
 - `TacticalPause.h`: module log category and scoped logging macros.
 
 Mutation commands return `ETacticalPauseRequestResult`. Callers should handle success, idempotency, validation failure, transition re-entry, external conflict, apply failure, and shutdown explicitly. Native observers can use the `On...Native()` accessors; Blueprint observers use the matching assignable properties.
@@ -29,9 +29,9 @@ The subsystem has no Tick. It synchronizes observed Unreal state on relevant pub
 
 Preset validation occurs per world during initialization. Valid presets have a non-empty unique ID and a finite positive multiplier within the configured limit; mutation commands also enforce the world's engine limit.
 
-## Common UI contract
+## UMG and Common Button contract
 
-`UTacticalPauseControlsWidget` derives from `UCommonActivatableWidget` and never constructs a widget tree. Its Widget Blueprint must supply these `UCommonButtonBase` variables using exact required `meta=(BindWidget)` names:
+`UTacticalPauseControlsWidget` derives from `UUserWidget` and never constructs a widget tree. Its Widget Blueprint must supply these `UCommonButtonBase` variables using exact required `meta=(BindWidget)` names:
 
 - `PlayButton`
 - `PauseButton`
@@ -40,14 +40,14 @@ Preset validation occurs per world during initialization. Valid presets have a n
 - `SpeedButton3`
 - `SpeedButton4`
 
-The four speed fields represent validated preset indices 0-3. The native class binds clicks, drives Common UI interaction and selection state, observes the subsystem only while activated, and calls `On Tactical Pause Presentation Updated` after a refresh. Blueprint remains responsible for all layout, visual content, button styles, and animations. Keep command routing in the base API; do not mutate world pause or dilation from the widget.
+The four speed fields represent validated preset indices 0-3. The native class binds clicks, drives Common UI interaction and selection state, observes the subsystem between `NativeConstruct` and `NativeDestruct`, and calls `On Tactical Pause Presentation Updated` after a refresh. Blueprint remains responsible for all layout, visual content, button styles, and animations. Keep command routing in the base API; do not mutate world pause or dilation from the widget.
 
 The module does not place this widget on screen by default. A project UI owner should create it with
-the local PlayerController, retain it through a reflected reference, add it to the player screen and
-call `ActivateWidget`. Cleanup must call `DeactivateWidget` and `RemoveFromParent`. A project using a
-dedicated `UCommonActivatableWidgetStack` may instead push the widget class and leave creation,
-activation, and removal to that container. Automatic local-player ownership remains available only
-as an explicit opt-in through `bCreateDefaultWidgetAutomatically`.
+the local PlayerController, retain it through a reflected reference, and add it to the player screen
+or an ordinary persistent HUD hierarchy. Cleanup calls `RemoveFromParent` and clears the reference.
+The widget is not an activatable screen and should not be pushed onto a
+`UCommonActivatableWidgetStack`. Automatic local-player ownership remains available only as an
+explicit opt-in through `bCreateDefaultWidgetAutomatically`.
 
 ## Module dependencies
 
@@ -55,7 +55,7 @@ Public dependencies are `Core`, `CoreUObject`, `Engine`, `DeveloperSettings`, `C
 
 ## Tests
 
-Development automation tests live in `Private/Tests/TacticalPauseTests.cpp` under the `TacticalPause.Runtime` prefix. They use an injected private temporal driver and focused test worlds to validate transitions, validation, presets, external ownership/restoration, Common UI inheritance/BindWidget metadata, preset-slot mapping, and command routing. The designer asset is not loaded by automation until its required buttons have been placed and compiled.
+Development automation tests live in `Private/Tests/TacticalPauseTests.cpp` under the `TacticalPause.Runtime` prefix. They use an injected private temporal driver and focused test worlds to validate transitions, validation, presets, external ownership/restoration, `UUserWidget` inheritance/BindWidget metadata, preset-slot mapping, and command routing. The designer asset is not loaded by automation until its required buttons have been placed and compiled.
 
 Optional generic participant registration is not part of this milestone. Add it only with a concrete adapter requirement and defined ordering, ownership, failure reporting, and rollback behavior.
 
