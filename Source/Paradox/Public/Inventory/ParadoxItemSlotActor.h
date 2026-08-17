@@ -18,6 +18,7 @@ class UPerceptionKnowledgeSourceComponent;
 class USceneComponent;
 class USmartObjectComponent;
 class UWorldStateParticipantComponent;
+class FDataValidationContext;
 struct FWorldStateRestoreLifecycleContext;
 struct FWorldStateRestoreResult;
 
@@ -108,6 +109,10 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
+#endif
 
 	/** Non-Blueprint native gate; Puzzle Slots add receiver activation here. */
 	virtual bool EvaluateRequiredSlotActive() const;
@@ -142,7 +147,12 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Item Slot|Presentation", meta = (DisplayName = "On Slot Active State Changed"))
 	void ReceiveSlotActiveStateChanged(bool bPreviousActive, bool bNewActive);
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Item Slot|Compatibility")
+	/** Hard insertion filter evaluated against the candidate item's InsertableTraits. */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox|Item Slot|Compatibility",
+		meta = (DisplayName = "Allowed Item Query"))
 	FGameplayTagQuery AcceptedItemQuery;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Item Slot|Policy")
@@ -152,6 +162,7 @@ private:
 	FParadoxItemSlotOperationResult MakeResult(
 		EParadoxItemSlotOperationStatus Status,
 		FString Diagnostic) const;
+	bool MatchesAllowedItemQuery(const AParadoxInsertablePickupableActor* Item) const;
 	void InitializeAuthoredInsertedItem();
 	void SetInsertedItemCommitted(AParadoxInsertablePickupableActor* NewItem);
 	void ClearInsertedItemCommitted(AParadoxInsertablePickupableActor* ExpectedItem);
@@ -200,8 +211,18 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UPerceptionKnowledgeSourceComponent> PerceptionSource;
 
-	/** Editable only on placed instances to support an authored occupied baseline. */
-	UPROPERTY(EditInstanceOnly, BlueprintReadOnly, Category = "Paradox|Item Slot|State", meta = (AllowPrivateAccess = "true"))
+	/**
+	 * Optional placed insertable that owns this Slot when play begins and whenever World State
+	 * restores the authored baseline. The actor picker accepts insertable pickupables only.
+	 */
+	UPROPERTY(
+		EditInstanceOnly,
+		BlueprintReadOnly,
+		Category = "Paradox|Item Slot|State",
+		meta = (
+			AllowPrivateAccess = "true",
+			DisplayName = "Initially Inserted Item",
+			AllowedClasses = "/Script/Paradox.ParadoxInsertablePickupableActor"))
 	TObjectPtr<AParadoxInsertablePickupableActor> InsertedItem;
 
 	/** WorldState-supported mirror of the authoritative hard runtime relationship. */
@@ -215,4 +236,7 @@ private:
 
 	friend class AParadoxInsertablePickupableActor;
 	friend class UParadoxInventoryComponent;
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FParadoxItemSlotTestAccessor;
+#endif
 };

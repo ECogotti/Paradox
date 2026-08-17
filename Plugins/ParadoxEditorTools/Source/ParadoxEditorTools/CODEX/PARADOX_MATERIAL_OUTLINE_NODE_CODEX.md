@@ -190,7 +190,10 @@ SelectionMask
 
 The outline must be generated around relevant silhouettes.
 
-Do not generate a full fill mask for the entire object.
+Hover and Selection must remain outline-only and must not generate a full fill mask for the
+entire object. Puzzle Input and Puzzle Output are the deliberate exception: their final masks and
+color contribution include both the sampled boundary and the visible/occluded interior selected by
+the independent Puzzle Wire occlusion policy.
 
 Do not outline every small internal depth variation of one continuous highlighted surface.
 

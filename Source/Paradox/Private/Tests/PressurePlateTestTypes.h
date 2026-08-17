@@ -2,6 +2,7 @@
 
 #include "Components/BoxComponent.h"
 #include "Components/SceneComponent.h"
+#include "Inventory/ParadoxPickupableActor.h"
 #include "Puzzles/PressurePlate.h"
 #include "PressurePlateTestTypes.generated.h"
 
@@ -124,4 +125,27 @@ public:
 	UPROPERTY()
 	TObjectPtr<UBoxComponent> SecondComponent = nullptr;
 
+};
+
+/** Pickupable fixture proving that world-presence collision can drive a real overlap detector. */
+UCLASS()
+class APressurePlateTestPickupable : public AParadoxPickupableActor
+{
+	GENERATED_BODY()
+
+public:
+	APressurePlateTestPickupable()
+	{
+		bUseAuthoredWorldCollision = true;
+		WorldCollision = CreateDefaultSubobject<UBoxComponent>(TEXT("WorldCollision"));
+		WorldCollision->SetupAttachment(GetRootComponent());
+		WorldCollision->InitBoxExtent(FVector(20.0f));
+		WorldCollision->SetCollisionObjectType(ECC_WorldStatic);
+		WorldCollision->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		WorldCollision->SetCollisionResponseToAllChannels(ECR_Block);
+		WorldCollision->SetGenerateOverlapEvents(false);
+	}
+
+	UPROPERTY()
+	TObjectPtr<UBoxComponent> WorldCollision = nullptr;
 };

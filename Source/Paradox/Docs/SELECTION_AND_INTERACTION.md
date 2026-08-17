@@ -220,7 +220,10 @@ requester/target teardown, and world teardown. The action registers the engine's
 callback, forwards pause/resume/cancel to its transient movement executor, and observes affordance
 changes. An outcome completed externally during movement succeeds; lost Activate prerequisites
 fail immediately. Selection reset only removes hover, outline, widget, cache, and
-cell overlay; it never cancels a Gameplay Action or releases its claim.
+cell overlay; it never cancels a Gameplay Action or releases its claim. If concrete execution first
+satisfies its semantic outcome and that mutation disables its Smart Object or invalidates the claimed
+slot, the action completes successfully before processing the resulting affordance loss. This is the
+normal ordering for Pickup: inventory ownership commits before the held item disables interaction.
 
 During Intent Replay the newly created instance belongs to the recipient Character's Action
 Component. A clone therefore becomes the requester automatically; the Player Controller stored as

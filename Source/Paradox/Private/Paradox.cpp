@@ -208,9 +208,9 @@ namespace ParadoxGameplayTags
 		"Puzzle.Signal.Pressed");
 	UE_DEFINE_GAMEPLAY_TAG(Puzzle_Signal_ItemSlotSatisfied, "Puzzle.Signal.Paradox.ItemSlot.Satisfied");
 	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Battery, "Item.Type.Battery");
-	UE_DEFINE_GAMEPLAY_TAG(Item_Battery_Voltage_12V, "Item.Battery.Voltage.12V");
-	UE_DEFINE_GAMEPLAY_TAG(Item_Type_Key, "Item.Type.Key");
-	UE_DEFINE_GAMEPLAY_TAG(Item_Access_Level_2, "Item.Access.Level.2");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyCard_Red, "Item.Type.KeyCard.Red");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyCard_Blue, "Item.Type.KeyCard.Blue");
+	UE_DEFINE_GAMEPLAY_TAG(Item_Type_KeyCard_Green, "Item.Type.KeyCard.Green");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Event_Noise_PressurePlate_Press,
 		"PerceptionKnowledge.Event.Paradox.Noise.PressurePlate.Press");

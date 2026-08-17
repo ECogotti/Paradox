@@ -40,6 +40,11 @@ class AParadoxItemSlotTestInsertable : public AParadoxInsertablePickupableActor
 public:
 	AParadoxItemSlotTestInsertable();
 	void SetTraits(const FGameplayTagContainer& InTraits) { InsertableTraits = InTraits; }
+	void SetInsertedPresence(const bool bUseCollision, const bool bUseNavigation)
+	{
+		bUseAuthoredInsertedCollision = bUseCollision;
+		bUseAuthoredInsertedNavigationInfluence = bUseNavigation;
+	}
 	UParadoxItemSlotTestPassiveEffect* GetTestEffect() const { return TestEffect; }
 
 private:
@@ -85,6 +90,17 @@ class AParadoxPuzzleItemSlotTestActor : public AParadoxPuzzleItemSlotActor
 public:
 	void SetRequireReceiver(const bool bRequired) { bRequirePuzzleReceiverForActivation = bRequired; }
 	void SetAdditionalActive(const bool bActive) { bTestAdditionalActive = bActive; }
+	void SetPuzzleRole(const EParadoxPuzzleItemSlotRole InRole)
+	{
+		PuzzleRole = InRole;
+		ConfigurePuzzleRole();
+		NotifyPuzzleRelevantItemStateChanged();
+	}
+	void SetRightItemTags(const FGameplayTagContainer& InTags)
+	{
+		RightItemTags = InTags;
+		NotifyPuzzleRelevantItemStateChanged();
+	}
 
 protected:
 	virtual bool EvaluateAdditionalSlotActive_Implementation() const override;

@@ -1036,6 +1036,9 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			: nullptr;
 		if (TestNotNull(TEXT("Runtime clone Drop retains an exact path"), RuntimeDropPath))
 		{
+			TestTrue(
+				TEXT("Clone Drop tolerates transient dynamic-agent revisions while preserving its exact approach"),
+				RuntimeDropPath->bAllowDynamicAgentConflictsDuringValidation);
 			TestEqual(
 				TEXT("Clone Drop preserves every recorded approach cell"),
 				RuntimeDropPath->Cells,
@@ -1184,6 +1187,7 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 		false,
 		nullptr,
 		ETeleportType::TeleportPhysics);
+	FGridInjectedPath DifferentStartRuntimePath;
 	const FGameplayActionSubmissionResult DifferentStartSubmission =
 		Strategy->SubmitPreparedRequest(
 			ActionComponent,
@@ -1220,6 +1224,10 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			TEXT("Different-start request contains a fresh ExactInjectedPath"),
 			DifferentStartPath))
 		{
+			DifferentStartRuntimePath = *DifferentStartPath;
+			TestTrue(
+				TEXT("Different-start recovery retains dynamic-agent validation tolerance"),
+				DifferentStartPath->bAllowDynamicAgentConflictsDuringValidation);
 			TestEqual(
 				TEXT("Fresh exact path starts at the clone's current cell"),
 				DifferentStartPath->Cells[0],
@@ -1242,6 +1250,7 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 				RecordedPath.PathInstanceId);
 		}
 	}
+	FGridInjectedPath DifferentStartDropRuntimePath;
 	const FGameplayActionSubmissionResult DifferentStartDropSubmission =
 		Strategy->SubmitPreparedRequest(ActionComponent, DropCreation.Request);
 	if (!TestTrue(
@@ -1273,6 +1282,10 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 			TEXT("Different-start Drop contains a fresh exact approach path"),
 			RuntimeDropPath))
 		{
+			DifferentStartDropRuntimePath = *RuntimeDropPath;
+			TestTrue(
+				TEXT("Different-start Drop recovery retains dynamic-agent validation tolerance"),
+				RuntimeDropPath->bAllowDynamicAgentConflictsDuringValidation);
 			TestEqual(
 				TEXT("Recovered Drop path starts at the clone's current cell"),
 				RuntimeDropPath->Cells[0],
@@ -1287,12 +1300,6 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 				RecordedDropCells.Last());
 		}
 	}
-	RecipientCharacter->SetActorLocation(
-		Snapshot->Cells[0].WorldCenter,
-		false,
-		nullptr,
-		ETeleportType::TeleportPhysics);
-
 	FGridTrafficGoalClaimRequest BlockingGoalClaim;
 	BlockingGoalClaim.OwnerId = FGuid::NewGuid();
 	BlockingGoalClaim.Claimant = SourceCharacter;
@@ -1308,6 +1315,32 @@ bool FParadoxCloneReplayExactPathRestampTest::RunTest(
 	{
 		return false;
 	}
+	if (TestTrue(
+		TEXT("Different-start movement path was captured for traffic-revision validation"),
+		DifferentStartRuntimePath.IsSet()))
+	{
+		TestTrue(
+			TEXT("Different-start movement path survives a later traffic reservation revision"),
+			GridWorld->ValidateInjectedPath(
+				RecipientController,
+				DifferentStartRuntimePath).bIsValid);
+	}
+	if (TestTrue(
+		TEXT("Different-start Drop path was captured for traffic-revision validation"),
+		DifferentStartDropRuntimePath.IsSet()))
+	{
+		TestTrue(
+			TEXT("Different-start Drop path survives a later traffic reservation revision"),
+			GridWorld->ValidateInjectedPath(
+				RecipientController,
+				DifferentStartDropRuntimePath).bIsValid);
+	}
+
+	RecipientCharacter->SetActorLocation(
+		Snapshot->Cells[0].WorldCenter,
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
 
 	FGridInjectedPath StrictConflictingPath;
 	const FGridInjectedPathValidationResult StrictConflict =

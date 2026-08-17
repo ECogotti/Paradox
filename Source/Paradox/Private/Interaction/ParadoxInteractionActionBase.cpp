@@ -984,6 +984,17 @@ void UParadoxInteractionActionBase::HandleInteractionAffordanceChanged(
 	{
 		return;
 	}
+	if (IsInteractionOutcomeSatisfied())
+	{
+		if (bMovingToInteraction)
+		{
+			ReleaseMovement(true);
+		}
+		CompleteInteractionSuccess(
+			GameplayActionTags::Result_Success,
+			TEXT("The requested outcome was satisfied while the interaction affordance changed."));
+		return;
+	}
 
 	USmartObjectSubsystem* SmartObjects =
 		USmartObjectSubsystem::GetCurrent(GetWorld());
@@ -1033,6 +1044,19 @@ void UParadoxInteractionActionBase::HandleInteractionSlotInvalidated(
 {
 	if (bCompletionRequested || InvalidatedClaim != ClaimHandle)
 	{
+		return;
+	}
+	if (IsInteractionOutcomeSatisfied())
+	{
+		if (bMovingToInteraction)
+		{
+			ReleaseMovement(true);
+		}
+		ClaimHandle.Invalidate();
+		bSlotInvalidationCallbackRegistered = false;
+		CompleteInteractionSuccess(
+			GameplayActionTags::Result_Success,
+			TEXT("The requested outcome was satisfied before the interaction slot became unavailable."));
 		return;
 	}
 

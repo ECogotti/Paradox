@@ -742,6 +742,30 @@ namespace
             Compiler.Mul(PuzzleOutputBoundarySum, OneEighth),
             Softness);
 
+        // Hover and Selection remain silhouette-only. Puzzle wires also contribute their
+        // current semantic pixel so the post process colors the cable interior as well as
+        // its sampled boundary, under the same independent wire occlusion policy.
+        const int32 CurrentIsPuzzleOutput = Compiler.Mul(
+            Compiler.Step(OneAndHalf, CurrentSample.SemanticCategory),
+            Compiler.Sub(
+                One,
+                Compiler.Step(TwoAndHalf, CurrentSample.SemanticCategory)));
+        const int32 CurrentIsPuzzleInput = Compiler.Mul(
+            Compiler.Step(Half, CurrentSample.SemanticCategory),
+            Compiler.Sub(
+                One,
+                Compiler.Step(OneAndHalf, CurrentSample.SemanticCategory)));
+        const int32 PuzzleInputFilledCoverage = Compiler.Max(
+            PuzzleInputCoverage,
+            Compiler.Mul(
+                CurrentIsPuzzleInput,
+                CurrentSample.PuzzleVisibility));
+        const int32 PuzzleOutputFilledCoverage = Compiler.Max(
+            PuzzleOutputCoverage,
+            Compiler.Mul(
+                CurrentIsPuzzleOutput,
+                CurrentSample.PuzzleVisibility));
+
         const int32 SelectionMask = Compiler.Saturate(
             Compiler.Mul(
                 SelectionCoverage,
@@ -753,12 +777,12 @@ namespace
             Compiler.Sub(One, SelectionMask));
         const int32 HigherThanPuzzleOutputMask = Compiler.Saturate(Compiler.Max(SelectionMask, HoverMask));
         const int32 PuzzleOutputMask = Compiler.Mul(
-            Compiler.Saturate(Compiler.Mul(PuzzleOutputCoverage, PuzzleOutputIntensity)),
+            Compiler.Saturate(Compiler.Mul(PuzzleOutputFilledCoverage, PuzzleOutputIntensity)),
             Compiler.Sub(One, HigherThanPuzzleOutputMask));
         const int32 HigherThanPuzzleInputMask = Compiler.Saturate(
             Compiler.Max(HigherThanPuzzleOutputMask, PuzzleOutputMask));
         const int32 PuzzleInputMask = Compiler.Mul(
-            Compiler.Saturate(Compiler.Mul(PuzzleInputCoverage, PuzzleInputIntensity)),
+            Compiler.Saturate(Compiler.Mul(PuzzleInputFilledCoverage, PuzzleInputIntensity)),
             Compiler.Sub(One, HigherThanPuzzleInputMask));
 
         return FCompiledOutline{
@@ -946,7 +970,7 @@ FText UMaterialExpressionParadoxOutline::GetCreationDescription() const
 {
     return LOCTEXT(
         "CreationDescription",
-        "Generate Hover, Selection, Puzzle Input, and Puzzle Output silhouette masks from Custom Depth and semantic Custom Stencil ranges in a Post Process material.");
+        "Generate outline-only Hover and Selection masks plus outlined and filled Puzzle Input/Output wire masks from Custom Depth and semantic Custom Stencil ranges in a Post Process material.");
 }
 
 FText UMaterialExpressionParadoxOutline::GetCreationName() const
@@ -958,7 +982,7 @@ FText UMaterialExpressionParadoxOutline::GetKeywords() const
 {
     return LOCTEXT(
         "Keywords",
-        "outline hover selection puzzle input output circuit stencil custom depth post process paradox");
+        "outline fill hover selection puzzle input output circuit wire stencil custom depth post process paradox");
 }
 
 void UMaterialExpressionParadoxOutline::GetConnectorToolTip(
@@ -995,10 +1019,10 @@ void UMaterialExpressionParadoxOutline::GetConnectorToolTip(
     {
         TEXT("Hover outline mask after Selection priority has been applied."),
         TEXT("Selection outline mask. Selection has visual priority over Hover."),
-        TEXT("Maximum of Hover, Selection, Puzzle Input, and Puzzle Output masks."),
-        TEXT("Sum of the four category colors multiplied by their priority-resolved masks."),
-        TEXT("Puzzle Input outline mask after higher-priority categories have been applied."),
-        TEXT("Puzzle Output outline mask after Hover and Selection priority has been applied."),
+        TEXT("Maximum of outline-only Hover/Selection and outlined-and-filled Puzzle Input/Output masks."),
+        TEXT("Sum of the four category colors multiplied by their priority-resolved masks; puzzle wire colors include their interior."),
+        TEXT("Puzzle Input outline and interior fill mask after higher-priority categories have been applied."),
+        TEXT("Puzzle Output outline and interior fill mask after Hover and Selection priority has been applied."),
     };
 
     if (InputIndex >= 0 && InputIndex < InputCount)

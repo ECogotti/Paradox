@@ -2,6 +2,8 @@
 #include "GameplayActionTags.h"
 #include "Paradox.h"
 #include "ParadoxInteractionTestTypes.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "SmartObjectComponent.h"
 
 namespace ParadoxInteractionTestTags
 {
@@ -52,6 +54,29 @@ void UParadoxInteractionTestSuccessAction::ExecuteInteraction_Implementation()
 	CompleteInteractionSuccess(
 		GameplayActionTags::Result_Success,
 		TEXT("Immediate test interaction succeeded."));
+}
+
+bool UParadoxInteractionTestOutcomeMutationAction::
+IsInteractionOutcomeSatisfied_Implementation() const
+{
+	return bOutcomeSatisfied;
+}
+
+void UParadoxInteractionTestOutcomeMutationAction::ExecuteInteraction_Implementation()
+{
+	UParadoxInteractionComponent* Component = GetInteractionComponent();
+	USmartObjectComponent* SmartObject = GetInteractionTarget()
+		? GetInteractionTarget()->FindComponentByClass<USmartObjectComponent>()
+		: nullptr;
+	bOutcomeSatisfied = true;
+	if (SmartObject)
+	{
+		SmartObject->K2_SetSmartObjectEnabled(false);
+	}
+	if (Component)
+	{
+		Component->NotifyInteractionAffordanceChanged();
+	}
 }
 
 void UParadoxInteractionTestPreflightContextAction::ResetObservations()
@@ -106,7 +131,6 @@ void UParadoxInteractionTestPreflightContextAction::ExecuteInteraction_Implement
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
-#include "Interaction/ParadoxInteractionComponent.h"
 #include "Interaction/ParadoxInteractionActionDefinition.h"
 #include "Interaction/ParadoxEmitterInteractionAction.h"
 #include "Interaction/ParadoxReceiverInteractionAction.h"
@@ -120,7 +144,6 @@ void UParadoxInteractionTestPreflightContextAction::ExecuteInteraction_Implement
 #include "Components/IntentReplayComponent.h"
 #include "Playback/IntentReplayPlaybackSession.h"
 #include "Recording/IntentReplayTrack.h"
-#include "SmartObjectComponent.h"
 #include "SmartObjectDefinition.h"
 #include "SmartObjectRuntime.h"
 #include "SmartObjectSubsystem.h"
@@ -967,6 +990,47 @@ bool FParadoxInteractionActionTerminalCleanupTest::RunTest(const FString& Parame
 		1);
 	TestTrue(TEXT("Abort releases the claim before reset mutation"),
 		SmartObjects->CanBeClaimed(Fixture.Slots[0]));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxInteractionSatisfiedOutcomeInvalidationTest,
+	"Paradox.Interaction.Action.SatisfiedOutcomeSurvivesAffordanceInvalidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxInteractionSatisfiedOutcomeInvalidationTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::Interaction::Tests;
+	FInteractionExecutionFixture Fixture;
+	if (!TestTrue(
+		TEXT("Outcome-mutation fixture initializes"),
+		Fixture.Initialize(
+			UParadoxInteractionTestOutcomeMutationAction::StaticClass())))
+	{
+		return false;
+	}
+
+	const FParadoxInteractionRequestResult Submitted = Fixture.Request();
+	if (!TestTrue(TEXT("Outcome-mutation interaction is accepted"), Submitted.IsAccepted()))
+	{
+		AddError(Submitted.DiagnosticMessage);
+		return false;
+	}
+
+	FGameplayActionResult TerminalResult;
+	TestTrue(
+		TEXT("Affordance mutation produces a terminal action result"),
+		Fixture.Actions->GetActionResult(
+			Submitted.SubmissionResult.Handle,
+			TerminalResult));
+	TestEqual(
+		TEXT("Satisfied outcome wins over its resulting affordance invalidation"),
+		TerminalResult.TerminalState,
+		EGameplayActionState::Succeeded);
+	TestFalse(
+		TEXT("Concrete mutation disabled the target Smart Object"),
+		Fixture.SmartObject->IsSmartObjectEnabled());
 	return true;
 }
 

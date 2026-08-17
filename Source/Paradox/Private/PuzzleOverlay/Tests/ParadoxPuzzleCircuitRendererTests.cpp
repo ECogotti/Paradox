@@ -13,6 +13,7 @@
 #include "EngineUtils.h"
 #include "Interaction/ParadoxSelectableComponent.h"
 #include "Interaction/ParadoxSelectionComponent.h"
+#include "Inventory/ParadoxPuzzleItemSlotActor.h"
 #include "HAL/PlatformProcess.h"
 #include "HAL/PlatformTime.h"
 #include "Misc/AutomationTest.h"
@@ -229,6 +230,83 @@ bool FParadoxPuzzleCircuitRendererWireTargetValidationTest::RunTest(const FStrin
 		static_cast<UObject*>(Actor->Selectable)->IsDataValid(ValidationContext),
 		EDataValidationResult::Valid);
 #endif
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxPuzzleCircuitRendererBlueprintWireTargetValidationTest,
+	"Paradox.PuzzleOverlay.Renderer.BlueprintWireTargetValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxPuzzleCircuitRendererBlueprintWireTargetValidationTest::RunTest(
+	const FString& Parameters)
+{
+	UClass* KeyCardSlotClass = LoadClass<AParadoxPuzzleItemSlotActor>(
+		nullptr,
+		TEXT("/Game/Environment/SpaceShip/Blueprints/BP_KeyCardSlot.BP_KeyCardSlot_C"));
+	const AParadoxPuzzleItemSlotActor* KeyCardSlot = KeyCardSlotClass
+		? Cast<AParadoxPuzzleItemSlotActor>(KeyCardSlotClass->GetDefaultObject())
+		: nullptr;
+	if (!TestNotNull(TEXT("BP_KeyCardSlot class resolves"), KeyCardSlot)
+		|| !TestNotNull(
+			TEXT("BP_KeyCardSlot owns Selectable component"),
+			KeyCardSlot ? KeyCardSlot->GetSelectableComponent() : nullptr))
+	{
+		return false;
+	}
+
+	FDataValidationContext ValidationContext;
+	static_cast<UObject*>(KeyCardSlot->GetSelectableComponent())->IsDataValid(ValidationContext);
+	bool bFoundPointFallbackWarning = false;
+	bool bFoundMultipleWireTargetsWarning = false;
+	for (const FDataValidationContext::FIssue& Issue : ValidationContext.GetIssues())
+	{
+		bFoundPointFallbackWarning |= Issue.Message.ToString().Contains(
+			TEXT("point fallback"),
+			ESearchCase::IgnoreCase);
+		bFoundMultipleWireTargetsWarning |= Issue.Message.ToString().Contains(
+			TEXT("Multiple UBoxComponent instances"),
+			ESearchCase::IgnoreCase);
+	}
+	TestFalse(
+		TEXT("Blueprint-authored WireTarget prevents the point-fallback warning"),
+		bFoundPointFallbackWarning);
+	TestFalse(
+		TEXT("Blueprint CDO with one authored WireTarget is not ambiguous"),
+		bFoundMultipleWireTargetsWarning);
+
+	using namespace UE::Paradox::PuzzleOverlay::Tests;
+	FScopedOverlayWorld Scope(TEXT("ParadoxPuzzleOverlayBlueprintValidationWorld"));
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AParadoxPuzzleItemSlotActor* PlacedKeyCardSlot = Scope.World
+		? Scope.World->SpawnActor<AParadoxPuzzleItemSlotActor>(
+			KeyCardSlotClass,
+			FTransform::Identity,
+			SpawnParameters)
+		: nullptr;
+	if (!TestNotNull(TEXT("Placed BP_KeyCardSlot instance exists"), PlacedKeyCardSlot)
+		|| !TestNotNull(
+			TEXT("Placed BP_KeyCardSlot owns Selectable component"),
+			PlacedKeyCardSlot ? PlacedKeyCardSlot->GetSelectableComponent() : nullptr))
+	{
+		return false;
+	}
+
+	FDataValidationContext PlacedValidationContext;
+	static_cast<UObject*>(PlacedKeyCardSlot->GetSelectableComponent())->IsDataValid(
+		PlacedValidationContext);
+	bFoundMultipleWireTargetsWarning = false;
+	for (const FDataValidationContext::FIssue& Issue : PlacedValidationContext.GetIssues())
+	{
+		bFoundMultipleWireTargetsWarning |= Issue.Message.ToString().Contains(
+			TEXT("Multiple UBoxComponent instances"),
+			ESearchCase::IgnoreCase);
+	}
+	TestFalse(
+		TEXT("Placed Blueprint with one WireTarget does not count its SCS template twice"),
+		bFoundMultipleWireTargetsWarning);
 	return true;
 }
 

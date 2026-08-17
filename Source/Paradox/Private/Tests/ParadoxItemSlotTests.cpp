@@ -5,7 +5,9 @@
 #include "Characters/ParadoxCloneCharacter.h"
 #include "Characters/ParadoxPlayerCharacter.h"
 #include "Components/ArrowComponent.h"
+#include "Components/GridNavigationModifierComponent.h"
 #include "Components/PerceptionKnowledgeSourceComponent.h"
+#include "Components/StaticMeshComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/PuzzleController.h"
 #include "Emitters/PuzzleEmitterComponent.h"
@@ -20,6 +22,7 @@
 #include "Inventory/ParadoxInventoryComponent.h"
 #include "Inventory/ParadoxItemSlotInteractionActions.h"
 #include "Inventory/ParadoxPuzzleItemSlotActor.h"
+#include "Misc/DataValidation.h"
 #include "Paradox.h"
 #include "Receivers/PuzzleReceiverComponent.h"
 #include "Signals/PuzzleSignalTypes.h"
@@ -30,8 +33,23 @@
 #include "Tests/ParadoxItemSlotTestTypes.h"
 #include "UObject/UnrealType.h"
 
+struct FParadoxItemSlotTestAccessor
+{
+	static void SetInitiallyInsertedItem(
+		AParadoxItemSlotActor& Slot,
+		AParadoxInsertablePickupableActor* Item)
+	{
+		Slot.InsertedItem = Item;
+	}
+};
+
 namespace UE::Paradox::ItemSlot::Tests
 {
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(TestTraitBattery, "Interaction.Test.ItemSlot.Trait.Battery");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(TestTraitVoltage12V, "Interaction.Test.ItemSlot.Trait.Voltage12V");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(TestTraitKeyCard, "Interaction.Test.ItemSlot.Trait.KeyCard");
+	UE_DEFINE_GAMEPLAY_TAG_STATIC(TestTraitAccessLevel2, "Interaction.Test.ItemSlot.Trait.AccessLevel2");
+
 	struct FScopedTestWorld
 	{
 		explicit FScopedTestWorld(const TCHAR* Name)
@@ -72,30 +90,30 @@ namespace UE::Paradox::ItemSlot::Tests
 	{
 		FGameplayTagQueryExpression Expression;
 		Expression.AllTagsMatch()
-			.AddTag(ParadoxGameplayTags::Item_Type_Battery)
-			.AddTag(ParadoxGameplayTags::Item_Battery_Voltage_12V);
+			.AddTag(TestTraitBattery)
+			.AddTag(TestTraitVoltage12V);
 		return FGameplayTagQuery::BuildQuery(Expression, TEXT("12V battery"));
 	}
 
 	FGameplayTagContainer MakeBatteryTraits()
 	{
 		FGameplayTagContainer Traits;
-		Traits.AddTag(ParadoxGameplayTags::Item_Type_Battery);
-		Traits.AddTag(ParadoxGameplayTags::Item_Battery_Voltage_12V);
+		Traits.AddTag(TestTraitBattery);
+		Traits.AddTag(TestTraitVoltage12V);
 		return Traits;
 	}
 
 	FGameplayTagContainer MakeKeyTraits()
 	{
 		FGameplayTagContainer Traits;
-		Traits.AddTag(ParadoxGameplayTags::Item_Type_Key);
-		Traits.AddTag(ParadoxGameplayTags::Item_Access_Level_2);
+		Traits.AddTag(TestTraitKeyCard);
+		Traits.AddTag(TestTraitAccessLevel2);
 		return Traits;
 	}
 
 	struct FFixture
 	{
-		explicit FFixture(const TCHAR* WorldName)
+		explicit FFixture(const TCHAR* WorldName, const bool bStartPlay = true)
 			: Scope(WorldName)
 		{
 			if (!Scope.World)
@@ -139,6 +157,14 @@ namespace UE::Paradox::ItemSlot::Tests
 				Slot->GetInsertAnchor()->SetRelativeLocation(FVector(12.0, 23.0, 34.0));
 				Slot->GetInsertAnchor()->SetRelativeRotation(FRotator(5.0, 45.0, 10.0));
 			}
+			if (bStartPlay)
+			{
+				StartPlay();
+			}
+		}
+
+		void StartPlay()
+		{
 			Scope.World->InitializeActorsForPlay(FURL());
 			Scope.World->BeginPlay();
 			for (TActorIterator<AActor> It(Scope.World); It; ++It)
@@ -203,7 +229,14 @@ namespace UE::Paradox::ItemSlot::Tests
 		TEXT("26.Replay.CloneRequesterRelative"),
 		TEXT("27.Lifetime.InsertedItemDestruction"),
 		TEXT("28.Concurrency.ReentrantInsertRejected"),
-		TEXT("29.Integration.NativeAssetsNoTick")
+		TEXT("29.Integration.NativeAssetsNoTick"),
+		TEXT("30.Puzzle.WrongAllowedItemDoesNotSatisfy"),
+		TEXT("31.Puzzle.RightItemExactTagEmits"),
+		TEXT("32.Puzzle.ReceiverItemPermission"),
+		TEXT("33.Puzzle.EmitterAndReceiverRole"),
+		TEXT("34.InsertedPresence.IndependentCollisionAndNavigation"),
+		TEXT("35.AuthoredBaseline.InitializesAndRestoresPuzzleState"),
+		TEXT("36.AuthoredBaseline.RejectsIncompatibleAllowedTags")
 	};
 }
 
@@ -229,7 +262,10 @@ bool FParadoxItemSlotScenariosTest::RunTest(const FString& Parameters)
 {
 	using namespace UE::Paradox::ItemSlot::Tests;
 	const int32 Scenario = FCString::Atoi(*Parameters);
-	FFixture Fixture(*FString::Printf(TEXT("ParadoxItemSlotScenario%d"), Scenario + 1));
+	const bool bDeferPlayForAuthoredBaseline = Scenario == 34 || Scenario == 35;
+	FFixture Fixture(
+		*FString::Printf(TEXT("ParadoxItemSlotScenario%d"), Scenario + 1),
+		!bDeferPlayForAuthoredBaseline);
 	if (!TestNotNull(TEXT("Transient Item Slot world exists"), Fixture.Scope.World)
 		|| !TestNotNull(TEXT("Requester exists"), Fixture.Character)
 		|| !TestNotNull(TEXT("Requester inventory exists"), Fixture.Inventory())
@@ -407,7 +443,19 @@ bool FParadoxItemSlotScenariosTest::RunTest(const FString& Parameters)
 	case 18:
 	{
 		TestNotNull(TEXT("InsertableTraits is reflected"), AParadoxInsertablePickupableActor::StaticClass()->FindPropertyByName(TEXT("InsertableTraits")));
+		TestNotNull(TEXT("Inserted collision policy is reflected"), AParadoxInsertablePickupableActor::StaticClass()->FindPropertyByName(TEXT("bUseAuthoredInsertedCollision")));
+		TestNotNull(TEXT("Inserted navigation policy is reflected"), AParadoxInsertablePickupableActor::StaticClass()->FindPropertyByName(TEXT("bUseAuthoredInsertedNavigationInfluence")));
 		TestNotNull(TEXT("AcceptedItemQuery is reflected"), AParadoxItemSlotActor::StaticClass()->FindPropertyByName(TEXT("AcceptedItemQuery")));
+		const FObjectPropertyBase* InitialItemProperty = CastField<FObjectPropertyBase>(
+			AParadoxItemSlotActor::StaticClass()->FindPropertyByName(TEXT("InsertedItem")));
+		TestTrue(TEXT("Initially inserted item uses an Actor picker"),
+			InitialItemProperty
+				&& InitialItemProperty->PropertyClass->IsChildOf(
+					AParadoxInsertablePickupableActor::StaticClass()));
+		TestTrue(TEXT("Initially inserted item is editable only on placed instances"),
+			InitialItemProperty
+				&& InitialItemProperty->HasAnyPropertyFlags(CPF_Edit)
+				&& InitialItemProperty->HasAnyPropertyFlags(CPF_DisableEditOnTemplate));
 		TestNotNull(TEXT("Lock policy is reflected"), AParadoxItemSlotActor::StaticClass()->FindPropertyByName(TEXT("bLockInsertedItem")));
 		TestTrue(TEXT("InsertAnchor is an Arrow Component"), Fixture.Slot->GetInsertAnchor()->IsA<UArrowComponent>());
 		break;
@@ -521,6 +569,214 @@ bool FParadoxItemSlotScenariosTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Slot Pickup Definition asset resolves"), PickupAsset);
 		TestTrue(TEXT("Insert Definition owns inventory lock"), InsertAsset && InsertAsset->ExecutionLocks.HasTagExact(ParadoxGameplayTags::Lock_Inventory));
 		TestTrue(TEXT("Pickup Definition owns inventory lock"), PickupAsset && PickupAsset->ExecutionLocks.HasTagExact(ParadoxGameplayTags::Lock_Inventory));
+		break;
+	}
+	case 29:
+	{
+		Fixture.PuzzleSlot->SetRightItemTags(MakeKeyTraits());
+		TestTrue(TEXT("Allowed item still inserts"), Fixture.EquipAndInsert(Fixture.PuzzleSlot));
+		TestFalse(TEXT("Allowed but wrong item does not satisfy Slot"), Fixture.PuzzleSlot->IsRightItemInserted());
+		FPuzzleSignalState State;
+		TestTrue(TEXT("Emitter channel exists"), Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied, State));
+		TestFalse(TEXT("Wrong allowed item keeps output inactive"), State.bIsActive);
+		break;
+	}
+	case 30:
+	{
+		FGameplayTagContainer RightTags;
+		RightTags.AddTag(TestTraitBattery);
+		Fixture.PuzzleSlot->SetRightItemTags(RightTags);
+		TestTrue(TEXT("Right item inserts"), Fixture.EquipAndInsert(Fixture.PuzzleSlot));
+		TestTrue(TEXT("Exact item tag satisfies Slot"), Fixture.PuzzleSlot->IsRightItemInserted());
+		FPuzzleSignalState State;
+		TestTrue(TEXT("Right item activates Emitter"), Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied, State) && State.bIsActive);
+		break;
+	}
+	case 31:
+	{
+		FGameplayTagContainer RightTags;
+		RightTags.AddTag(TestTraitBattery);
+		Fixture.PuzzleSlot->SetPuzzleRole(EParadoxPuzzleItemSlotRole::Receiver);
+		Fixture.PuzzleSlot->SetRightItemTags(RightTags);
+		TestTrue(TEXT("Receiver role uses Manual activation"), Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->GetActivationMode() == EPuzzleReceiverActivationMode::Manual);
+		TestTrue(TEXT("Right item inserts before Receiver prerequisite"), Fixture.EquipAndInsert(Fixture.PuzzleSlot));
+		TestFalse(TEXT("Item permission cannot bypass Controller prerequisite"), Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+
+		FActorSpawnParameters Spawn;
+		Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		APuzzleController* Controller = Fixture.Scope.World->SpawnActor<APuzzleController>(
+			APuzzleController::StaticClass(), FTransform::Identity, Spawn);
+		Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->SetControllerRequest(Controller, true);
+		Fixture.Scope.World->Tick(LEVELTICK_All, 0.01f);
+		TestTrue(TEXT("Persistent right-item permission activates after prerequisite arrives"), Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+		TestTrue(TEXT("Removing item succeeds"), Fixture.PuzzleSlot->TryPickupInsertedItem(Fixture.Character).IsSuccess());
+		TestFalse(TEXT("Removing item revokes Receiver activation"), Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+		break;
+	}
+	case 32:
+	{
+		FGameplayTagContainer RightTags;
+		RightTags.AddTag(TestTraitBattery);
+		Fixture.PuzzleSlot->SetPuzzleRole(EParadoxPuzzleItemSlotRole::EmitterAndReceiver);
+		Fixture.PuzzleSlot->SetRightItemTags(RightTags);
+
+		FActorSpawnParameters Spawn;
+		Spawn.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		APuzzleController* Controller = Fixture.Scope.World->SpawnActor<APuzzleController>(
+			APuzzleController::StaticClass(), FTransform::Identity, Spawn);
+		Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->SetControllerRequest(Controller, true);
+		TestTrue(TEXT("Both-role right item inserts"), Fixture.EquipAndInsert(Fixture.PuzzleSlot));
+		TestTrue(TEXT("Both role activates Receiver"), Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+		FPuzzleSignalState State;
+		TestTrue(TEXT("Both role also activates Emitter"), Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied, State) && State.bIsActive);
+		break;
+	}
+	case 33:
+	{
+		UStaticMeshComponent* Mesh = Fixture.Item->GetPickupableMesh();
+		UGridNavigationModifierComponent* Modifier =
+			Fixture.Item->GetGridNavigationModifierComponent();
+		if (!TestNotNull(TEXT("Inserted-presence mesh exists"), Mesh)
+			|| !TestNotNull(TEXT("Inserted-presence navigation modifier exists"), Modifier))
+		{
+			return false;
+		}
+
+		Fixture.Item->SetInsertedPresence(true, false);
+		TestTrue(TEXT("Collision-only item inserts"), Fixture.EquipAndInsert());
+		TestTrue(TEXT("Inserted collision policy enables Actor collision"),
+			Fixture.Item->GetActorEnableCollision());
+		TestEqual(TEXT("Inserted collision policy restores authored collision mode"),
+			Mesh->GetCollisionEnabled(), ECollisionEnabled::QueryOnly);
+		TestTrue(TEXT("Inserted query collision generates overlaps"),
+			Mesh->GetGenerateOverlapEvents());
+		TestFalse(TEXT("Collision-only insert does not enable navigation relevance"),
+			Mesh->CanEverAffectNavigation());
+		TestFalse(TEXT("Collision-only insert does not block GridWorld cells"),
+			Modifier->bBlockCells);
+
+		TestTrue(TEXT("Collision-only inserted item returns to inventory"),
+			Fixture.Slot->TryPickupInsertedItem(Fixture.Character).IsSuccess());
+		Fixture.Item->SetInsertedPresence(false, true);
+		TestTrue(TEXT("Navigation-only item reinserts"),
+			Fixture.Slot->TryInsertItem(Fixture.Character).IsSuccess());
+		TestFalse(TEXT("Navigation-only insert keeps Actor collision disabled"),
+			Fixture.Item->GetActorEnableCollision());
+		TestEqual(TEXT("Navigation-only insert keeps primitive collision disabled"),
+			Mesh->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+		TestTrue(TEXT("Navigation-only insert enables navigation relevance"),
+			Mesh->CanEverAffectNavigation());
+		TestTrue(TEXT("Navigation-only insert blocks GridWorld cells"),
+			Modifier->bBlockCells);
+
+		TestTrue(TEXT("Navigation-only inserted item returns to inventory"),
+			Fixture.Slot->TryPickupInsertedItem(Fixture.Character).IsSuccess());
+		TestFalse(TEXT("Held item disables navigation relevance again"),
+			Mesh->CanEverAffectNavigation());
+		TestFalse(TEXT("Held item restores blocked GridWorld cells"),
+			Modifier->bBlockCells);
+		break;
+	}
+	case 34:
+	{
+		FGameplayTagContainer RightTags;
+		RightTags.AddTag(TestTraitBattery);
+		Fixture.PuzzleSlot->SetPuzzleRole(EParadoxPuzzleItemSlotRole::EmitterAndReceiver);
+		Fixture.PuzzleSlot->SetRightItemTags(RightTags);
+		FParadoxItemSlotTestAccessor::SetInitiallyInsertedItem(
+			*Fixture.PuzzleSlot,
+			Fixture.Item);
+		Fixture.StartPlay();
+
+		TestTrue(TEXT("Authored item initializes as Slot-owned"),
+			Fixture.PuzzleSlot->GetInsertedItem() == Fixture.Item
+				&& Fixture.Item->IsInserted());
+		TestTrue(TEXT("Authored item attaches to Insert Anchor"),
+			Fixture.Item->GetRootComponent()->GetAttachParent()
+				== Fixture.PuzzleSlot->GetInsertAnchor());
+		TestTrue(TEXT("Authored item aligns to Insert Anchor"),
+			Fixture.Item->GetActorTransform().Equals(
+				Fixture.PuzzleSlot->GetInsertAnchor()->GetComponentTransform()));
+		TestFalse(TEXT("Authored initialization executes no inventory transaction"),
+			Fixture.Inventory()->HasItem());
+
+		FPuzzleSignalState SignalState;
+		TestTrue(TEXT("Authored right item activates Emitter at first play"),
+			Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(
+				ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied,
+				SignalState)
+				&& SignalState.bIsActive);
+
+		FActorSpawnParameters Spawn;
+		Spawn.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		APuzzleController* Controller = Fixture.Scope.World->SpawnActor<APuzzleController>(
+			APuzzleController::StaticClass(),
+			FTransform::Identity,
+			Spawn);
+		Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->SetControllerRequest(
+			Controller,
+			true);
+		Fixture.Scope.World->Tick(LEVELTICK_All, 0.01f);
+		TestTrue(TEXT("Authored right item grants Receiver permission"),
+			Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+
+		UWorldStateSubsystem* WorldState =
+			Fixture.Scope.World->GetSubsystem<UWorldStateSubsystem>();
+		TestTrue(TEXT("Authored-baseline World State registration finalizes"),
+			WorldState
+				&& WorldState->FinalizeWorldStateRegistration().IsSuccess());
+		FWorldStateCaptureRequest Capture;
+		Capture.Label = TEXT("AuthoredOccupiedItemSlotBaseline");
+		TestTrue(TEXT("Authored occupied baseline captures"),
+			WorldState && WorldState->CaptureBaseline(Capture).IsSuccess());
+		TestTrue(TEXT("Authored item can be picked up before reset"),
+			Fixture.PuzzleSlot->TryPickupInsertedItem(Fixture.Character).IsSuccess());
+		TestFalse(TEXT("Pickup deactivates authored baseline Emitter"),
+			Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(
+				ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied,
+				SignalState)
+				&& SignalState.bIsActive);
+
+		const FWorldStateRestoreResult Restore =
+			WorldState->RestoreBaseline(FWorldStateRestoreRequest());
+		Fixture.Scope.World->Tick(LEVELTICK_All, 0.01f);
+		TestTrue(TEXT("Authored occupied baseline restores"), Restore.IsSuccess());
+		TestTrue(TEXT("Reset restores authored item ownership and attachment"),
+			Fixture.PuzzleSlot->GetInsertedItem() == Fixture.Item
+				&& Fixture.Item->IsInserted()
+				&& Fixture.Item->GetRootComponent()->GetAttachParent()
+					== Fixture.PuzzleSlot->GetInsertAnchor());
+		TestTrue(TEXT("Reset reactivates authored baseline Emitter"),
+			Fixture.PuzzleSlot->GetPuzzleEmitterComponent()->TryGetSignalState(
+				ParadoxGameplayTags::Puzzle_Signal_ItemSlotSatisfied,
+				SignalState)
+				&& SignalState.bIsActive);
+		TestTrue(TEXT("Reset restores authored baseline Receiver permission"),
+			Fixture.PuzzleSlot->GetPuzzleReceiverComponent()->IsReceiverActive());
+		break;
+	}
+	case 35:
+	{
+		Fixture.Item->SetTraits(MakeKeyTraits());
+		FParadoxItemSlotTestAccessor::SetInitiallyInsertedItem(
+			*Fixture.Slot,
+			Fixture.Item);
+#if WITH_EDITOR
+		FDataValidationContext ValidationContext;
+		TestEqual(TEXT("Allowed Item Query rejects incompatible authored item in editor"),
+			static_cast<UObject*>(Fixture.Slot)->IsDataValid(ValidationContext),
+			EDataValidationResult::Invalid);
+#endif
+		AddExpectedError(
+			TEXT("rejected invalid authored baseline item"),
+			EAutomationExpectedErrorFlags::Contains,
+			1);
+		Fixture.StartPlay();
+		TestFalse(TEXT("Runtime rejects incompatible authored item"),
+			Fixture.Slot->IsOccupied());
+		TestTrue(TEXT("Rejected authored item remains available in world"),
+			Fixture.Item->IsAvailableInWorld());
 		break;
 	}
 	default:

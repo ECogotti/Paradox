@@ -210,6 +210,14 @@ invalid extent, automatic visible-mesh bounds are used. If neither source is usa
 logs a diagnostic and falls back to the Actor Location as a point endpoint. Bounds metadata reports
 `CustomWireTarget`, `VisibleMeshes`, or `PointFallback`.
 
+During Blueprint compilation the Actor CDO does not instantiate components authored in the Simple
+Construction Script. Data Validation therefore inspects both direct native components and the
+Blueprint SCS/component templates. A Blueprint-authored `WireTarget` is validated against the same
+tag and extent rules as the runtime instance and does not produce a false point-fallback warning.
+Placed Actors are validated from their instantiated, directly owned components only; their SCS
+templates are not added again, so one authored `WireTarget` cannot be reported as two components
+when a map is saved.
+
 Ports sharing one Actor face follow the adjacent bundle lane order, using remote tangential order
 as the deterministic fallback. A face carrying exactly one link always uses its exact centre at
 both source and target. With two or more links, the ports use the `N+1` rule over the complete face:

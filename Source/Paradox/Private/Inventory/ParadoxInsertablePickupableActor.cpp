@@ -53,6 +53,32 @@ bool AParadoxInsertablePickupableActor::RestoreExternalOwnershipAfterWorldState(
 	return true;
 }
 
+bool AParadoxInsertablePickupableActor::ShouldUseAuthoredCollisionForCurrentState() const
+{
+	return Super::ShouldUseAuthoredCollisionForCurrentState()
+		|| (GetPickupableState() == EParadoxPickupableState::Inserted
+			&& bUseAuthoredInsertedCollision);
+}
+
+bool AParadoxInsertablePickupableActor::ShouldUseAuthoredNavigationForCurrentState() const
+{
+	return Super::ShouldUseAuthoredNavigationForCurrentState()
+		|| (GetPickupableState() == EParadoxPickupableState::Inserted
+			&& bUseAuthoredInsertedNavigationInfluence);
+}
+
+bool AParadoxInsertablePickupableActor::ShouldPreserveAuthoredCollisionConfiguration() const
+{
+	return Super::ShouldPreserveAuthoredCollisionConfiguration()
+		|| bUseAuthoredInsertedCollision;
+}
+
+bool AParadoxInsertablePickupableActor::ShouldPreserveAuthoredNavigationConfiguration() const
+{
+	return Super::ShouldPreserveAuthoredNavigationConfiguration()
+		|| bUseAuthoredInsertedNavigationInfluence;
+}
+
 void AParadoxInsertablePickupableActor::SetInsertedStateNative(
 	AParadoxItemSlotActor& NewSlot,
 	USceneComponent& InsertAnchor)
@@ -68,6 +94,7 @@ void AParadoxInsertablePickupableActor::SetInsertedStateNative(
 			*GetNameSafe(this),
 			*GetNameSafe(&InsertAnchor));
 	}
+	RefreshPresenceAfterPlacement();
 }
 
 void AParadoxInsertablePickupableActor::ClearInsertedStateNative(const bool bDetach)

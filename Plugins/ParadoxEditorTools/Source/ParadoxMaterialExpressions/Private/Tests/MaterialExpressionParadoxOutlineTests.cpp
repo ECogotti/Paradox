@@ -84,6 +84,18 @@ namespace
             return bVisible;
         }
     }
+
+    float ResolveCenterCoverageForContractTest(
+        const ETestOutlineCategory Category,
+        const float BoundaryCoverage,
+        const bool bCategoryVisible)
+    {
+        const bool bFillInterior = Category == ETestOutlineCategory::PuzzleInput
+            || Category == ETestOutlineCategory::PuzzleOutput;
+        return FMath::Max(
+            BoundaryCoverage,
+            bFillInterior && bCategoryVisible ? 1.0f : 0.0f);
+    }
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
@@ -250,6 +262,41 @@ bool FParadoxOutlineMaterialExpressionContractTest::RunTest(
     TestFalse(
         TEXT("Internal depth edges are disabled by default"),
         Expression->bEnableInternalDepthEdges);
+    TestEqual(
+        TEXT("Puzzle Input center is filled without requiring an edge"),
+        ResolveCenterCoverageForContractTest(
+            ETestOutlineCategory::PuzzleInput,
+            0.0f,
+            true),
+        1.0f);
+    TestEqual(
+        TEXT("Puzzle Output center is filled without requiring an edge"),
+        ResolveCenterCoverageForContractTest(
+            ETestOutlineCategory::PuzzleOutput,
+            0.0f,
+            true),
+        1.0f);
+    TestEqual(
+        TEXT("Hover center remains outline-only"),
+        ResolveCenterCoverageForContractTest(
+            ETestOutlineCategory::Hover,
+            0.0f,
+            true),
+        0.0f);
+    TestEqual(
+        TEXT("Selection center remains outline-only"),
+        ResolveCenterCoverageForContractTest(
+            ETestOutlineCategory::Selection,
+            0.0f,
+            true),
+        0.0f);
+    TestEqual(
+        TEXT("Wire center fill obeys its occlusion policy"),
+        ResolveCenterCoverageForContractTest(
+            ETestOutlineCategory::PuzzleInput,
+            0.0f,
+            false),
+        0.0f);
 
     TestEqual(
         TEXT("Stencil 230 is Hover"),

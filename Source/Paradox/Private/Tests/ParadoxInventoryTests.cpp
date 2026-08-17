@@ -6,6 +6,7 @@
 #include "Characters/ParadoxCloneCharacter.h"
 #include "Characters/ParadoxPlayerCharacter.h"
 #include "Components/GameplayActionComponent.h"
+#include "Components/GridNavigationModifierComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Components/IntentReplayComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -38,6 +39,25 @@
 
 struct FParadoxInventoryTestAccessor
 {
+	static void ConfigureAuthoredWorldPresence(
+		AParadoxPickupableActor& Pickupable,
+		const bool bUseCollision,
+		const bool bUseNavigation)
+	{
+		Pickupable.bUseAuthoredWorldCollision = bUseCollision;
+		Pickupable.bUseAuthoredNavigationInfluence = bUseNavigation;
+	}
+
+	static bool UsesAuthoredWorldCollision(const AParadoxPickupableActor& Pickupable)
+	{
+		return Pickupable.bUseAuthoredWorldCollision;
+	}
+
+	static bool UsesAuthoredNavigationInfluence(const AParadoxPickupableActor& Pickupable)
+	{
+		return Pickupable.bUseAuthoredNavigationInfluence;
+	}
+
 	static void EnforceNonBlockingPresence(AParadoxPickupableActor& Pickupable)
 	{
 		Pickupable.EnforceNonBlockingPresence();
@@ -196,7 +216,9 @@ namespace UE::Paradox::Inventory::Tests
 		TEXT("20.Concurrency.ReentrancyRejected"),
 		TEXT("21.Interaction.PlayerPickupAndCloneReplayRequester"),
 		TEXT("22.Interaction.SwapPreflightRequester"),
-		TEXT("23.InteractionWidget.RemainsQueryableAfterDropNormalization")
+		TEXT("23.InteractionWidget.RemainsQueryableAfterDropNormalization"),
+		TEXT("24.WorldPresence.AuthoredCollisionAndNavigation"),
+		TEXT("25.WorldPresence.KeyCardDoesNotPublishOccupancy")
 	};
 }
 
@@ -561,6 +583,8 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 		TestNotNull(TEXT("Pickupable owns interaction"), Defaults->GetInteractionComponent());
 		TestNotNull(TEXT("Pickupable owns Smart Object"), Defaults->GetSmartObjectComponent());
 		TestNotNull(TEXT("Pickupable owns GridWorld occupancy"), Defaults->GetOccupancyComponent());
+		TestNotNull(TEXT("Pickupable owns a GridWorld navigation modifier"),
+			Defaults->GetGridNavigationModifierComponent());
 		TestNotNull(TEXT("Pickupable owns World State participation"), Defaults->GetWorldStateParticipantComponent());
 		TestTrue(TEXT("World pickupable Actor permits selection queries"), Defaults->GetActorEnableCollision());
 		TestTrue(TEXT("World pickupable mesh is query-only"),
@@ -580,6 +604,13 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 			Defaults->GetOccupancyComponent() && Defaults->GetOccupancyComponent()->AdditionalCost > 0);
 		TestFalse(TEXT("GridWorld occupancy is not a reservation"),
 			Defaults->GetOccupancyComponent() && Defaults->GetOccupancyComponent()->bIsReservation);
+		TestFalse(TEXT("Authored world collision is opt-in"),
+			FParadoxInventoryTestAccessor::UsesAuthoredWorldCollision(*Defaults));
+		TestFalse(TEXT("Authored navigation influence is opt-in"),
+			FParadoxInventoryTestAccessor::UsesAuthoredNavigationInfluence(*Defaults));
+		TestFalse(TEXT("Default pickupable does not remove GridWorld cells"),
+			Defaults->GetGridNavigationModifierComponent()
+				&& Defaults->GetGridNavigationModifierComponent()->bBlockCells);
 		TestTrue(TEXT("World State owns pickupable baseline existence"),
 			Defaults->GetWorldStateParticipantComponent()
 				&& Defaults->GetWorldStateParticipantComponent()->ExistencePolicy
@@ -864,6 +895,126 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 		TestFalse(
 			TEXT("Interaction widget cannot affect navigation"),
 			InteractionWidget->CanEverAffectNavigation());
+		break;
+	}
+	case 23:
+	{
+		AParadoxInventoryTestPickupable* AuthoredPickupable =
+			Fixture.Scope.World->SpawnActorDeferred<AParadoxInventoryTestPickupable>(
+				AParadoxInventoryTestPickupable::StaticClass(),
+				FTransform(FVector(500.0, 0.0, 0.0)),
+				nullptr,
+				nullptr,
+				ESpawnActorCollisionHandlingMethod::AlwaysSpawn);
+		if (!TestNotNull(TEXT("Authored-presence pickupable spawns deferred"), AuthoredPickupable))
+		{
+			return false;
+		}
+
+		FParadoxInventoryTestAccessor::ConfigureAuthoredWorldPresence(
+			*AuthoredPickupable,
+			true,
+			true);
+		UStaticMeshComponent* Mesh = AuthoredPickupable->GetPickupableMesh();
+		UGridNavigationOccupancyComponent* Occupancy =
+			AuthoredPickupable->GetOccupancyComponent();
+		Mesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+		Mesh->SetCollisionResponseToChannel(ECC_Pawn, ECR_Block);
+		Mesh->SetGenerateOverlapEvents(false);
+		Mesh->SetCanEverAffectNavigation(false);
+		Occupancy->bBlocksWhenConsidered = true;
+		Occupancy->AdditionalCost = 250;
+		Occupancy->bIsReservation = false;
+		AuthoredPickupable->FinishSpawning(
+			FTransform(FVector(500.0, 0.0, 0.0)));
+		if (!AuthoredPickupable->HasActorBegunPlay())
+		{
+			AuthoredPickupable->DispatchBeginPlay();
+		}
+
+		TestEqual(TEXT("World state preserves authored collision mode"),
+			Mesh->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+		TestEqual(TEXT("World state preserves authored Pawn response"),
+			Mesh->GetCollisionResponseToChannel(ECC_Pawn), ECR_Block);
+		TestTrue(TEXT("World collision opt-in enables overlaps"),
+			Mesh->GetGenerateOverlapEvents());
+		TestTrue(TEXT("World navigation opt-in enables Unreal navigation relevance"),
+			Mesh->CanEverAffectNavigation());
+		TestTrue(TEXT("World state preserves authored GridWorld blocking"),
+			Occupancy->bBlocksWhenConsidered);
+		TestTrue(TEXT("World navigation opt-in removes affected GridWorld cells"),
+			AuthoredPickupable->GetGridNavigationModifierComponent()
+				&& AuthoredPickupable->GetGridNavigationModifierComponent()->bBlockCells);
+		TestTrue(TEXT("GridWorld modifier mirrors the authored occupancy extent"),
+			AuthoredPickupable->GetGridNavigationModifierComponent()
+				&& AuthoredPickupable->GetGridNavigationModifierComponent()->BoxExtent.Equals(
+					Occupancy->BoxExtent));
+
+		TestTrue(TEXT("Authored-presence pickup succeeds"),
+			Inventory->TryEquip(AuthoredPickupable).IsSuccess());
+		TestEqual(TEXT("Held item still disables collision"),
+			Mesh->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+		TestFalse(TEXT("Held item still disables navigation relevance"),
+			Mesh->CanEverAffectNavigation());
+		TestFalse(TEXT("Held item still disables GridWorld occupancy"),
+			Occupancy->IsActive());
+		TestFalse(TEXT("Held item restores its GridWorld cells"),
+			AuthoredPickupable->GetGridNavigationModifierComponent()
+				&& AuthoredPickupable->GetGridNavigationModifierComponent()->bBlockCells);
+
+		TestTrue(TEXT("Authored-presence drop succeeds"),
+			Inventory->TryDropAtTransform(
+				FTransform(FVector(600.0, 0.0, 0.0))).IsSuccess());
+		TestEqual(TEXT("Drop restores authored collision mode"),
+			Mesh->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+		TestEqual(TEXT("Drop restores authored Pawn response"),
+			Mesh->GetCollisionResponseToChannel(ECC_Pawn), ECR_Block);
+		TestTrue(TEXT("Drop re-enables world overlaps"),
+			Mesh->GetGenerateOverlapEvents());
+		TestTrue(TEXT("Drop restores authored navigation relevance"),
+			Mesh->CanEverAffectNavigation());
+		TestTrue(TEXT("Drop restores authored blocking occupancy"),
+			Occupancy->IsActive() && Occupancy->bBlocksWhenConsidered);
+		TestTrue(TEXT("Drop removes the affected GridWorld cells again"),
+			AuthoredPickupable->GetGridNavigationModifierComponent()
+				&& AuthoredPickupable->GetGridNavigationModifierComponent()->bBlockCells);
+		break;
+	}
+	case 24:
+	{
+		UClass* KeyCardClass = LoadClass<AParadoxPickupableActor>(
+			nullptr,
+			TEXT("/Game/Environment/SpaceShip/Blueprints/BP_KeyCard.BP_KeyCard_C"));
+		if (!TestNotNull(TEXT("BP_KeyCard class resolves"), KeyCardClass))
+		{
+			return false;
+		}
+		FActorSpawnParameters SpawnParameters;
+		SpawnParameters.SpawnCollisionHandlingOverride =
+			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+		AParadoxPickupableActor* KeyCard = Fixture.Scope.World->SpawnActor<AParadoxPickupableActor>(
+			KeyCardClass,
+			FTransform(FVector(700.0, 0.0, 0.0)),
+			SpawnParameters);
+		if (!TestNotNull(TEXT("BP_KeyCard runtime instance spawns"), KeyCard))
+		{
+			return false;
+		}
+
+		TestFalse(TEXT("BP_KeyCard does not opt into authored world collision"),
+			FParadoxInventoryTestAccessor::UsesAuthoredWorldCollision(*KeyCard));
+		TestFalse(TEXT("BP_KeyCard does not opt into navigation blocking"),
+			FParadoxInventoryTestAccessor::UsesAuthoredNavigationInfluence(*KeyCard));
+		TestFalse(TEXT("BP_KeyCard publishes no dynamic-agent occupancy"),
+			KeyCard->GetOccupancyComponent() && KeyCard->GetOccupancyComponent()->IsActive());
+		TestFalse(TEXT("BP_KeyCard does not remove GridWorld cells"),
+			KeyCard->GetGridNavigationModifierComponent()
+				&& KeyCard->GetGridNavigationModifierComponent()->bBlockCells);
+		TestEqual(TEXT("BP_KeyCard ignores Pawn collision"),
+			KeyCard->GetPickupableMesh()->GetCollisionResponseToChannel(ECC_Pawn),
+			ECR_Ignore);
+		TestFalse(TEXT("BP_KeyCard mesh cannot affect Unreal navigation"),
+			KeyCard->GetPickupableMesh()->CanEverAffectNavigation());
 		break;
 	}
 	default:

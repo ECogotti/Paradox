@@ -8,6 +8,7 @@
 #include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
+#include "Characters/ParadoxPlayerCharacter.h"
 #include "Emitters/PuzzleEmitterComponent.h"
 #include "Engine/Engine.h"
 #include "Engine/EngineBaseTypes.h"
@@ -17,6 +18,7 @@
 #include "Paradox.h"
 #include "Interaction/ParadoxInteractionComponent.h"
 #include "Interaction/ParadoxSelectableComponent.h"
+#include "Inventory/ParadoxInventoryComponent.h"
 #include "PressurePlateTestTypes.h"
 #include "SmartObjectComponent.h"
 #include "Subsystems/WorldStateSubsystem.h"
@@ -319,6 +321,78 @@ bool FPressurePlateTagsAndDelaysTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Leaving before PressDelay completes restores Released"), Plate->GetInputState(), EPuzzleSwitchInputState::Released);
 	TestWorld.Advance(1.1f);
 	TestFalse(TEXT("Cancelled PressDelay never activates the plate"), Plate->IsSwitchActive());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPressurePlatePickupableIntegrationTest,
+	"Paradox.PressurePlate.PickupableWorldOverlap",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPressurePlatePickupableIntegrationTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::PressurePlate::Tests;
+	FScopedPressurePlateWorld TestWorld(TEXT("PressurePlatePickupableWorld"));
+	if (!TestNotNull(TEXT("Pressure Plate pickupable test world exists"), TestWorld.World))
+	{
+		return false;
+	}
+
+	APressurePlateTestActor* Plate = SpawnPlate(
+		*TestWorld.World,
+		TEXT("PickupablePressurePlate"),
+		0.0f,
+		0.0f);
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.Name = TEXT("PickupableOccupant");
+	SpawnParameters.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
+	SpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	APressurePlateTestPickupable* Pickupable =
+		TestWorld.World->SpawnActor<APressurePlateTestPickupable>(
+			APressurePlateTestPickupable::StaticClass(),
+			FTransform(FVector(500.0f, 0.0f, 40.0f)),
+			SpawnParameters);
+	FActorSpawnParameters CharacterSpawnParameters;
+	CharacterSpawnParameters.Name = TEXT("PickupableHolder");
+	CharacterSpawnParameters.NameMode = FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
+	CharacterSpawnParameters.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AParadoxPlayerCharacter* Character = TestWorld.World->SpawnActor<AParadoxPlayerCharacter>(
+		AParadoxPlayerCharacter::StaticClass(),
+		FTransform(FVector(1000.0f, 0.0f, 0.0f)),
+		CharacterSpawnParameters);
+	if (!TestNotNull(TEXT("Pressure Plate pickupable exists"), Pickupable)
+		|| !TestNotNull(TEXT("Pressure Plate exists"), Plate)
+		|| !TestNotNull(TEXT("Pickupable holder exists"), Character))
+	{
+		return false;
+	}
+
+	TestFalse(
+		TEXT("Pickupable authored test shape starts with overlap generation disabled"),
+		Pickupable->WorldCollision->GetGenerateOverlapEvents());
+	TestWorld.StartPlay();
+	UParadoxInventoryComponent* Inventory = Character->GetInventoryComponent();
+	if (!TestNotNull(TEXT("Pickupable holder owns an inventory"), Inventory))
+	{
+		return false;
+	}
+	TestFalse(TEXT("Distant pickupable does not initially press the plate"), Plate->IsSwitchActive());
+	TestTrue(TEXT("Pickupable can be equipped before the Drop"),
+		Inventory->TryEquip(Pickupable).IsSuccess());
+	TestFalse(TEXT("Held pickupable overlap is disabled"),
+		Pickupable->WorldCollision->GetGenerateOverlapEvents());
+	TestTrue(TEXT("Dropping over the plate succeeds"),
+		Inventory->TryDropAtTransform(FTransform(FVector(0.0f, 0.0f, 40.0f))).IsSuccess());
+	TestTrue(
+		TEXT("World collision opt-in enables pickupable overlap generation"),
+		Pickupable->WorldCollision->GetGenerateOverlapEvents());
+	TestTrue(
+		TEXT("Dropped pickupable becomes the physical plate occupant without a manual refresh"),
+		Plate->GetCurrentOccupant() == Pickupable);
+	TestTrue(
+		TEXT("Pickupable overlap activates the pressure plate output"),
+		Plate->IsSwitchActive());
 
 	return true;
 }

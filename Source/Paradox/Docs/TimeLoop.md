@@ -249,6 +249,12 @@ repathing away from it. If the final cell is still reserved when the clone reach
 the follower hands the conflict to `RedirectOnCompletion`; if the other clone has moved away first,
 the original destination completes normally.
 
+The same transient validation tolerance is always applied to replayed Drop approach paths. A Drop
+cannot redirect to another approach cell because its semantic target must retain the recorded
+ordinary predecessor; `RejectOccupied` remains authoritative at the approach destination. When an
+`InvalidStart` recovery creates a fresh exact path, it retains this tolerance instead of becoming
+stale as soon as the clone publishes a new traffic reservation.
+
 The loop also owns each temporal avatar's GridWorld presence. Deactivating the player or destroying
 a runtime clone releases its traffic corridor/parking record and disables its non-reservation
 occupancy. Player activation teleports first and then republishes occupancy at the selected Chrono

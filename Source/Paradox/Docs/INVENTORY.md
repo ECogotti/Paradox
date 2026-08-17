@@ -33,7 +33,7 @@ Create an Actor Blueprint with `AParadoxPickupableActor` as parent, then configu
 
 - `UParadoxSelectableComponent` and `UParadoxInteractionComponent`;
 - a `USmartObjectComponent` using `/Game/Data/Inventory/DA_ParadoxPickupableSmartObject`;
-- a one-cell, non-blocking `UGridNavigationOccupancyComponent` that contributes path cost;
+- a one-cell `UGridNavigationOccupancyComponent` used as the shared navigation-bounds authoring volume;
 - a `UWorldStateParticipantComponent` for existence and transform restoration;
 - the Pickup and Swap catalog entries backed by
   `/Game/Data/GameplayActions/DA_ParadoxPickupInteraction` and
@@ -41,13 +41,15 @@ Create an Actor Blueprint with `AParadoxPickupableActor` as parent, then configu
 
 The standard Smart Object has four cardinal slots at 100 cm. A Blueprint intended for another cell
 size or footprint should assign a replacement Smart Object Definition and occupancy bounds. The
-native occupancy is enabled only while the item is in the world, has `bBlocksWhenConsidered=false`,
-is not a reservation, and always has a positive `AdditionalCost`. A GridWorld query using the
-`AddCost` occupancy policy therefore pays that cost; `Ignore` ignores it, while `Block` still does
-not make the pickupable cell impassable.
+native occupancy publishes runtime cells only when **Enable Navigation Blocking** is active and the
+item is in the world. A default traversable pickupable publishes no occupancy owner at all. This is
+required because GridWorld's `Reserved Corridor` policy treats every active non-reservation
+occupancy owner as a live agent even when `bBlocksWhenConsidered=false`; leaving a Key Card active
+would therefore produce a valid preview but make execution wait and repeatedly repath around a
+stationary occupant.
 
-Pickupables are intentionally non-physical and non-blocking. While the item is in `World` state,
-the inherited `PickupableMesh` uses query-only collision, ignores every channel except
+Pickupables default to non-physical and non-blocking. While the item is in `World` state,
+the inherited `PickupableMesh` normally uses query-only collision, ignores every channel except
 `Visibility`, and blocks `Visibility` solely so the shared cursor trace can resolve hover and
 selection. It still ignores Pawns, emits no overlaps, has physics/gravity disabled, and uses
 `CanEverAffectNavigation=false`, so it neither carves Unreal navigation nor prevents traversal.
@@ -59,11 +61,35 @@ still ignores Pawns, emits no overlaps, has no physics, and cannot affect naviga
 selection-owned query state, including after Drop. The Static Mesh asset
 must provide query geometry compatible with the controller's complex Visibility trace; for simple
 authored collision, set Collision Complexity to `Use Simple Collision As Complex`. Do not use
-pickupable collision or overlap events for gameplay.
+pickupable collision or overlap events for gameplay unless the Actor explicitly opts into authored
+world collision as described below.
 
-World state enables the Visibility selection query, logical occupancy, selection state and
-interaction state. Held and Inserted states clear selection, disable Actor/component collision and
-those capabilities, and Held hides the Actor by default. The native transition
+Two Actor properties under `Paradox | Inventory | World Presence` opt into authored physical
+presence without changing existing assets:
+
+- **Enable Authored World Collision** defaults to disabled. When enabled, each primitive's initial
+  Collision Enabled mode and channel responses are respected while the item is in `World` state.
+  Query-capable authored primitives automatically enable overlap events, so a dropped item can drive
+  overlap-based gameplay such as `APressurePlate`. Collision and overlaps are disabled again while
+  Held and restored after Drop/reset. Insertable subclasses can configure the same behavior
+  independently for their `Inserted` state.
+- **Enable Navigation Blocking** defaults to disabled. When enabled, world primitives set
+  `Can Ever Affect Navigation=true` and the inherited `GridNavigationModifierComponent` blocks the
+  GridWorld cells covered by `OccupancyComponent`. The modifier mirrors that component's transform
+  and `BoxExtent`, so `OccupancyComponent` remains the single authoring volume. Changing the flag or
+  its bounds refreshes the GridWorld overlay in editor; picking up the item restores those cells and
+  dropping it removes them again. This is the same runtime topology mechanism used by
+  `AParadoxVerticalBarrier`, independent of the movement query filter's occupancy policy.
+
+These base options apply only while the item is available in the world. Held and restore-pending
+items still disable Actor/component collision, Unreal navigation relevance and active GridWorld
+occupancy/modifier blocking. Insertable subclasses expose separate, default-off collision and
+navigation options for their `Inserted` state.
+
+World state enables the Visibility selection query, selection state and interaction state. Logical
+occupancy is enabled only for navigation-blocking pickupables. Held and Inserted states clear
+selection and interaction; their physical presence follows the state-specific flags, while Held
+always disables it and hides the Actor by default. The native transition
 remains authoritative; `On Picked Up`, `On Dropped`, and `On Returned To Initial State` are optional
 presentation hooks. A Blueprint may show or attach the item from `On Picked Up` without replacing
 ownership logic. Visibility authored before the first pickup is restored on Drop/reset; the native
@@ -160,8 +186,11 @@ transient Actor is presentation-only and never participates in Drop authority or
 and exact `InjectedPath`. `UParadoxDropAction` moves only to the recorded approach cell using
 `UGridMoveToCellExecution`, `RejectOccupied`, and `RecalculateToOriginalGoal`; it drops immediately
 when already on that approach cell. Replay first attempts the recorded path and may use GridWorld's
-normal fallback only toward the same recorded approach cell. It never recalculates toward the Drop
-cell and never chooses another neighbor. At arrival the action revalidates the same item, exact
+normal fallback only toward the same recorded approach cell. The clone runtime copy tolerates
+transient dynamic-agent traffic revisions while preserving that exact approach, including after an
+`InvalidStart` recovery; static topology and ordinary occupancy validation remain strict. It never
+recalculates toward the Drop cell and never chooses another neighbor. At arrival the action
+revalidates the same item, exact
 selected cell, current adjacency and availability. A newly occupied Drop cell fails without
 retargeting. Pause, resume, cancel, interruption, time-loop abort, and teardown propagate to the
 movement executor; stale completions are ignored.

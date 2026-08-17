@@ -35,10 +35,36 @@ protected:
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
 	virtual void PrepareExternalOwnershipForWorldStateRestore() override;
 	virtual bool RestoreExternalOwnershipAfterWorldState() override;
+	virtual bool ShouldUseAuthoredCollisionForCurrentState() const override;
+	virtual bool ShouldUseAuthoredNavigationForCurrentState() const override;
+	virtual bool ShouldPreserveAuthoredCollisionConfiguration() const override;
+	virtual bool ShouldPreserveAuthoredNavigationConfiguration() const override;
 
 	/** Static semantic traits evaluated by the accepting Slot's Gameplay Tag Query. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Item Slot|Compatibility")
 	FGameplayTagContainer InsertableTraits;
+
+	/**
+	 * Restores the pickupable's authored primitive collision while it is inserted.
+	 * Disabled by default; Held and restore-pending states always remain collisionless.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox|Item Slot|Inserted Presence",
+		meta = (DisplayName = "Enable Authored Collision While Inserted"))
+	bool bUseAuthoredInsertedCollision = false;
+
+	/**
+	 * Enables navigation relevance, occupancy publication, and GridWorld cell blocking while inserted.
+	 * The modifier continues to mirror the inherited OccupancyComponent bounds.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox|Item Slot|Inserted Presence",
+		meta = (DisplayName = "Enable Navigation Blocking While Inserted"))
+	bool bUseAuthoredInsertedNavigationInfluence = false;
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Item Slot|Presentation", meta = (DisplayName = "On Inserted Into Slot"))
 	void ReceiveInsertedIntoSlot(AParadoxItemSlotActor* NewSlot);

@@ -2,6 +2,7 @@
 
 #include "Actions/GameplayActionDefinition.h"
 #include "Characters/ParadoxCharacter.h"
+#include "Components/GridNavigationModifierComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
@@ -15,6 +16,7 @@
 #include "Interaction/ParadoxSelectionComponent.h"
 #include "Inventory/ParadoxPickupableAction.h"
 #include "Paradox.h"
+#include "Puzzles/PressurePlate.h"
 #include "SmartObjectComponent.h"
 #include "SmartObjectDefinition.h"
 #include "Subsystems/WorldStateSubsystem.h"
@@ -47,6 +49,15 @@ AParadoxPickupableActor::AParadoxPickupableActor()
 	OccupancyComponent->bBlocksWhenConsidered = false;
 	OccupancyComponent->AdditionalCost = 1000;
 	OccupancyComponent->bIsReservation = false;
+	OccupancyComponent->bAutoActivate = false;
+	GridNavigationModifierComponent = CreateDefaultSubobject<UGridNavigationModifierComponent>(
+		TEXT("GridNavigationModifierComponent"));
+	GridNavigationModifierComponent->SetupAttachment(SceneRoot);
+	GridNavigationModifierComponent->SetMobility(EComponentMobility::Movable);
+	GridNavigationModifierComponent->BoxExtent = OccupancyComponent->BoxExtent;
+	GridNavigationModifierComponent->SetRelativeTransform(OccupancyComponent->GetRelativeTransform());
+	GridNavigationModifierComponent->bBlockCells = false;
+	GridNavigationModifierComponent->bAutoActivate = true;
 	WorldStateParticipantComponent = CreateDefaultSubobject<UWorldStateParticipantComponent>(TEXT("WorldStateParticipantComponent"));
 	WorldStateParticipantComponent->bCaptureExistence = true;
 	WorldStateParticipantComponent->bCaptureActorTransform = true;
@@ -85,6 +96,14 @@ void AParadoxPickupableActor::OnConstruction(const FTransform& Transform)
 	Super::OnConstruction(Transform);
 	EnforceNonBlockingPresence();
 }
+
+#if WITH_EDITOR
+void AParadoxPickupableActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	EnforceNonBlockingPresence();
+}
+#endif
 
 TArray<UParadoxPickupableAction*> AParadoxPickupableActor::GetPickupableActions() const
 {
@@ -135,8 +154,8 @@ void AParadoxPickupableActor::NotifyPickupableActionsChanged()
 void AParadoxPickupableActor::BeginPlay()
 {
 	Super::BeginPlay();
-	EnforceNonBlockingPresence();
 	CaptureInitialWorldPresentation();
+	EnforceNonBlockingPresence();
 	if (UWorldStateSubsystem* WorldState = GetWorld() ? GetWorld()->GetSubsystem<UWorldStateSubsystem>() : nullptr)
 	{
 		WorldState->OnRestoreStartedNative().AddUObject(this, &ThisClass::HandleWorldStateRestoreStarted);
@@ -166,20 +185,89 @@ void AParadoxPickupableActor::CaptureInitialWorldPresentation()
 	bInitialSelectableCanSelect = SelectableComponent ? SelectableComponent->bCanBeSelected : true;
 	bInitialSmartObjectEnabled = SmartObjectComponent ? SmartObjectComponent->IsSmartObjectEnabled() : true;
 	bInitialOccupancyEnabled = OccupancyComponent ? OccupancyComponent->IsActive() : true;
+	if (!bInitialPrimitivePresenceCaptured)
+	{
+		CaptureInitialPrimitivePresence();
+	}
 	bInitialPresentationCaptured = true;
+}
+
+void AParadoxPickupableActor::CaptureInitialPrimitivePresence()
+{
+	bInitialActorCollisionEnabled = GetActorEnableCollision();
+	InitialPrimitivePresenceStates.Reset();
+	TArray<UPrimitiveComponent*> Primitives;
+	GetComponents(Primitives);
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		if (!IsValid(Primitive))
+		{
+			continue;
+		}
+		FInitialPrimitivePresenceState& PrimitiveState =
+			InitialPrimitivePresenceStates.Add(Primitive);
+		PrimitiveState.CollisionEnabled = Primitive->GetCollisionEnabled();
+		PrimitiveState.CollisionResponses = Primitive->GetCollisionResponseToChannels();
+	}
+	bInitialPrimitivePresenceCaptured = true;
+}
+
+bool AParadoxPickupableActor::ShouldUseAuthoredCollisionForCurrentState() const
+{
+	return PickupableState == EParadoxPickupableState::World
+		&& bUseAuthoredWorldCollision;
+}
+
+bool AParadoxPickupableActor::ShouldUseAuthoredNavigationForCurrentState() const
+{
+	return PickupableState == EParadoxPickupableState::World
+		&& bUseAuthoredNavigationInfluence;
+}
+
+bool AParadoxPickupableActor::ShouldPreserveAuthoredCollisionConfiguration() const
+{
+	return bUseAuthoredWorldCollision;
+}
+
+bool AParadoxPickupableActor::ShouldPreserveAuthoredNavigationConfiguration() const
+{
+	return bUseAuthoredNavigationInfluence;
 }
 
 void AParadoxPickupableActor::EnforceNonBlockingPresence()
 {
-	const bool bEnableSelectionQuery = PickupableState == EParadoxPickupableState::World;
-	SetActorEnableCollision(bEnableSelectionQuery);
+	const bool bIsAvailableInWorld = PickupableState == EParadoxPickupableState::World;
+	const bool bUseAuthoredCollision = ShouldUseAuthoredCollisionForCurrentState();
+	const bool bUseAuthoredNavigation = ShouldUseAuthoredNavigationForCurrentState();
+	if (!bInitialPrimitivePresenceCaptured
+		&& ShouldPreserveAuthoredCollisionConfiguration())
+	{
+		CaptureInitialPrimitivePresence();
+	}
+	if (bUseAuthoredCollision)
+	{
+		if (bInitialPrimitivePresenceCaptured)
+		{
+			SetActorEnableCollision(bInitialActorCollisionEnabled);
+		}
+	}
+	else
+	{
+		SetActorEnableCollision(bIsAvailableInWorld);
+	}
 
-	if (OccupancyComponent)
+	if (OccupancyComponent && !ShouldPreserveAuthoredNavigationConfiguration())
 	{
 		// Pickupables may influence path scoring, but never make a cell impassable or reserved.
 		OccupancyComponent->bBlocksWhenConsidered = false;
 		OccupancyComponent->AdditionalCost = FMath::Max(1, OccupancyComponent->AdditionalCost);
 		OccupancyComponent->bIsReservation = false;
+	}
+	if (OccupancyComponent)
+	{
+		const bool bShouldPublishOccupancy = bUseAuthoredNavigation
+			&& (!bInitialPresentationCaptured || bInitialOccupancyEnabled);
+		OccupancyComponent->SetOccupancyEnabled(bShouldPublishOccupancy);
 	}
 
 	TArray<UPrimitiveComponent*> Primitives;
@@ -192,8 +280,6 @@ void AParadoxPickupableActor::EnforceNonBlockingPresence()
 		}
 		Primitive->SetSimulatePhysics(false);
 		Primitive->SetEnableGravity(false);
-		Primitive->SetGenerateOverlapEvents(false);
-		Primitive->SetCanEverAffectNavigation(false);
 
 		if (SelectableComponent
 			&& Primitive == SelectableComponent->GetInteractionWidget())
@@ -201,11 +287,34 @@ void AParadoxPickupableActor::EnforceNonBlockingPresence()
 			// Selection owns this query-only UI surface. It switches between the UI
 			// profile while shown and NoCollision while hidden. Preserve that state
 			// so pickupable normalization cannot disable world-widget hover.
+			Primitive->SetGenerateOverlapEvents(false);
+			Primitive->SetCanEverAffectNavigation(false);
 			continue;
 		}
 
+		const FInitialPrimitivePresenceState* InitialState =
+			bInitialPresentationCaptured
+				? InitialPrimitivePresenceStates.Find(Primitive)
+				: nullptr;
+		Primitive->SetCanEverAffectNavigation(
+			bUseAuthoredNavigation);
+
+		if (bUseAuthoredCollision)
+		{
+			if (InitialState)
+			{
+				Primitive->SetCollisionEnabled(InitialState->CollisionEnabled);
+				Primitive->SetCollisionResponseToChannels(
+					InitialState->CollisionResponses);
+				Primitive->SetGenerateOverlapEvents(
+					CollisionEnabledHasQuery(InitialState->CollisionEnabled));
+			}
+			continue;
+		}
+
+		Primitive->SetGenerateOverlapEvents(false);
 		Primitive->SetCollisionResponseToAllChannels(ECR_Ignore);
-		if (bEnableSelectionQuery && Primitive == PickupableMesh.Get())
+		if (bIsAvailableInWorld && Primitive == PickupableMesh.Get())
 		{
 			// World pickupables remain non-blocking but must be hittable by the shared
 			// cursor Visibility query that owns hover and selection.
@@ -217,6 +326,89 @@ void AParadoxPickupableActor::EnforceNonBlockingPresence()
 			Primitive->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		}
 	}
+
+	SynchronizeNavigationModifierBounds();
+	if (GridNavigationModifierComponent)
+	{
+		GridNavigationModifierComponent->SetBlockingEnabled(
+			bUseAuthoredNavigation);
+	}
+}
+
+void AParadoxPickupableActor::SynchronizeNavigationModifierBounds()
+{
+	if (!OccupancyComponent || !GridNavigationModifierComponent)
+	{
+		return;
+	}
+
+	bool bBoundsChanged = false;
+	const FTransform OccupancyRelativeTransform = OccupancyComponent->GetRelativeTransform();
+	if (!GridNavigationModifierComponent->GetRelativeTransform().Equals(OccupancyRelativeTransform))
+	{
+		GridNavigationModifierComponent->SetRelativeTransform(OccupancyRelativeTransform);
+		bBoundsChanged = true;
+	}
+	const FVector OccupancyExtent = OccupancyComponent->BoxExtent.GetAbs();
+	if (!GridNavigationModifierComponent->BoxExtent.Equals(OccupancyExtent))
+	{
+		GridNavigationModifierComponent->BoxExtent = OccupancyExtent;
+		bBoundsChanged = true;
+	}
+	if (bBoundsChanged)
+	{
+		GridNavigationModifierComponent->RefreshModifier();
+	}
+}
+
+void AParadoxPickupableActor::RefreshConfiguredCollisionOverlaps()
+{
+	if (!ShouldUseAuthoredCollisionForCurrentState())
+	{
+		return;
+	}
+
+	TArray<UPrimitiveComponent*> Primitives;
+	GetComponents(Primitives);
+	TSet<APressurePlate*> OverlappingPressurePlates;
+	for (UPrimitiveComponent* Primitive : Primitives)
+	{
+		if (IsValid(Primitive)
+			&& Primitive->GetGenerateOverlapEvents()
+			&& CollisionEnabledHasQuery(Primitive->GetCollisionEnabled()))
+		{
+			Primitive->UpdateOverlaps(nullptr, true);
+			TArray<UPrimitiveComponent*> OverlappingComponents;
+			Primitive->GetOverlappingComponents(OverlappingComponents);
+			for (UPrimitiveComponent* OtherComponent : OverlappingComponents)
+			{
+				if (IsValid(OtherComponent))
+				{
+					if (APressurePlate* PressurePlate = Cast<APressurePlate>(OtherComponent->GetOwner()))
+					{
+						OverlappingPressurePlates.Add(PressurePlate);
+					}
+				}
+			}
+		}
+	}
+
+	// Enabling query collision after a teleport can populate Unreal's overlap cache without
+	// producing a BeginOverlap edge. Pressure Plates expose an explicit authoritative resync for
+	// exactly this case, so reconcile every physically overlapping plate once after final Drop.
+	for (APressurePlate* PressurePlate : OverlappingPressurePlates)
+	{
+		if (IsValid(PressurePlate))
+		{
+			PressurePlate->RefreshOccupantFromVolume();
+		}
+	}
+}
+
+void AParadoxPickupableActor::RefreshPresenceAfterPlacement()
+{
+	EnforceNonBlockingPresence();
+	RefreshConfiguredCollisionOverlaps();
 }
 
 void AParadoxPickupableActor::ApplyHeldWorldPresence()
@@ -263,10 +455,6 @@ void AParadoxPickupableActor::RestoreWorldPresence()
 	if (SmartObjectComponent)
 	{
 		SmartObjectComponent->K2_SetSmartObjectEnabled(bInitialSmartObjectEnabled);
-	}
-	if (OccupancyComponent)
-	{
-		OccupancyComponent->SetOccupancyEnabled(bInitialOccupancyEnabled);
 	}
 	EnforceNonBlockingPresence();
 }
@@ -335,6 +523,7 @@ void AParadoxPickupableActor::SetWorldStateNative(
 		ReceiveDropped(PreviousHolder);
 	}
 	EnforceNonBlockingPresence();
+	RefreshConfiguredCollisionOverlaps();
 	LogDebugState(TEXT("World"));
 }
 
@@ -372,6 +561,7 @@ void AParadoxPickupableActor::FinishWorldStateRestore(const bool bRestoreSucceed
 		ReceiveReturnedToInitialState();
 	}
 	EnforceNonBlockingPresence();
+	RefreshConfiguredCollisionOverlaps();
 	LogDebugState(bRestoreSucceeded ? TEXT("RestoreCompleted") : TEXT("RestoreFailed"));
 }
 

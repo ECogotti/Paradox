@@ -129,13 +129,15 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 	}
 
 	FParadoxCloneReplayGridMoveOverrides Overrides;
-	const bool bPreserveExactPathAcrossDynamicAgents =
-		bIsGridMoveDefinition
-		&& bOverrideGoalContentionPolicy
-		&& GoalContentionPolicyOverride
-			== EGridGoalContentionPolicy::RedirectOnCompletion;
+	const bool bAllowDynamicAgentConflictsDuringReplayValidation =
+		RecordedPath->bAllowDynamicAgentConflictsDuringValidation
+		|| bIsDropDefinition
+		|| (bIsGridMoveDefinition
+			&& bOverrideGoalContentionPolicy
+			&& GoalContentionPolicyOverride
+				== EGridGoalContentionPolicy::RedirectOnCompletion);
 	FGridInjectedPathValidationResult RestampResult;
-	if (bPreserveExactPathAcrossDynamicAgents)
+	if (bAllowDynamicAgentConflictsDuringReplayValidation)
 	{
 		AGridNavigationData* NavigationData = GridWorld->GetNavigationData();
 		if (NavigationData == nullptr)
@@ -274,7 +276,7 @@ UParadoxCloneReplayExecutionStrategy::SubmitPreparedRequest(
 			RecordedPath->InvalidationPolicy,
 			RecordedPath->SourcePreviewId,
 			Overrides.InjectedPath,
-			RecordedPath->bAllowDynamicAgentConflictsDuringValidation);
+			bAllowDynamicAgentConflictsDuringReplayValidation);
 		if (!RestampResult.bIsValid)
 		{
 			return UE::Paradox::CloneReplay::Private::RejectRequest(

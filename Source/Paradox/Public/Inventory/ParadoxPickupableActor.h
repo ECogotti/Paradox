@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Engine/EngineTypes.h"
 #include "GameFramework/Actor.h"
 #include "Inventory/ParadoxInventoryTypes.h"
 #include "ParadoxPickupableActor.generated.h"
@@ -8,12 +9,14 @@
 class AParadoxCharacter;
 class AParadoxItemSlotActor;
 class AParadoxPickupableActor;
+class UGridNavigationModifierComponent;
 class UGridNavigationOccupancyComponent;
 class UParadoxInteractionComponent;
 class UParadoxInventoryComponent;
 class UParadoxDropAction;
 class UParadoxPickupableAction;
 class UParadoxPickupablePassiveEffect;
+class UPrimitiveComponent;
 class UParadoxSelectableComponent;
 class USceneComponent;
 class USmartObjectComponent;
@@ -90,6 +93,12 @@ public:
 	UGridNavigationOccupancyComponent* GetOccupancyComponent() const { return OccupancyComponent.Get(); }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UGridNavigationModifierComponent* GetGridNavigationModifierComponent() const
+	{
+		return GridNavigationModifierComponent.Get();
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
 	UWorldStateParticipantComponent* GetWorldStateParticipantComponent() const
 	{
 		return WorldStateParticipantComponent.Get();
@@ -103,6 +112,9 @@ protected:
 	virtual void OnConstruction(const FTransform& Transform) override;
 	virtual void BeginPlay() override;
 	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
 
 	/** Applies the shared non-world capability policy without forcing held-item visibility. */
 	void SetExternallyOwnedStateNative(EParadoxPickupableState NewState, bool bHideActor);
@@ -112,6 +124,15 @@ protected:
 
 	/** Rebuilds specialized ownership after World State properties restore. */
 	virtual bool RestoreExternalOwnershipAfterWorldState();
+
+	/** State-aware presence policies extended by insertable pickupables. */
+	virtual bool ShouldUseAuthoredCollisionForCurrentState() const;
+	virtual bool ShouldUseAuthoredNavigationForCurrentState() const;
+	virtual bool ShouldPreserveAuthoredCollisionConfiguration() const;
+	virtual bool ShouldPreserveAuthoredNavigationConfiguration() const;
+
+	/** Reapplies configured presence after a specialized owner changes the Actor transform. */
+	void RefreshPresenceAfterPlacement();
 
 	/** Default native presentation hides held Actors; designers may opt out and attach/show in the hook. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Inventory|Presentation")
@@ -128,6 +149,32 @@ protected:
 	/** Offset from the selected GridWorld floor center used for ordinary Drop placement. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Inventory|Placement")
 	FVector DropPlacementOffset = FVector::ZeroVector;
+
+	/**
+	 * Restores primitive collision authored on the Actor while the item is available in the world
+	 * and enables overlap events on every query-capable authored primitive.
+	 * Disabled by default: only the PickupableMesh Visibility selection query remains enabled.
+	 * Held and externally owned items always disable collision regardless of this option.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox|Inventory|World Presence",
+		meta = (DisplayName = "Enable Authored World Collision"))
+	bool bUseAuthoredWorldCollision = false;
+
+	/**
+	 * Enables navigation relevance and a GridWorld blocking modifier while this item is in World state.
+	 * The modifier mirrors the inherited OccupancyComponent bounds and refreshes the GridWorld overlay
+	 * immediately in editor and at runtime. Disabled by default for compatibility with existing items.
+	 * Held and externally owned items never block navigation.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox|Inventory|World Presence",
+		meta = (DisplayName = "Enable Navigation Blocking"))
+	bool bUseAuthoredNavigationInfluence = false;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Instanced, Category = "Paradox|Inventory|Passive Effects")
 	TArray<TObjectPtr<UParadoxPickupablePassiveEffect>> PassiveEffects;
@@ -149,8 +196,17 @@ protected:
 	void ReceiveReturnedToInitialState();
 
 private:
+	struct FInitialPrimitivePresenceState
+	{
+		ECollisionEnabled::Type CollisionEnabled = ECollisionEnabled::NoCollision;
+		FCollisionResponseContainer CollisionResponses;
+	};
+
 	void CaptureInitialWorldPresentation();
+	void CaptureInitialPrimitivePresence();
 	void EnforceNonBlockingPresence();
+	void SynchronizeNavigationModifierBounds();
+	void RefreshConfiguredCollisionOverlaps();
 	void ApplyUnavailableWorldPresence(bool bHideActor);
 	void ApplyHeldWorldPresence();
 	void RestoreWorldPresence();
@@ -182,6 +238,10 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UGridNavigationOccupancyComponent> OccupancyComponent;
 
+	/** Authoritative GridWorld topology blocker. Its bounds mirror OccupancyComponent. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UGridNavigationModifierComponent> GridNavigationModifierComponent;
+
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UWorldStateParticipantComponent> WorldStateParticipantComponent;
 
@@ -196,7 +256,11 @@ private:
 	bool bInitialSelectableCanSelect = true;
 	bool bInitialSmartObjectEnabled = true;
 	bool bInitialOccupancyEnabled = true;
+	bool bInitialActorCollisionEnabled = true;
+	bool bInitialPrimitivePresenceCaptured = false;
 	bool bInitialPresentationCaptured = false;
+	TMap<TWeakObjectPtr<UPrimitiveComponent>, FInitialPrimitivePresenceState>
+		InitialPrimitivePresenceStates;
 
 	friend class UParadoxInventoryComponent;
 	friend class UParadoxDropAction;

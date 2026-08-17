@@ -4,7 +4,7 @@
 
 ## Paradox Outline
 
-`Paradox Outline` is a native Material Editor node for post-process silhouettes. It samples Custom Depth and Custom Stencil around the current pixel, classifies stencil values into semantic Puzzle Input, Puzzle Output, Hover, and Selection ranges, and exposes independent masks plus a convenience color output.
+`Paradox Outline` is a native Material Editor node for post-process highlighting. It samples Custom Depth and Custom Stencil around the current pixel, classifies stencil values into semantic Puzzle Input, Puzzle Output, Hover, and Selection ranges, and exposes independent masks plus a convenience color output. Hover and Selection remain outline-only; Puzzle Input and Puzzle Output include both the cable boundary and its interior fill.
 
 The default semantic ranges are:
 
@@ -40,7 +40,7 @@ The masks can also be connected directly to Emissive while debugging:
 
 - `HoverMask` shows only Hover outlines.
 - `SelectionMask` shows only Selection outlines.
-- `PuzzleInputMask` and `PuzzleOutputMask` show the wire categories.
+- `PuzzleInputMask` and `PuzzleOutputMask` show the outlined and filled wire categories.
 - `CombinedMask` shows the union of all four categories.
 
 ## Inputs
@@ -83,7 +83,7 @@ Selection; `Puzzle Wire Occlusion Mode` controls Puzzle Input and Puzzle Output.
 
 Hover and Selection default to `Visible Only`. Puzzle wires default to `Occluded Only`: their
 ordinary surface material remains visible whenever the wire itself is visible, while the post
-process outline appears only through an opaque occluding mesh. An occluder must write Scene Depth;
+process color covers both their boundary and interior only through an opaque occluding mesh. An occluder must write Scene Depth;
 translucent materials that do not write depth cannot hide/activate the wire outline.
 
 ## Internal depth edges
@@ -104,16 +104,18 @@ Name the connected Vector Parameter something project-specific, for example `Par
 | --- | --- |
 | `HoverMask` | Hover silhouette mask after Selection priority is applied. |
 | `SelectionMask` | Selection silhouette mask. |
-| `CombinedMask` | Saturated maximum of the final Puzzle Input, Puzzle Output, Hover, and Selection masks. |
-| `OutlineColor` | Sum of each category color multiplied by its final priority-filtered mask. |
-| `PuzzleInputMask` | Puzzle Input silhouette mask after higher-category priority is applied. |
-| `PuzzleOutputMask` | Puzzle Output silhouette mask after Selection/Hover priority is applied. |
+| `CombinedMask` | Saturated maximum of outline-only Hover/Selection and outlined-and-filled Puzzle Input/Output masks. |
+| `OutlineColor` | Sum of each category color multiplied by its final priority-filtered mask; cable colors include their interior. |
+| `PuzzleInputMask` | Puzzle Input boundary and interior fill after higher-category priority is applied. |
+| `PuzzleOutputMask` | Puzzle Output boundary and interior fill after Selection/Hover priority is applied. |
 
 `CombinedMask` and `OutlineColor` include all four categories. Priority is Selection, Hover, Puzzle Output, then Puzzle Input, so ambiguous pixels do not mix category colors.
 
 ## Sampling and performance
 
 The node uses a fixed 8-direction ring: four cardinal and four diagonal samples. The ring radius is `Thickness` multiplied by inverse viewport size, which keeps thickness approximately stable in screen-space pixels across viewport resolutions and screen percentages.
+
+Puzzle wire filling reuses the already sampled current Custom Depth/Stencil pixel and adds no scene-texture reads. Hover and Selection do not use this fill path.
 
 Per connected output evaluation:
 
@@ -146,7 +148,8 @@ For a quick `OutlineColor` check, connect it directly to Emissive Color. The bac
 
 `Paradox.MaterialExpressions.Outline.Contract` verifies node creation, preservation of all 21
 inputs and 6 outputs, append-only occlusion enum values, independent defaults, visible/occluded
-depth semantics, all range bounds, same-category ID classification, four-category priority, and
+depth semantics, cable interior filling, outline-only Hover/Selection behavior, all range bounds,
+same-category ID classification, four-category priority, and
 Post Process domain restrictions.
 
 Visual validation should still cover Static and Skeletal Meshes, occluded and visible objects, thickness values `1`, `2`, and `4`, softness, multiple viewport sizes, Material save/reopen, and the target platforms used by the project.

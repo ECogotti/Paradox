@@ -55,9 +55,9 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `State_ItemSlot_Removable` | `PerceptionKnowledge.State.Paradox.ItemSlot.Removable` |
 | `Puzzle_Signal_ItemSlotSatisfied` | `Puzzle.Signal.Paradox.ItemSlot.Satisfied` |
 | `Item_Type_Battery` | `Item.Type.Battery` |
-| `Item_Battery_Voltage_12V` | `Item.Battery.Voltage.12V` |
-| `Item_Type_Key` | `Item.Type.Key` |
-| `Item_Access_Level_2` | `Item.Access.Level.2` |
+| `Item_Type_KeyCard_Red` | `Item.Type.KeyCard.Red` |
+| `Item_Type_KeyCard_Blue` | `Item.Type.KeyCard.Blue` |
+| `Item_Type_KeyCard_Green` | `Item.Type.KeyCard.Green` |
 | `State_Computer_Powered` | `PerceptionKnowledge.State.Paradox.Computer.Powered` |
 | `Test_State_Active` | `PerceptionKnowledge.State.Test.Paradox.Active` |
 | `Test_Event_Noise` | `PerceptionKnowledge.Event.Test.Paradox.Noise` |
@@ -86,6 +86,10 @@ The shared private interaction fixtures declare `ParadoxInteractionTestTags::Pri
 `Interaction.Test.Catalog.Primary`, `Interaction.Test.Catalog.Secondary`, and
 `Interaction.Test.Catalog.Rejected` only in development automation builds. Test vocabulary is not
 part of the public runtime API.
+
+The Item Slot automation fixtures likewise keep their item vocabulary private to
+`ParadoxItemSlotTests.cpp`, under `Interaction.Test.ItemSlot.Trait.*`. These tags exercise
+compatibility and right-item matching without coupling the tests to production item taxonomy.
 
 ## PuzzleSystem plugin
 

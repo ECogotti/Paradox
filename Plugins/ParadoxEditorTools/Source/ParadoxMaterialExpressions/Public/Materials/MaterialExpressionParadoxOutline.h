@@ -21,8 +21,8 @@ enum class EParadoxOutlineOcclusionMode : uint8
 };
 
 /**
- * Generates separate Hover and Selection post-process outline masks from
- * Custom Depth and semantic Custom Stencil ranges.
+ * Generates outline-only Hover and Selection masks plus outlined and filled
+ * Puzzle Input/Output wire masks from Custom Depth and semantic Custom Stencil ranges.
  */
 UCLASS(
     collapsecategories,

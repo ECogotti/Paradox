@@ -49,6 +49,21 @@ protected:
 	virtual void ExecuteInteraction_Implementation() override;
 };
 
+/** Simulates a concrete action whose successful mutation removes its own affordance. */
+UCLASS()
+class UParadoxInteractionTestOutcomeMutationAction final
+	: public UParadoxInteractionActionBase
+{
+	GENERATED_BODY()
+
+protected:
+	virtual bool IsInteractionOutcomeSatisfied_Implementation() const override;
+	virtual void ExecuteInteraction_Implementation() override;
+
+private:
+	bool bOutcomeSatisfied = false;
+};
+
 /** Captures the public interaction context while Gameplay Actions is still running preflight. */
 UCLASS()
 class UParadoxInteractionTestPreflightContextAction final

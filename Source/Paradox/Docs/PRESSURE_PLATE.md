@@ -194,5 +194,12 @@ Property Bag fields, a missing direct Smart Object component, or a non-empty cat
 Smart Object Definition.
 If the plate does not
 activate, first check the volume's collision responses, the candidate Actor's **Actor → Tags**, and any
-Blueprint `CanOccupantActivatePlate` override. Optional sound and Niagara assets may remain unset;
+Blueprint `CanOccupantActivatePlate` override. For an `AParadoxPickupableActor`, enable **Enable
+Authored World Collision** and use a query-capable collision mode/response on its authored primitive;
+the pickupable then enables overlap generation automatically while it is in the World state and
+explicitly refreshes overlaps after Drop, once the final transform and Blueprint `On Dropped` hook
+have been applied. Because Unreal may populate a re-enabled collider's overlap cache without a new
+`BeginOverlap` edge after teleportation, the pickupable also asks every physically overlapping
+`APressurePlate` to reconcile that authoritative cache once.
+Optional sound and Niagara assets may remain unset;
 occupancy and signal publication still work.

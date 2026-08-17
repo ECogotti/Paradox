@@ -12,6 +12,76 @@
 #include "Misc/DataValidation.h"
 #include "Paradox.h"
 
+#if WITH_EDITOR
+#include "Engine/BlueprintGeneratedClass.h"
+#include "Engine/SCS_Node.h"
+#include "Engine/SimpleConstructionScript.h"
+
+namespace UE::Paradox::Selection::Private
+{
+	template <typename TComponent>
+	void GatherDirectComponentValidationCandidates(
+		const AActor& OwnerActor,
+		TArray<const TComponent*>& OutComponents)
+	{
+		OutComponents.Reset();
+
+		TArray<TComponent*> InstancedComponents;
+		OwnerActor.GetComponents<TComponent>(InstancedComponents);
+		for (const TComponent* Component : InstancedComponents)
+		{
+			if (IsValid(Component) && Component->GetOwner() == &OwnerActor)
+			{
+				OutComponents.AddUnique(Component);
+			}
+		}
+
+		// Blueprint CDOs do not instantiate SCS components. Inspect their templates so Blueprint
+		// compilation validates the same authored components that the runtime Actor will create.
+		// Placed/runtime Actors already own the instantiated SCS components; adding the templates
+		// there would count every authored component twice.
+		if (OwnerActor.HasAnyFlags(RF_ClassDefaultObject))
+		{
+			for (const UClass* Class = OwnerActor.GetClass(); Class; Class = Class->GetSuperClass())
+			{
+				const UBlueprintGeneratedClass* BlueprintClass = Cast<UBlueprintGeneratedClass>(Class);
+				if (!BlueprintClass)
+				{
+					continue;
+				}
+
+				if (const USimpleConstructionScript* ConstructionScript =
+					BlueprintClass->SimpleConstructionScript)
+				{
+					for (const USCS_Node* Node : ConstructionScript->GetAllNodes())
+					{
+						if (const TComponent* Component = Node
+							? Cast<TComponent>(Node->ComponentTemplate.Get())
+							: nullptr)
+						{
+							OutComponents.AddUnique(Component);
+						}
+					}
+				}
+
+				for (const UActorComponent* Template : BlueprintClass->ComponentTemplates)
+				{
+					if (const TComponent* Component = Cast<TComponent>(Template))
+					{
+						OutComponents.AddUnique(Component);
+					}
+				}
+			}
+		}
+
+		OutComponents.Sort([](const TComponent& A, const TComponent& B)
+		{
+			return A.GetPathName() < B.GetPathName();
+		});
+	}
+}
+#endif
+
 UParadoxSelectableComponent::UParadoxSelectableComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
@@ -47,15 +117,13 @@ EDataValidationResult UParadoxSelectableComponent::IsDataValid(FDataValidationCo
 	{
 		return Result;
 	}
-	TArray<UBoxComponent*> WireTargets;
-	OwnerActor->GetComponents<UBoxComponent>(WireTargets);
-	WireTargets.RemoveAll([OwnerActor](const UBoxComponent* Box)
+	TArray<const UBoxComponent*> WireTargets;
+	UE::Paradox::Selection::Private::GatherDirectComponentValidationCandidates(
+		*OwnerActor,
+		WireTargets);
+	WireTargets.RemoveAll([](const UBoxComponent* Box)
 	{
-		return !IsValid(Box) || Box->GetOwner() != OwnerActor || !Box->ComponentHasTag(TEXT("WireTarget"));
-	});
-	WireTargets.Sort([](const UBoxComponent& A, const UBoxComponent& B)
-	{
-		return A.GetPathName() < B.GetPathName();
+		return !IsValid(Box) || !Box->ComponentHasTag(TEXT("WireTarget"));
 	});
 	if (WireTargets.Num() > 1)
 	{
@@ -86,7 +154,10 @@ EDataValidationResult UParadoxSelectableComponent::IsDataValid(FDataValidationCo
 	}
 
 	bool bHasVisualBounds = false;
-	TInlineComponentArray<UStaticMeshComponent*> StaticMeshes(OwnerActor);
+	TArray<const UStaticMeshComponent*> StaticMeshes;
+	UE::Paradox::Selection::Private::GatherDirectComponentValidationCandidates(
+		*OwnerActor,
+		StaticMeshes);
 	for (const UStaticMeshComponent* Mesh : StaticMeshes)
 	{
 		FVector LocalMin = FVector::ZeroVector;
@@ -95,7 +166,7 @@ EDataValidationResult UParadoxSelectableComponent::IsDataValid(FDataValidationCo
 		{
 			Mesh->GetLocalBounds(LocalMin, LocalMax);
 		}
-		if (IsValid(Mesh) && Mesh->GetOwner() == OwnerActor && Mesh->GetStaticMesh()
+		if (IsValid(Mesh) && Mesh->GetStaticMesh()
 			&& Mesh->IsVisible() && !Mesh->bHiddenInGame
 			&& (LocalMax.X - LocalMin.X) > KINDA_SMALL_NUMBER
 			&& (LocalMax.Y - LocalMin.Y) > KINDA_SMALL_NUMBER)
@@ -106,10 +177,13 @@ EDataValidationResult UParadoxSelectableComponent::IsDataValid(FDataValidationCo
 	}
 	if (!bHasVisualBounds)
 	{
-		TInlineComponentArray<USkeletalMeshComponent*> SkeletalMeshes(OwnerActor);
+		TArray<const USkeletalMeshComponent*> SkeletalMeshes;
+		UE::Paradox::Selection::Private::GatherDirectComponentValidationCandidates(
+			*OwnerActor,
+			SkeletalMeshes);
 		for (const USkeletalMeshComponent* Mesh : SkeletalMeshes)
 		{
-			if (IsValid(Mesh) && Mesh->GetOwner() == OwnerActor && Mesh->GetSkeletalMeshAsset()
+			if (IsValid(Mesh) && Mesh->GetSkeletalMeshAsset()
 				&& Mesh->IsVisible() && !Mesh->bHiddenInGame
 				&& Mesh->GetLocalBounds().BoxExtent.X > KINDA_SMALL_NUMBER
 				&& Mesh->GetLocalBounds().BoxExtent.Y > KINDA_SMALL_NUMBER)

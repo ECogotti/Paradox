@@ -29,10 +29,22 @@ semantic tags to `InsertableTraits`, for example `Item.Type.Battery` and
 
 When inserted, native code:
 
-- disables selection, interaction, Smart Object registration, and GridWorld occupancy;
+- disables selection, interaction, and Smart Object registration;
 - keeps the Actor visible and preserves its authored scale;
-- enforces the pickupable collisionless/no-navigation contract;
+- defaults to the pickupable collisionless/no-navigation contract;
 - attaches it to the slot's `InsertAnchor` with aligned location and rotation.
+
+Two independent properties under `Paradox | Item Slot | Inserted Presence` can opt an insertable
+back into physical presence while it remains attached:
+
+- **Enable Authored Collision While Inserted** restores the initial primitive collision modes and
+  channel responses, and enables overlaps for query-capable primitives.
+- **Enable Navigation Blocking While Inserted** enables navigation relevance and blocks the cells
+  covered by the inherited occupancy bounds through the same GridWorld navigation modifier used by
+  world-state pickupables.
+
+Both default to disabled. They are independent from the corresponding World-state properties, and
+Held/restore-pending items always disable both capabilities.
 
 `On Inserted Into Slot` and `On Removed From Slot` are presentation-only Blueprint hooks. They run
 after the authoritative relationship is coherent and must not implement ownership. Call
@@ -55,10 +67,23 @@ of those approach positions and is the exact attachment transform for the item. 
 Object Definition in a Blueprint when the level uses a different GridWorld cell size or approach
 layout.
 
-`AcceptedItemQuery` is evaluated against `InsertableTraits`; an empty query accepts every
-insertable. `bLockInsertedItem` prevents only ordinary pickup from the slot. Internal release,
+The Details panel exposes `AcceptedItemQuery` as **Allowed Item Query**. It is evaluated against
+`InsertableTraits`; an empty query accepts every insertable. This is the hard compatibility filter:
+if it fails, Insert returns `IncompatibleTraits` and neither Inventory nor Slot ownership changes.
+Use it for broad compatibility such as “key/card only” or “12 V battery only”.
+`bLockInsertedItem` prevents only ordinary pickup from the slot. Internal release,
 destruction cleanup, and WorldState restoration can always clear the relationship. For an authored
-occupied baseline, assign `InsertedItem` on the placed slot instance.
+occupied baseline, use **Initially Inserted Item** on the placed slot instance. Its Actor picker
+shows only `AParadoxInsertablePickupableActor` instances. Editor validation applies the same
+**Allowed Item Query** used by the Insert action and reports an incompatible selection; runtime also
+rejects invalid authored data safely.
+
+At first play, a valid authored item is assigned to the Slot without submitting a Gameplay Action or
+touching a Character inventory. Native initialization establishes both ownership references, snaps
+and attaches the item to `InsertAnchor`, applies its Inserted presence policy, and refreshes
+interaction, perception, Emitter output, and Receiver item permission. World State captures that
+relationship as part of the baseline and reconstructs the same attachment and puzzle state on every
+reset.
 
 `IsSlotActive` always combines the non-bypassable native requirement with
 `EvaluateAdditionalSlotActive` using logical AND. Override the Blueprint-native hook only for an
@@ -103,18 +128,40 @@ Occupied, Locked, and Removable. Compatibility is requester-relative and is deli
 published as world state.
 
 `AParadoxPuzzleItemSlotActor` additionally composes one `UPuzzleEmitterComponent` and one
-`UPuzzleReceiverComponent`. `bRequirePuzzleReceiverForActivation` defaults to false; when enabled,
-the receiver's effective active state becomes another mandatory native activity gate. The default
-output is:
+`UPuzzleReceiverComponent`. `PuzzleRole` selects the item-driven behavior: `Emitter`, `Receiver`,
+or `Emitter and Receiver`. `RightItemTags` contains exact alternative item traits; any exact match
+marks an inserted item as correct. An empty container preserves legacy content by treating every
+allowed inserted item as correct. A wrong-but-allowed item remains inserted but does not satisfy
+the puzzle Slot. This keeps insertion compatibility separate from puzzle correctness.
+
+In `Emitter` or `Emitter and Receiver` mode, the default output is:
 
 ```text
-IsSlotActive() && IsOccupied()
+IsSlotActive() && IsRightItemInserted()
 ```
 
 It is published on `Puzzle.Signal.Paradox.ItemSlot.Satisfied` via `SetSignalState`. Receiver
 changes, occupancy changes, WorldState completion, explicit activity notifications, and inserted
 item notifications refresh the output without Tick. Routing remains the standard controller-local
-`Emitter -> Controller -> Receiver` flow.
+`Emitter -> Controller -> Receiver` flow. `Receiver`-only mode does not publish an output channel.
+
+In `Receiver` or `Emitter and Receiver` mode, native code sets the owned Receiver to `Manual`.
+The correct inserted item supplies the explicit manual permission, while Puzzle Controllers still
+supply the prerequisite. Effective activation therefore requires both:
+
+```text
+Controller prerequisite active && correct item inserted
+```
+
+If the item is already present when the Controller prerequisite arrives, Paradox reapplies the
+permission on the next Game Thread tick because PuzzleSystem intentionally rejects commands during
+its synchronous Receiver notification. This is event-driven and does not add Tick. Removing or
+invalidating the correct item revokes the manual activation immediately.
+
+`bRequirePuzzleReceiverForActivation` remains a separate, optional operational-power gate for the
+Slot itself and defaults to false. Avoid enabling it on an initially empty Receiver-role Slot unless
+an authored external flow can power the Slot before insertion; otherwise authoring can create a
+logical insertion deadlock.
 
 ## Debugging and troubleshooting
 

@@ -19,6 +19,12 @@
 #include "Types/PerceptionKnowledgeTypes.h"
 #include "UObject/ConstructorHelpers.h"
 
+#if WITH_EDITOR
+#include "Misc/DataValidation.h"
+#endif
+
+#define LOCTEXT_NAMESPACE "ParadoxItemSlotActor"
+
 namespace UE::Paradox::ItemSlot::Private
 {
 	struct FOperationGuard
@@ -93,6 +99,65 @@ void AParadoxItemSlotActor::OnConstruction(const FTransform& Transform)
 	Super::OnConstruction(Transform);
 	PrimaryActorTick.SetTickFunctionEnable(false);
 }
+
+#if WITH_EDITOR
+void AParadoxItemSlotActor::PostEditChangeProperty(
+	FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	const FName ChangedProperty = PropertyChangedEvent.GetPropertyName();
+	if ((ChangedProperty == GET_MEMBER_NAME_CHECKED(ThisClass, InsertedItem)
+			|| ChangedProperty == GET_MEMBER_NAME_CHECKED(ThisClass, AcceptedItemQuery))
+		&& IsValid(InsertedItem.Get())
+		&& !MatchesAllowedItemQuery(InsertedItem.Get()))
+	{
+		PARADOX_LOG_WARNING(
+			TEXT("Item Slot '%s' initially inserted item '%s' does not match Allowed Item Query and will be rejected at runtime."),
+			*GetNameSafe(this),
+			*GetNameSafe(InsertedItem.Get()));
+	}
+}
+
+EDataValidationResult AParadoxItemSlotActor::IsDataValid(
+	FDataValidationContext& Context) const
+{
+	EDataValidationResult Result = Super::IsDataValid(Context);
+	if (Result == EDataValidationResult::NotValidated)
+	{
+		Result = EDataValidationResult::Valid;
+	}
+
+	const AParadoxInsertablePickupableActor* Item = InsertedItem.Get();
+	if (!IsValid(Item))
+	{
+		return Result;
+	}
+	if (Item->GetWorld() != GetWorld())
+	{
+		Context.AddError(LOCTEXT(
+			"InitialItemDifferentWorld",
+			"Initially Inserted Item must be a placed insertable pickupable from the same World."));
+		Result = EDataValidationResult::Invalid;
+	}
+	if (!MatchesAllowedItemQuery(Item))
+	{
+		Context.AddError(FText::Format(
+			LOCTEXT(
+				"InitialItemRejectedByQuery",
+				"Initially Inserted Item '{0}' does not match Allowed Item Query."),
+			FText::FromString(GetNameSafe(Item))));
+		Result = EDataValidationResult::Invalid;
+	}
+	if (!InsertAnchor)
+	{
+		Context.AddError(LOCTEXT(
+			"InitialItemMissingAnchor",
+			"An authored Initially Inserted Item requires the native Insert Anchor."));
+		Result = EDataValidationResult::Invalid;
+	}
+	return Result;
+}
+#endif
 
 void AParadoxItemSlotActor::BeginPlay()
 {
@@ -254,8 +319,7 @@ FParadoxItemSlotOperationResult AParadoxItemSlotActor::EvaluateAcceptItem(
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::InvalidPlacement, TEXT("The Item Slot has no registered Insert Anchor."));
 	}
-	if (!AcceptedItemQuery.IsEmpty()
-		&& !AcceptedItemQuery.Matches(Item->GetInsertableTraits()))
+	if (!MatchesAllowedItemQuery(Item))
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::IncompatibleTraits, TEXT("The item's Insertable Traits do not match the Slot query."));
 	}
@@ -428,6 +492,14 @@ FParadoxItemSlotOperationResult AParadoxItemSlotActor::MakeResult(
 	return Result;
 }
 
+bool AParadoxItemSlotActor::MatchesAllowedItemQuery(
+	const AParadoxInsertablePickupableActor* Item) const
+{
+	return IsValid(Item)
+		&& (AcceptedItemQuery.IsEmpty()
+			|| AcceptedItemQuery.Matches(Item->GetInsertableTraits()));
+}
+
 void AParadoxItemSlotActor::InitializeAuthoredInsertedItem()
 {
 	AParadoxInsertablePickupableActor* Item = InsertedItem.Get();
@@ -438,8 +510,7 @@ void AParadoxItemSlotActor::InitializeAuthoredInsertedItem()
 		return;
 	}
 	if (Item->GetCurrentHolder() || Item->GetCurrentItemSlot()
-		|| (!AcceptedItemQuery.IsEmpty()
-			&& !AcceptedItemQuery.Matches(Item->GetInsertableTraits()))
+		|| !MatchesAllowedItemQuery(Item)
 		|| !InsertAnchor)
 	{
 		PARADOX_LOG_ERROR(
@@ -452,6 +523,7 @@ void AParadoxItemSlotActor::InitializeAuthoredInsertedItem()
 	}
 	BindInsertedItem(*Item);
 	Item->SetInsertedStateNative(*this, *InsertAnchor);
+	Item->ReceiveInsertedIntoSlot(this);
 	WorldStateInsertedItem = Item;
 }
 
@@ -528,6 +600,7 @@ void AParadoxItemSlotActor::RestoreCapturedRelationship()
 	}
 	if (Item->GetCurrentHolder()
 		|| (Item->GetCurrentItemSlot() && Item->GetCurrentItemSlot() != this)
+		|| !MatchesAllowedItemQuery(Item)
 		|| !InsertAnchor)
 	{
 		PARADOX_LOG_ERROR(
@@ -688,3 +761,5 @@ void AParadoxItemSlotActor::HandleInsertedItemInvalidated(
 		FinalizeOccupancyTransition(Item, nullptr);
 	}
 }
+
+#undef LOCTEXT_NAMESPACE
