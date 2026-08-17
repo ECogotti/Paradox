@@ -123,6 +123,14 @@ Use `bEmitNoiseOnPressMovement` and `bEmitNoiseOnReleaseMovement` independently.
 range control native Hearing; strength is retained in semantic observations. Initialization and
 WorldState restoration never play movement feedback or emit noise.
 
+The pressure plate remains the semantic event Source, while the physical Actor whose occupancy
+edge requested the inherited `Press` or `Release` is the event Instigator. That weak attribution
+survives inherited press/release delays and automatic switch-output movement. A clone hearing a
+plate movement that it caused is therefore classified as verified `ObserverCaused` and does not
+interrupt its own replay. Other listeners still observe the pressure plate as the Source. If the
+physical Actor is no longer valid, emission falls back to the plate as Instigator rather than
+retaining an unsafe object reference.
+
 ## Blueprint extension points
 
 The class exposes protected BlueprintNativeEvents for internal specialization without delegate

@@ -34,6 +34,11 @@ public:
 			INDEX_NONE);
 	}
 
+	void SetMovementNoiseInstigatorObserver(TFunction<void(AActor*)> Observer)
+	{
+		TestMovementNoiseInstigatorObserver = MoveTemp(Observer);
+	}
+
 	int32 ConfirmedPressCount = 0;
 	int32 ConfirmedReleaseCount = 0;
 	int32 OccupantAcceptedCount = 0;

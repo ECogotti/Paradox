@@ -197,6 +197,64 @@ bool FPressurePlateArchitectureTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPressurePlateNoiseInstigatorAttributionTest,
+	"Paradox.PressurePlate.NoiseInstigatorAttribution",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPressurePlateNoiseInstigatorAttributionTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::PressurePlate::Tests;
+	FScopedPressurePlateWorld TestWorld(TEXT("PressurePlateNoiseInstigatorWorld"));
+	if (!TestNotNull(TEXT("Pressure Plate noise test world exists"), TestWorld.World))
+	{
+		return false;
+	}
+
+	APressurePlateTestActor* Plate = SpawnPlate(
+		*TestWorld.World,
+		TEXT("NoiseInstigatorPressurePlate"),
+		0.1f,
+		0.1f);
+	APressurePlateTestOccupant* Occupant = SpawnOccupant(
+		*TestWorld.World,
+		TEXT("NoiseInstigatorOccupant"),
+		FVector(10000.0f, 0.0f, 0.0f));
+	if (!TestNotNull(TEXT("Pressure Plate exists"), Plate)
+		|| !TestNotNull(TEXT("Noise-causing occupant exists"), Occupant))
+	{
+		return false;
+	}
+
+	Plate->bEmitNoiseOnPressMovement = true;
+	Plate->bEmitNoiseOnReleaseMovement = true;
+	TestWorld.StartPlay();
+
+	TArray<TWeakObjectPtr<AActor>> ObservedInstigators;
+	Plate->SetMovementNoiseInstigatorObserver(
+		[&ObservedInstigators](AActor* Instigator)
+		{
+			ObservedInstigators.Add(Instigator);
+		});
+
+	Plate->SimulateBeginOverlap(Occupant, Occupant->FirstComponent);
+	TestEqual(TEXT("Press movement emits one semantic noise"), ObservedInstigators.Num(), 1);
+	TestTrue(
+		TEXT("Press movement attributes the semantic noise to the occupying Actor"),
+		ObservedInstigators.IsValidIndex(0)
+			&& ObservedInstigators[0].Get() == Occupant);
+
+	Plate->Tick(0.2f);
+	Plate->SimulateEndOverlap(Occupant, Occupant->FirstComponent);
+	TestEqual(TEXT("Release movement emits one additional semantic noise"), ObservedInstigators.Num(), 2);
+	TestTrue(
+		TEXT("Release movement retains the departing Actor as semantic instigator"),
+		ObservedInstigators.IsValidIndex(1)
+			&& ObservedInstigators[1].Get() == Occupant);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPressurePlateOccupancyMovementTest,
 	"Paradox.PressurePlate.OccupancyAndMovement",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

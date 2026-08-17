@@ -124,6 +124,16 @@ generic component and are unaffected.
 
 See [Footsteps, semantic Hearing, and crouch](FOOTSTEPS.md) for setup and validation.
 
+## Indirect mechanism noise
+
+Mechanisms must preserve the distinction between semantic Source and causal Instigator. For a
+pressure plate, the plate's `UPerceptionKnowledgeSourceComponent` remains the Source identity, but
+the Actor that produced the physical occupancy edge is copied into the noise request as Instigator.
+This attribution is retained across inherited switch delays. When that Actor is also the listening
+clone, the generic resolver produces verified `ObserverCaused`, so the project response policy
+ignores the observation instead of suspending replay. A different clone still receives the event
+as an external pressure-plate noise and follows normal timeline comparison.
+
 ## Timeline-stable Source identity
 
 Strict event matching includes the source Entity ID. The time loop therefore stores

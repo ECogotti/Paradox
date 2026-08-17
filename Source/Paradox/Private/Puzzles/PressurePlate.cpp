@@ -534,6 +534,7 @@ void APressurePlate::AcquireOccupant(
 		HandleOccupantAccepted(OccupantActor);
 	}
 
+	LastOccupancyInputInstigator = OccupantActor;
 	if (!IsInputPressed() && !Press())
 	{
 		PARADOX_LOG_WARNING(
@@ -599,12 +600,20 @@ void APressurePlate::ReleaseOccupant(
 		HandleOccupantReleased(PreviousOccupant);
 	}
 
-	if (bRequestInheritedRelease && bWasOccupied && IsInputPressed() && !Release())
+	if (!bRequestInheritedRelease)
 	{
-		PARADOX_LOG_WARNING(
-			TEXT("Pressure Plate '%s' released occupant '%s', but inherited Release() rejected the physical edge."),
-			*GetNameSafe(this),
-			*GetNameSafe(PreviousOccupant));
+		LastOccupancyInputInstigator.Reset();
+	}
+	else if (bWasOccupied && IsInputPressed())
+	{
+		LastOccupancyInputInstigator = PreviousOccupant;
+		if (!Release())
+		{
+			PARADOX_LOG_WARNING(
+				TEXT("Pressure Plate '%s' released occupant '%s', but inherited Release() rejected the physical edge."),
+				*GetNameSafe(this),
+				*GetNameSafe(PreviousOccupant));
+		}
 	}
 }
 
@@ -734,6 +743,10 @@ bool APressurePlate::SynchronizeSwitchInputWithOccupancy()
 		return true;
 	}
 
+	if (bShouldBePressed && CurrentOccupant.IsValid())
+	{
+		LastOccupancyInputInstigator = CurrentOccupant;
+	}
 	const bool bRequestAccepted = bShouldBePressed ? Press() : Release();
 	if (!bRequestAccepted)
 	{
@@ -793,12 +806,16 @@ void APressurePlate::HandleCurrentOccupantDestroyed(AActor* DestroyedActor)
 	{
 		HandleOccupantReleased(DestroyedActor);
 	}
-	if (IsInputPressed() && !Release())
+	if (IsInputPressed())
 	{
-		PARADOX_LOG_WARNING(
-			TEXT("Pressure Plate '%s' could not release inherited input after occupant '%s' was destroyed."),
-			*GetNameSafe(this),
-			*GetNameSafe(DestroyedActor));
+		LastOccupancyInputInstigator = DestroyedActor;
+		if (!Release())
+		{
+			PARADOX_LOG_WARNING(
+				TEXT("Pressure Plate '%s' could not release inherited input after occupant '%s' was destroyed."),
+				*GetNameSafe(this),
+				*GetNameSafe(DestroyedActor));
+		}
 	}
 }
 
@@ -975,13 +992,21 @@ void APressurePlate::EmitMovementNoise(bool bMovingDown)
 
 	FPerceptionKnowledgeNoiseRequest Request;
 	Request.EventTag = bMovingDown ? PressNoiseEventTag : ReleaseNoiseEventTag;
-	Request.Instigator = this;
+	Request.Instigator = LastOccupancyInputInstigator.IsValid()
+		? LastOccupancyInputInstigator.Get()
+		: this;
 	Request.WorldLocation = PlateMesh ? PlateMesh->GetComponentLocation() : GetActorLocation();
 	Request.bUseSourceLocation = false;
 	Request.Loudness = MovementNoiseLoudness;
 	Request.MaxRange = MovementNoiseMaxRange;
 	Request.Strength = MovementNoiseStrength;
 	Request.CauseTag = MovementNoiseCauseTag;
+#if WITH_DEV_AUTOMATION_TESTS
+	if (TestMovementNoiseInstigatorObserver)
+	{
+		TestMovementNoiseInstigatorObserver(Request.Instigator.Get());
+	}
+#endif
 	const FPerceptionKnowledgeOperationResult Result = PerceptionSource->EmitSemanticNoise(Request);
 	if (!Result.IsSuccess())
 	{

@@ -164,9 +164,13 @@ Run the focused suites after building `ParadoxEditor`:
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.Interaction; Quit" -TestExit="Automation Test Queue Empty" -log
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.Selection; Quit" -TestExit="Automation Test Queue Empty" -log
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests GridWorld.Presentation.CellOverlay; Quit" -TestExit="Automation Test Queue Empty" -log
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.PressurePlate.Architecture; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.PressurePlate; Quit" -TestExit="Automation Test Queue Empty" -log
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -DDC-ForceMemoryCache -ExecCmds="Automation RunTests Paradox.VerticalBarrier.Architecture; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
+
+`Paradox.PressurePlate.NoiseInstigatorAttribution` verifies that both press and release movement
+events retain the causal occupant as semantic Instigator while the plate remains the Source. This
+is the regression guard for clones investigating pressure-plate noise that they caused themselves.
 
 For PIE acceptance, assign valid Smart Object Definitions and interaction catalogs to Blueprint
 children of Pressure Plate and Vertical Barrier. RMB selection must show green Primary cells when

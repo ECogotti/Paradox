@@ -274,6 +274,11 @@ protected:
 		UPrimitiveComponent* OtherComponent,
 		int32 OtherBodyIndex);
 
+#if WITH_DEV_AUTOMATION_TESTS
+	/** Test-only observer for the Actor copied into a semantic movement-noise request. */
+	TFunction<void(AActor*)> TestMovementNoiseInstigatorObserver;
+#endif
+
 private:
 	/** Rejects invalid candidates, enforces all RequiredOccupantActorTags, then calls the subclass hook. */
 	bool IsOccupantCandidateAccepted(AActor* OccupantActor, UPrimitiveComponent* OccupantComponent) const;
@@ -382,6 +387,9 @@ private:
 
 	/** Accepted overlapping components belonging only to CurrentOccupant. */
 	TSet<TWeakObjectPtr<UPrimitiveComponent>> CurrentOccupantComponents;
+
+	/** Last physical Actor whose occupancy edge may drive delayed mechanism movement and noise. */
+	TWeakObjectPtr<AActor> LastOccupancyInputInstigator;
 
 	/** Authored PlateMesh relative transform cached exactly once at runtime initialization. */
 	FTransform RaisedPlateRelativeTransform = FTransform::Identity;
