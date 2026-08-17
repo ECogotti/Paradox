@@ -37,7 +37,8 @@ containment, and dynamic rotation-safe zoom limits after current Camera Volume b
 `PuzzleSystem.TransformMover.RequestGateAndRuntimeState` covers dependency-free defer semantics and
 event-free whole-state reconstruction. `GameplayActions.Locks.SourceOwnedExternalAuthority` covers
 conflicting-action interruption, new-request rejection, and independent lock owners.
-`Paradox.VerticalBarrier.*` covers native composition, shared bounds, distinct-Actor occupancy,
+`Paradox.VerticalBarrier.*` covers native composition, shared bounds, stable-endpoint-only moving
+surface navigation, distinct-Actor occupancy,
 safe defer/retry, safety return, navigation ordering, attachment persistence after EndOverlap,
 Paradox Character Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport,
 and endpoint cleanup.

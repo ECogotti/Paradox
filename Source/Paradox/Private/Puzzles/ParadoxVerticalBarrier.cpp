@@ -106,7 +106,6 @@ void AParadoxVerticalBarrier::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
 	SynchronizePassageBounds();
-	EnforceComponentInvariants();
 	if (BarrierMesh && StartArrow && EndArrow && GetWorld() && !GetWorld()->IsGameWorld())
 	{
 		BarrierMesh->SetWorldTransform(
@@ -120,6 +119,7 @@ void AParadoxVerticalBarrier::OnConstruction(const FTransform& Transform)
 		bPassageBlockingNavigation = bShouldBlock;
 		GridNavigationModifier->SetBlockingEnabled(bShouldBlock);
 	}
+	EnforceComponentInvariants();
 }
 
 void AParadoxVerticalBarrier::PostRegisterAllComponents()
@@ -258,6 +258,13 @@ EDataValidationResult AParadoxVerticalBarrier::IsDataValid(FDataValidationContex
 	if (!BarrierMesh || BarrierMesh->GetAttachParent() != BillboardRoot.Get() || BarrierMesh->Mobility != EComponentMobility::Movable)
 	{
 		AddError(LOCTEXT("BarrierHierarchy", "Vertical Barrier requires a movable BarrierMesh attached to BillboardRoot."));
+	}
+	if (bGenerateNavigationAtStableEndpoints && BarrierMesh
+		&& (!BarrierMesh->GetStaticMesh() || !CollisionEnabledHasQuery(BarrierMesh->GetCollisionEnabled())))
+	{
+		AddError(LOCTEXT(
+			"BarrierNavigationSurface",
+			"Generate Navigation At Stable Endpoints requires BarrierMesh to own a Static Mesh with query collision enabled."));
 	}
 	if (!PassageOccupancyVolume || PassageOccupancyVolume->GetAttachParent() != BillboardRoot.Get()
 		|| !PassageOccupancyVolume->GetGenerateOverlapEvents()
@@ -484,6 +491,7 @@ bool AParadoxVerticalBarrier::ShouldProcessReceiverStateNative(const bool bRecei
 
 void AParadoxVerticalBarrier::OnMovementStartedNative()
 {
+	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
 	PublishPerceptionState();
@@ -491,6 +499,7 @@ void AParadoxVerticalBarrier::OnMovementStartedNative()
 
 void AParadoxVerticalBarrier::OnMovementResumedNative()
 {
+	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
 	PublishPerceptionState();
@@ -498,6 +507,7 @@ void AParadoxVerticalBarrier::OnMovementResumedNative()
 
 void AParadoxVerticalBarrier::OnMovementReversedNative()
 {
+	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
 	PublishPerceptionState();
@@ -505,6 +515,7 @@ void AParadoxVerticalBarrier::OnMovementReversedNative()
 
 void AParadoxVerticalBarrier::OnMovementPausedNative()
 {
+	SetBarrierMeshNavigationRelevant(false);
 	StopMovementFeedback();
 	PublishPerceptionState();
 }
@@ -518,6 +529,7 @@ void AParadoxVerticalBarrier::OnReachedStartNative()
 {
 	StopMovementFeedback();
 	SetPassageNavigationBlocking(true);
+	RefreshBarrierMeshNavigationRelevance();
 	ReleaseAllLiftedActors(EParadoxBarrierPassengerReleaseReason::ReachedStart);
 	EmitMovementNoise(true, true);
 	PublishPerceptionState();
@@ -527,6 +539,7 @@ void AParadoxVerticalBarrier::OnReachedEndNative()
 {
 	StopMovementFeedback();
 	SetPassageNavigationBlocking(false);
+	RefreshBarrierMeshNavigationRelevance();
 	ReleaseAllLiftedActors(EParadoxBarrierPassengerReleaseReason::ReachedEnd);
 	bSafetyReturnInProgress = false;
 	EmitMovementNoise(false, true);
@@ -1031,10 +1044,7 @@ void AParadoxVerticalBarrier::SynchronizePassageBounds()
 
 void AParadoxVerticalBarrier::EnforceComponentInvariants()
 {
-	if (BarrierMesh)
-	{
-		BarrierMesh->SetCanEverAffectNavigation(false);
-	}
+	RefreshBarrierMeshNavigationRelevance();
 	if (PassageOccupancyVolume)
 	{
 		PassageOccupancyVolume->SetCanEverAffectNavigation(false);
@@ -1051,6 +1061,26 @@ void AParadoxVerticalBarrier::EnforceComponentInvariants()
 			GridNavigationModifier->Activate(true);
 		}
 	}
+}
+
+void AParadoxVerticalBarrier::SetBarrierMeshNavigationRelevant(const bool bRelevant)
+{
+	if (!BarrierMesh)
+	{
+		return;
+	}
+
+	const bool bShouldAffectNavigation = bGenerateNavigationAtStableEndpoints && bRelevant;
+	if (BarrierMesh->CanEverAffectNavigation() != bShouldAffectNavigation)
+	{
+		BarrierMesh->SetCanEverAffectNavigation(bShouldAffectNavigation);
+	}
+}
+
+void AParadoxVerticalBarrier::RefreshBarrierMeshNavigationRelevance()
+{
+	const bool bAtStableEndpoint = !bApplyingWorldState && (IsAtStart() || IsAtEnd());
+	SetBarrierMeshNavigationRelevant(bAtStableEndpoint);
 }
 
 void AParadoxVerticalBarrier::SetPassageNavigationBlocking(const bool bBlocking)
@@ -1084,6 +1114,7 @@ void AParadoxVerticalBarrier::RebuildDerivedState()
 {
 	const bool bShouldBlock = !IsAtEnd() || IsMovementPaused();
 	SetPassageNavigationBlocking(bShouldBlock);
+	RefreshBarrierMeshNavigationRelevance();
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StopMovementFeedback();
 	PublishPerceptionState();
@@ -1253,6 +1284,7 @@ void AParadoxVerticalBarrier::HandleWorldStatePreRestore(FWorldStateParticipantI
 {
 	bApplyingWorldState = true;
 	bSuppressPresentation = true;
+	SetBarrierMeshNavigationRelevant(false);
 	ClearPendingRaiseRetry();
 	bRaiseRequestPending = false;
 	bSafetyReturnInProgress = false;

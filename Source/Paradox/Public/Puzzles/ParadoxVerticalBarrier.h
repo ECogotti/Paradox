@@ -135,6 +135,14 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Barrier|Occupants")
 	bool bWaitForClearPassage = true;
 
+	/**
+	 * Lets BarrierMesh contribute a walkable surface to dynamic navigation at Start and End.
+	 * Navigation relevance is disabled for the complete movement, including an intermediate pause,
+	 * so the moving mesh cannot trigger a topology rebuild every frame.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Barrier|Navigation")
+	bool bGenerateNavigationAtStableEndpoints = false;
+
 	/** Empty accepts any otherwise valid Actor; non-empty requires every ordinary AActor FName tag. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Barrier|Occupants")
 	TArray<FName> RequiredOccupantActorTags;
@@ -366,6 +374,8 @@ private:
 
 	void SynchronizePassageBounds();
 	void EnforceComponentInvariants();
+	void SetBarrierMeshNavigationRelevant(bool bRelevant);
+	void RefreshBarrierMeshNavigationRelevance();
 	void SetPassageNavigationBlocking(bool bBlocking);
 	void RebuildDerivedState();
 	void PublishPerceptionState();

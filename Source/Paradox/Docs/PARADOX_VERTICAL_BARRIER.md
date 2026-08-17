@@ -44,7 +44,9 @@ the Receiver command after authoritative revalidation.
 
 2. Assign the moving door mesh to `BarrierMesh`; it is already movable and selected as the
    inherited moved component. Build the static frame on a separate Actor (for example, the Puzzle
-   Emitter that controls this barrier).
+   Emitter that controls this barrier). Leave `Generate Navigation At Stable Endpoints` disabled for
+   an ordinary door. Enable it for an elevator or moving wall whose top must become a walkable
+   navigation surface after reaching Start or End.
 3. Place the inherited green `StartArrow` at the raised/closed transform and red `EndArrow` at the
    lowered/open transform below the floor. The native End default is 240 cm below Start. Keep
    `InitialPosition=Start` to begin closed or choose End to begin open.
@@ -99,18 +101,39 @@ The barrier continues with other occupants rather than fabricating a lock.
 
 ## GridWorld, WorldState, and perception
 
-`UGridNavigationModifierComponent` is the only navigation authority. It changes once per semantic
-transition, using its normal overlay revision/invalidation path; the barrier never enumerates path
-followers or rebuilds the grid every frame. `BarrierMesh` keeps **Can Ever Affect Navigation** off,
-so GridWorld format 8 excludes its physical collision from both floor and clearance sampling. This
-prevents a raised door from creating floating base cells or permanently removing the floor cells
-that its modifier must unblock. The modifier auto-activates in Game/PIE, while GridWorld also
-composes its construction-time state in editor worlds so **Show Navigation** hides the blocked cells
-of a closed barrier before Begin Play.
+`UGridNavigationModifierComponent` remains the passage-blocking authority. It changes once per
+semantic transition, using its normal overlay revision/invalidation path; the barrier never
+enumerates path followers or rebuilds the grid every frame.
+
+`Generate Navigation At Stable Endpoints` is disabled by default. In that mode, `BarrierMesh` keeps
+**Can Ever Affect Navigation** off, so GridWorld format 8 excludes its physical collision from both
+floor and clearance sampling. This prevents an ordinary raised door from creating floating base
+cells or permanently removing the floor cells that its modifier must unblock.
+
+Enable the option only when `BarrierMesh` is also a walkable platform. The mesh becomes
+navigation-relevant at exact Start and End, is removed before any movement update, remains removed
+during an intermediate pause, and is restored only after exact endpoint arrival. Each traversal
+therefore produces an endpoint removal and endpoint addition through Unreal's native dirty-area
+pipeline instead of one rebuild per movement frame. For the endpoint surface to produce GridWorld
+cells:
+
+- `BarrierMesh` must have query collision and block the collision profile selected on the
+  intersecting `GridNavigationBoundsVolume`;
+- the bounds volume must include the top surface at both endpoint heights;
+- **Auto Rebuild On Geometry Changes** must be enabled on that bounds volume;
+- `GridNavigationModifier` must cover the passage without overlapping the top cells that should
+  remain walkable while the passage itself is blocked.
+
+The modifier auto-activates in Game/PIE, while GridWorld also composes its construction-time state
+in editor worlds so **Show Navigation** reflects the authored passage state before Begin Play.
 
 After upgrading an existing level, run **Build > Grid World > Build Grid World** once and save the
 level. Format 7 snapshots are deliberately rejected because they may contain topology baked from
 navigation-irrelevant moving geometry.
+
+After enabling stable endpoint navigation on an existing Blueprint, rebuild and save GridWorld once
+with the barrier at its authored initial endpoint. Runtime generation then handles later endpoint
+transitions.
 
 WorldState captures one complete `FPuzzleTransformMoverRuntimeState` property. Pre-restore clears
 pending requests, occupants, passengers, attachments, locks, feedback, and stale callbacks while

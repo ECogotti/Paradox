@@ -12,6 +12,7 @@ class AParadoxVerticalBarrierTestActor : public AParadoxVerticalBarrier
 public:
 	bool RequestEndForTest() { return RequestMoveTowardEnd(); }
 	bool RequestStartForTest() { return RequestMoveTowardStart(); }
+	bool PauseForTest() { return PauseMovement(); }
 
 	void SimulateBeginOverlap(AActor* Actor, UPrimitiveComponent* Component)
 	{

@@ -112,6 +112,7 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 		Defaults->PassageOccupancyVolume && Defaults->GridNavigationModifier
 		&& Defaults->PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(Defaults->GridNavigationModifier->BoxExtent));
 	TestFalse(TEXT("Barrier mesh does not own navigation"), Defaults->BarrierMesh->CanEverAffectNavigation());
+	TestFalse(TEXT("Stable endpoint navigation generation is opt-in"), Defaults->bGenerateNavigationAtStableEndpoints);
 	TestFalse(TEXT("Occupancy volume does not own navigation"), Defaults->PassageOccupancyVolume->CanEverAffectNavigation());
 	TestTrue(TEXT("Grid modifier auto activates"), Defaults->GridNavigationModifier->bAutoActivate);
 	TestTrue(
@@ -139,6 +140,62 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Vertical Barrier permits an empty native interaction catalog"),
 		Defaults->InteractionComponent ? Defaults->InteractionComponent->InteractionDefinitions.Num() : INDEX_NONE,
 		0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxVerticalBarrierStableEndpointNavigationTest,
+	"Paradox.VerticalBarrier.StableEndpointNavigation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxVerticalBarrierStableEndpointNavigationTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::VerticalBarrier::Tests;
+	FScopedWorld Scope;
+	if (!TestNotNull(TEXT("Test world exists"), Scope.World))
+	{
+		return false;
+	}
+
+	AParadoxVerticalBarrierTestActor* Barrier = Spawn<AParadoxVerticalBarrierTestActor>(
+		*Scope.World,
+		TEXT("StableEndpointNavigationBarrier"));
+	UStaticMesh* TestCube = LoadObject<UStaticMesh>(nullptr, TEXT("/Engine/BasicShapes/Cube.Cube"));
+	if (!TestNotNull(TEXT("Barrier fixture exists"), Barrier)
+		|| !TestNotNull(TEXT("Engine collision cube is available"), TestCube))
+	{
+		return false;
+	}
+
+	Barrier->BarrierMesh->SetStaticMesh(TestCube);
+	Barrier->BarrierMesh->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Barrier->bGenerateNavigationAtStableEndpoints = true;
+	Barrier->ForwardMovementTime = 1.0f;
+	Barrier->bEmitNoiseOnRaiseStart = false;
+	Barrier->bEmitNoiseOnLowerStart = false;
+	Barrier->bEmitNoiseOnReachedEndpoint = false;
+	Scope.StartPlay();
+
+	TestTrue(TEXT("Opt-in BarrierMesh affects navigation at stable Start"), Barrier->BarrierMesh->CanEverAffectNavigation());
+	TestTrue(TEXT("Movement toward End starts"), Barrier->RequestEndForTest());
+	TestFalse(TEXT("BarrierMesh stops affecting navigation before movement updates"), Barrier->BarrierMesh->CanEverAffectNavigation());
+	TestTrue(TEXT("Active movement can pause"), Barrier->PauseForTest());
+	TestFalse(TEXT("An intermediate pause does not publish a moving surface"), Barrier->BarrierMesh->CanEverAffectNavigation());
+	TestTrue(TEXT("The paused End request resumes movement"), Barrier->RequestEndForTest());
+	TestFalse(TEXT("Resumed movement remains navigation-irrelevant"), Barrier->BarrierMesh->CanEverAffectNavigation());
+
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Barrier reaches stable End"), Barrier->IsAtEnd());
+	TestTrue(TEXT("Opt-in BarrierMesh affects navigation at stable End"), Barrier->BarrierMesh->CanEverAffectNavigation());
+	TestTrue(TEXT("Movement toward Start begins"), Barrier->RequestStartForTest());
+	TestFalse(TEXT("Return movement removes the endpoint surface once"), Barrier->BarrierMesh->CanEverAffectNavigation());
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Barrier returns to stable Start"), Barrier->IsAtStart());
+	TestTrue(TEXT("Stable Start republishes the surface"), Barrier->BarrierMesh->CanEverAffectNavigation());
+
+	Barrier->bGenerateNavigationAtStableEndpoints = false;
+	Barrier->ResetMover();
+	TestFalse(TEXT("Disabling the option restores navigation-irrelevant barrier behavior"), Barrier->BarrierMesh->CanEverAffectNavigation());
 	return true;
 }
 
