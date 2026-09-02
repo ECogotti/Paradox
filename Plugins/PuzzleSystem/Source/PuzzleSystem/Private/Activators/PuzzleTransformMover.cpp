@@ -753,7 +753,17 @@ bool APuzzleTransformMover::InitializePuzzleTransformMover()
 	bool bSynchronizedReceiver = false;
 	if (bConfigurationValid)
 	{
-		bSynchronizedReceiver = SynchronizeWithCurrentReceiverState(bAnimateInitialReceiverState);
+		const bool bReceiverActive = IsValid(PuzzleReceiver) && PuzzleReceiver->IsReceiverActive();
+		if (bReceiverActive || bAnimateInitialReceiverState)
+		{
+			bSynchronizedReceiver = SynchronizeWithCurrentReceiverState(bAnimateInitialReceiverState);
+		}
+		else
+		{
+			// An inactive Receiver has not issued a gameplay edge. Preserve the explicitly authored
+			// InitialPosition instead of manufacturing an initial deactivation command.
+			bSynchronizedReceiver = true;
+		}
 	}
 
 	bIsInitializingFromReceiver = false;

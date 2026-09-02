@@ -49,7 +49,9 @@ the Receiver command after authoritative revalidation.
    navigation surface after reaching Start or End.
 3. Place the inherited green `StartArrow` at the raised/closed transform and red `EndArrow` at the
    lowered/open transform below the floor. The native End default is 240 cm below Start. Keep
-   `InitialPosition=Start` to begin closed or choose End to begin open.
+   `InitialPosition=Start` to begin closed or choose End to begin open. With the default
+   `bAnimateInitialReceiverState=false`, an initially inactive Receiver leaves this authored endpoint
+   unchanged; only a real Receiver transition can move it afterward.
 4. Author passage shape only on `GridNavigationModifier`: set its relative transform and
    `BoxExtent`. `PassageOccupancyVolume` mirrors those values during construction, registration, and
    runtime initialization.
@@ -139,7 +141,9 @@ WorldState captures one complete `FPuzzleTransformMoverRuntimeState` property. P
 pending requests, occupants, passengers, attachments, locks, feedback, and stale callbacks while
 blocking navigation conservatively. Property restoration rebuilds the exact moved transform from
 the endpoint markers and alpha. After the global terminal callback, overlap state is reconciled once
-without acquiring passengers or producing feedback.
+without acquiring passengers or producing feedback. The baseline is captured after mover
+initialization, so an inactive door configured with `InitialPosition=End` begins open and every World
+State baseline reset restores that same exact End state, alpha, mesh transform, and navigation state.
 
 The Perception source exposes:
 

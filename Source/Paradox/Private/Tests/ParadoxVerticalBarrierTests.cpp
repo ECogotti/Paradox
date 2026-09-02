@@ -25,6 +25,7 @@
 #include "Interaction/ParadoxSelectableComponent.h"
 #include "ParadoxVerticalBarrierTestTypes.h"
 #include "SmartObjectComponent.h"
+#include "Subsystems/WorldStateSubsystem.h"
 
 namespace UE::Paradox::VerticalBarrier::Tests
 {
@@ -140,6 +141,76 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Vertical Barrier permits an empty native interaction catalog"),
 		Defaults->InteractionComponent ? Defaults->InteractionComponent->InteractionDefinitions.Num() : INDEX_NONE,
 		0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxVerticalBarrierInitialPositionAndWorldResetTest,
+	"Paradox.VerticalBarrier.InitialPositionAndWorldReset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxVerticalBarrierInitialPositionAndWorldResetTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::VerticalBarrier::Tests;
+	FScopedWorld Scope;
+	if (!TestNotNull(TEXT("Initial-position test world exists"), Scope.World))
+	{
+		return false;
+	}
+
+	AParadoxVerticalBarrierTestActor* Barrier = Spawn<AParadoxVerticalBarrierTestActor>(
+		*Scope.World,
+		TEXT("InitialEndBarrier"));
+	if (!TestNotNull(TEXT("Initial-position barrier exists"), Barrier))
+	{
+		return false;
+	}
+
+	Barrier->InitialPosition = EPuzzleTransformMoverInitialPosition::End;
+	Barrier->ForwardMovementTime = 1.0f;
+	Barrier->bEmitNoiseOnRaiseStart = false;
+	Barrier->bEmitNoiseOnLowerStart = false;
+	Barrier->bEmitNoiseOnReachedEndpoint = false;
+	Scope.StartPlay();
+
+	TestTrue(TEXT("Inactive Receiver preserves open End at BeginPlay"), Barrier->IsAtEnd());
+	TestEqual(TEXT("Open End begins at exact alpha"), Barrier->GetMovementAlpha(), 1.0f);
+	TestTrue(TEXT("Open End is navigable"), Barrier->IsPassageOpen());
+	TestTrue(
+		TEXT("Barrier mesh begins at the authored End transform"),
+		Barrier->BarrierMesh->GetComponentLocation().Equals(Barrier->GetEndTransform().GetLocation(), 0.01f));
+
+	UWorldStateSubsystem* WorldState = Scope.World->GetSubsystem<UWorldStateSubsystem>();
+	if (!TestNotNull(TEXT("World State subsystem exists"), WorldState))
+	{
+		return false;
+	}
+	TestTrue(
+		TEXT("World State registration finalizes"),
+		WorldState->FinalizeWorldStateRegistration().IsSuccess());
+	FWorldStateCaptureRequest CaptureRequest;
+	CaptureRequest.Label = TEXT("VerticalBarrierInitialEndBaseline");
+	TestTrue(TEXT("Initial End baseline captures"), WorldState->CaptureBaseline(CaptureRequest).IsSuccess());
+
+	TestTrue(TEXT("Barrier can close toward Start"), Barrier->RequestStartForTest());
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Barrier reaches closed Start before local reset"), Barrier->IsAtStart());
+	Barrier->ResetMover();
+	TestTrue(TEXT("ResetMover restores configured End"), Barrier->IsAtEnd());
+	TestTrue(TEXT("ResetMover restores open navigation"), Barrier->IsPassageOpen());
+
+	TestTrue(TEXT("Barrier can close again before world reset"), Barrier->RequestStartForTest());
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Barrier reaches closed Start before world reset"), Barrier->IsAtStart());
+	FWorldStateRestoreRequest RestoreRequest;
+	RestoreRequest.Reason = TEXT("VerticalBarrierInitialPositionTest");
+	TestTrue(TEXT("World reset restores the baseline"), WorldState->RestoreBaseline(RestoreRequest).IsSuccess());
+	TestTrue(TEXT("World reset restores configured End"), Barrier->IsAtEnd());
+	TestEqual(TEXT("World reset restores exact End alpha"), Barrier->GetMovementAlpha(), 1.0f);
+	TestTrue(TEXT("World reset restores open navigation"), Barrier->IsPassageOpen());
+	TestTrue(
+		TEXT("World reset rebuilds the BarrierMesh at End"),
+		Barrier->BarrierMesh->GetComponentLocation().Equals(Barrier->GetEndTransform().GetLocation(), 0.01f));
 	return true;
 }
 

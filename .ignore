@@ -1,4 +1,3 @@
-/.agents
 /.git
 /.vscode
 /Codex
@@ -13,12 +12,14 @@
 /Plugins/EntityRelations/Codex
 /Plugins/EntityRelations/Docs
 /Plugins/EntityRelations/Intermediate
+/Plugins/FootstepSystem/CODEX
+/Plugins/FootstepSystem/Docs
+/Plugins/FootstepSystem/Intermediate
 /Plugins/GameplayActionsAI/Docs
 /Plugins/GameplayActionsAI/Intermediate
 /Plugins/GameplayActionsGridWorld/Content
 /Plugins/GameplayActionsGridWorld/Docs
 /Plugins/GameplayActionsGridWorld/Intermediate
-/Plugins/GameplayActionsGridWorld/Tools
 /Plugins/GridWorldSystem/Codex
 /Plugins/GridWorldSystem/Content
 /Plugins/GridWorldSystem/Docs
@@ -26,12 +27,14 @@
 /Plugins/IntentReplay/Codex
 /Plugins/IntentReplay/Docs
 /Plugins/IntentReplay/Intermediate
-/Plugins/IntentReplay/Tools
 /Plugins/LineOfSight/Content
 /Plugins/LineOfSight/Docs
 /Plugins/LineOfSight/Intermediate
 /Plugins/ParadoxEditorTools/Docs
 /Plugins/ParadoxEditorTools/Intermediate
+/Plugins/PerceptionKnowledge/Codex
+/Plugins/PerceptionKnowledge/Docs
+/Plugins/PerceptionKnowledge/Intermediate
 /Plugins/PuzzleSystem/Codex
 /Plugins/PuzzleSystem/Content
 /Plugins/PuzzleSystem/Docs

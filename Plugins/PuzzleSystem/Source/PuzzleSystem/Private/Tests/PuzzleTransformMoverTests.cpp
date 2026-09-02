@@ -326,6 +326,25 @@ bool FPuzzleTransformMoverTimingAndReplacementTest::RunTest(const FString& Param
 	TestTrue(TEXT("Non-animated initial synchronization snaps to End"), InitiallyActiveMover->IsAtEnd());
 	TestEqual(TEXT("Initial snap emits no movement-start hook"), InitiallyActiveMover->MovementStartedHookCount, 0);
 	TestEqual(TEXT("Initial snap emits no endpoint-arrival hook"), InitiallyActiveMover->ReachedEndHookCount, 0);
+
+	APuzzleTransformMoverTestActor* InitiallyInactiveEndMover = PuzzleTransformMoverTest::SpawnMover(ScopedWorld);
+	InitiallyInactiveEndMover->MovementMode = EPuzzleTransformMoverMode::PingPong;
+	InitiallyInactiveEndMover->InitialPosition = EPuzzleTransformMoverInitialPosition::End;
+	InitiallyInactiveEndMover->bAnimateInitialReceiverState = false;
+	TestTrue(TEXT("Inactive End mover initializes"), InitiallyInactiveEndMover->InitializeForTest());
+	TestTrue(TEXT("Inactive Receiver preserves authored End initial position"), InitiallyInactiveEndMover->IsAtEnd());
+	TestEqual(TEXT("Authored End initial position keeps exact alpha"), InitiallyInactiveEndMover->GetMovementAlpha(), 1.0f);
+	TestTrue(
+		TEXT("Authored End initial position synchronizes the moved component"),
+		InitiallyInactiveEndMover->TestMovedComponent->GetComponentLocation().Equals(
+			InitiallyInactiveEndMover->GetEndTransform().GetLocation(),
+			0.01f));
+	TestFalse(TEXT("Authored End initial position remains idle"), InitiallyInactiveEndMover->IsActorTickEnabled());
+	TestTrue(TEXT("Inactive End mover can leave its initial endpoint"), InitiallyInactiveEndMover->RequestStartForTest());
+	InitiallyInactiveEndMover->Tick(1.0f);
+	TestTrue(TEXT("Inactive End mover reaches Start before reset"), InitiallyInactiveEndMover->IsAtStart());
+	InitiallyInactiveEndMover->ResetMover();
+	TestTrue(TEXT("Reset restores the authored End initial position"), InitiallyInactiveEndMover->IsAtEnd());
 	return true;
 }
 

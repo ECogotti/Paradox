@@ -186,11 +186,15 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Mover|Configuration")
 	EPuzzleTransformMoverDeactivationBehavior DeactivationBehavior = EPuzzleTransformMoverDeactivationBehavior::Return;
 
-	/** Endpoint established before the current Receiver state is synchronized. */
+	/** Endpoint established at startup and restored by ResetMover. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Mover|Configuration")
 	EPuzzleTransformMoverInitialPosition InitialPosition = EPuzzleTransformMoverInitialPosition::Start;
 
-	/** When enabled, initial Receiver synchronization uses normal runtime movement instead of an event-free snap. */
+	/**
+	 * When enabled, the Receiver's initial active or inactive state is processed as a runtime transition.
+	 * When disabled, an already-active Receiver snaps to its logical endpoint while an inactive Receiver
+	 * preserves InitialPosition until a real state transition occurs.
+	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Mover|Configuration")
 	bool bAnimateInitialReceiverState = false;
 

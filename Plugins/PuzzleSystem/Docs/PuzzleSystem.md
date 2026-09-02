@@ -149,10 +149,13 @@ Unreal's verified `EEasingFunc` implementation and exposes its exponent and step
 Changing easing does not change remaining-time calculations.
 
 At runtime initialization the mover resolves `DefaultMovedComponent`, restores `InitialPosition`, binds to
-the owned Receiver, queries its current effective state, and processes it without depending on Actor
-`BeginPlay` order. With `bAnimateInitialReceiverState` disabled (the default), the logical result is snapped
-without movement-start or endpoint-arrival presentation events. Enable it to process the initial state as a
-normal runtime transition.
+the owned Receiver, and queries its current effective state without depending on Actor `BeginPlay` order.
+With `bAnimateInitialReceiverState` disabled (the default), an already-active Receiver snaps to its logical
+endpoint without movement-start or endpoint-arrival presentation events. An inactive Receiver does not
+manufacture a deactivation edge and therefore preserves the explicitly authored `InitialPosition` until a
+real Receiver transition occurs. Enable `bAnimateInitialReceiverState` to process either initial Receiver
+state as a normal runtime transition. An explicit later `SynchronizeWithCurrentReceiverState(false)` still
+applies both active and inactive states as an event-free snap.
 
 `SetMovedComponent` can replace the controlled component at runtime. A valid replacement must be
 registered, movable, owned by the same Actor, not be an internal marker, and not simulate physics. It is
