@@ -29,6 +29,12 @@ public:
 		return TacticalPauseActionQueueComponent.Get();
 	}
 
+protected:
+	virtual void HandleHealthDeath(
+		const UDamageType* DamageType,
+		AController* InstigatedBy,
+		AActor* DamageCauser) override;
+
 private:
 	/** Temporary character-mounted camera retained until the free camera milestone. */
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Components", meta = (AllowPrivateAccess = "true"))

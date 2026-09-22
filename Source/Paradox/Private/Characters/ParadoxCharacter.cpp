@@ -12,11 +12,15 @@
 #include "Footsteps/ParadoxFootstepNoiseComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Inventory/ParadoxInventoryComponent.h"
+#include "Health/ParadoxHealthComponent.h"
 #include "NiagaraComponent.h"
+#include "Oxygen/ParadoxOxygenComponent.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
 
 AParadoxCharacter::AParadoxCharacter()
 {
+	SetCanBeDamaged(true);
+
 	// Set size for player capsule
 	GetCapsuleComponent()->InitCapsuleSize(42.f, 96.0f);
 
@@ -35,6 +39,8 @@ AParadoxCharacter::AParadoxCharacter()
 	// Create semantic action and replay components on the entity whose behavior is recorded.
 	GameplayActionComponent = CreateDefaultSubobject<UGameplayActionComponent>(TEXT("GameplayActionComponent"));
 	InventoryComponent = CreateDefaultSubobject<UParadoxInventoryComponent>(TEXT("InventoryComponent"));
+	HealthComponent = CreateDefaultSubobject<UParadoxHealthComponent>(TEXT("HealthComponent"));
+	OxygenComponent = CreateDefaultSubobject<UParadoxOxygenComponent>(TEXT("OxygenComponent"));
 	IntentReplayComponent = CreateDefaultSubobject<UIntentReplayComponent>(TEXT("IntentReplayComponent"));
 	IntentReplayComponent->ActionComponentOverride = GameplayActionComponent;
 	ObservationReplayComponent =
@@ -59,4 +65,60 @@ AParadoxCharacter::AParadoxCharacter()
 			TEXT("TimeTravelNiagaraComponent"));
 	TimeTravelNiagaraComponent->SetupAttachment(GetRootComponent());
 	TimeTravelNiagaraComponent->SetAutoActivate(false);
+}
+
+float AParadoxCharacter::TakeDamage(
+	const float DamageAmount,
+	const FDamageEvent& DamageEvent,
+	AController* EventInstigator,
+	AActor* DamageCauser)
+{
+	const float HealthBeforeDamage = HealthComponent
+		? HealthComponent->GetCurrentHealth()
+		: 0.0f;
+	const float EngineDamage = Super::TakeDamage(
+		DamageAmount,
+		DamageEvent,
+		EventInstigator,
+		DamageCauser);
+	return HealthComponent
+		? FMath::Max(0.0f, HealthBeforeDamage - HealthComponent->GetCurrentHealth())
+		: EngineDamage;
+}
+
+void AParadoxCharacter::BeginPlay()
+{
+	Super::BeginPlay();
+	if (HealthComponent)
+	{
+		HealthComponent->OnDeath.AddUniqueDynamic(
+			this,
+			&ThisClass::HandleHealthDeathEvent);
+	}
+}
+
+void AParadoxCharacter::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+	if (HealthComponent)
+	{
+		HealthComponent->OnDeath.RemoveDynamic(
+			this,
+			&ThisClass::HandleHealthDeathEvent);
+	}
+	Super::EndPlay(EndPlayReason);
+}
+
+void AParadoxCharacter::HandleHealthDeath(
+	const UDamageType* DamageType,
+	AController* InstigatedBy,
+	AActor* DamageCauser)
+{
+}
+
+void AParadoxCharacter::HandleHealthDeathEvent(
+	const UDamageType* DamageType,
+	AController* InstigatedBy,
+	AActor* DamageCauser)
+{
+	HandleHealthDeath(DamageType, InstigatedBy, DamageCauser);
 }

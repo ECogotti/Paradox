@@ -19,11 +19,14 @@
 #include "EngineUtils.h"
 #include "EntityRelationTags.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "GameFramework/DamageType.h"
 #include "GameFramework/GameModeBase.h"
 #include "GameplayActionTags.h"
+#include "Health/ParadoxHealthComponent.h"
 #include "Journal/IntentExecutionJournal.h"
 #include "Kismet/GameplayStatics.h"
 #include "Navigation/GridNavigationData.h"
+#include "Oxygen/ParadoxOxygenComponent.h"
 #include "Paradox.h"
 #include "Perception/ParadoxTemporalVisionComponent.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
@@ -115,11 +118,12 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 	if (!PlayerCharacter->GetGameplayActionComponent()
 		|| !PlayerCharacter->GetIntentReplayComponent()
 		|| !PlayerCharacter->GetTemporalEntityComponent()
+		|| !PlayerCharacter->GetHealthComponent()
 		|| !PlayerCharacter->GetPerceptionKnowledgeSourceComponent())
 	{
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::MissingComponent,
-			TEXT("The player is missing a required Gameplay Actions, Intent Replay, temporal identity, or Perception Knowledge Source component."),
+			TEXT("The player is missing a required Gameplay Actions, Intent Replay, Health, temporal identity, or Perception Knowledge Source component."),
 			true);
 	}
 
@@ -465,6 +469,10 @@ bool UParadoxTimeLoopComponent::CompleteCloneTimeTravelDeparture(
 			*GetNameSafe(&Clone));
 		return false;
 	}
+	if (UParadoxOxygenComponent* Oxygen = Clone.GetOxygenComponent())
+	{
+		Oxygen->SetRunConsumptionActive(false);
+	}
 
 	bool bPerceptionDisabled = true;
 	FString PerceptionFailure;
@@ -537,28 +545,46 @@ FParadoxTimeLoopOperationResult
 UParadoxTimeLoopComponent::ContinueParadoxRecovery(
 	const FGuid ParadoxEventId)
 {
+	if (LastRunFailureContext.Reason
+		!= EParadoxRunFailureReason::TemporalParadox)
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
+			TEXT("Paradox recovery cannot acknowledge a non-paradox run failure."),
+			false);
+	}
+	return ContinueRunFailureRecovery(ParadoxEventId);
+}
+
+FParadoxTimeLoopOperationResult
+UParadoxTimeLoopComponent::ContinueRunFailureRecovery(
+	const FGuid FailureEventId)
+{
 	if (CurrentPhase != EParadoxTimeLoopPhase::ParadoxFailure)
 	{
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
-			TEXT("Paradox recovery is only legal during ParadoxFailure."),
+			TEXT("Run-failure recovery is only legal during ParadoxFailure."),
 			false);
 	}
-	if (!ParadoxEventId.IsValid()
-		|| ParadoxEventId != LastParadoxContext.EventId)
+	if (!FailureEventId.IsValid()
+		|| FailureEventId != LastRunFailureContext.EventId)
 	{
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
-			TEXT("Paradox recovery acknowledgement belongs to a stale event."),
+			TEXT("Run-failure recovery acknowledgement belongs to a stale event."),
 			false);
 	}
 
 	FString Failure;
-	if (!RestoreWorldAndReconstructAfterParadox(Failure))
+	if (!RestoreWorldAndReconstructAfterRunFailure(Failure))
 	{
 		DestroyRuntimeClones();
 		return FailOperation(
-			EParadoxTimeLoopOperationStatus::ParadoxRecoveryFailed,
+			LastRunFailureContext.Reason
+				== EParadoxRunFailureReason::TemporalParadox
+				? EParadoxTimeLoopOperationStatus::ParadoxRecoveryFailed
+				: EParadoxTimeLoopOperationStatus::RunFailureRecoveryFailed,
 			Failure,
 			true);
 	}
@@ -566,9 +592,14 @@ UParadoxTimeLoopComponent::ContinueParadoxRecovery(
 	const FParadoxTimeLoopOperationResult Result = MakeResult(
 		EParadoxTimeLoopOperationStatus::Succeeded,
 		FString::Printf(
-			TEXT("Paradox recovery restored %d consolidated timeline(s); the failed Chrono Spawn is available again."),
+			TEXT("Run-failure recovery restored %d consolidated timeline(s); the failed Chrono Spawn is available again."),
 			ConsolidatedTimelines.Num()));
-	OnParadoxRecoveryCompleted.Broadcast(Result);
+	OnRunFailureRecoveryCompleted.Broadcast(Result);
+	if (LastRunFailureContext.Reason
+		== EParadoxRunFailureReason::TemporalParadox)
+	{
+		OnParadoxRecoveryCompleted.Broadcast(Result);
+	}
 	OnWorldResetCompleted.Broadcast(Result);
 	PARADOX_LOG_INFO(TEXT("%s"), *Result.DiagnosticMessage);
 	return Result;
@@ -811,12 +842,59 @@ void UParadoxTimeLoopComponent::SetPhase(const EParadoxTimeLoopPhase NewPhase)
 
 	const EParadoxTimeLoopPhase PreviousPhase = CurrentPhase;
 	CurrentPhase = NewPhase;
+	if (PreviousPhase == EParadoxTimeLoopPhase::ActiveRun
+		&& CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
+	{
+		SetTemporalOxygenConsumptionActive(false);
+	}
+	else if (PreviousPhase != EParadoxTimeLoopPhase::ActiveRun
+		&& CurrentPhase == EParadoxTimeLoopPhase::ActiveRun)
+	{
+		SetTemporalOxygenConsumptionActive(true);
+	}
 	OnPhaseChanged.Broadcast(PreviousPhase, CurrentPhase);
 	PARADOX_LOG_INFO(
 		TEXT("Time-loop phase changed from %d to %d in world '%s'."),
 		static_cast<int32>(PreviousPhase),
 		static_cast<int32>(CurrentPhase),
 		*GetNameSafe(GetWorld()));
+}
+
+void UParadoxTimeLoopComponent::SetTemporalOxygenConsumptionActive(
+	const bool bActive)
+{
+	if (IsValid(PlayerCharacter))
+	{
+		if (UParadoxOxygenComponent* Oxygen =
+			PlayerCharacter->GetOxygenComponent())
+		{
+			Oxygen->SetRunConsumptionActive(bActive);
+		}
+		else
+		{
+			PARADOX_LOG_ERROR(
+				TEXT("Player '%s' has no Oxygen component during time-loop phase transition."),
+				*GetNameSafe(PlayerCharacter));
+		}
+	}
+
+	for (AParadoxCloneCharacter* Clone : RuntimeClones)
+	{
+		if (!IsValid(Clone))
+		{
+			continue;
+		}
+		if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
+		{
+			Oxygen->SetRunConsumptionActive(bActive);
+		}
+		else
+		{
+			PARADOX_LOG_ERROR(
+				TEXT("Clone '%s' has no Oxygen component during time-loop phase transition."),
+				*GetNameSafe(Clone));
+		}
+	}
 }
 
 void UParadoxTimeLoopComponent::DiscoverChronoSpawns()
@@ -974,6 +1052,15 @@ bool UParadoxTimeLoopComponent::ActivatePlayerAtSelectedSpawn(FString& OutFailur
 		OutFailure = TEXT("The player or selected Chrono Spawn is invalid.");
 		return false;
 	}
+	UParadoxHealthComponent* Health = PlayerCharacter->GetHealthComponent();
+	UParadoxOxygenComponent* Oxygen = PlayerCharacter->GetOxygenComponent();
+	if (!Health || !Oxygen)
+	{
+		OutFailure = TEXT("The player requires Health and Oxygen components for the new run.");
+		return false;
+	}
+	Health->ResetHealth();
+	Oxygen->ResetOxygen();
 
 	UParadoxTemporalEntityComponent* TemporalComponent =
 		PlayerCharacter->GetTemporalEntityComponent();
@@ -1332,7 +1419,7 @@ bool UParadoxTimeLoopComponent::PrepareTemporalDetection(FString& OutFailure)
 
 void UParadoxTimeLoopComponent::EnableTemporalDetection()
 {
-	bParadoxAcceptedForRun = false;
+	bRunFailureAcceptedForRun = false;
 	++TemporalDetectionSessionId;
 	if (TemporalDetectionSessionId <= 0)
 	{
@@ -1401,7 +1488,7 @@ void UParadoxTimeLoopComponent::HandleTemporalOverlapDetected(
 {
 	OnTemporalOverlapDetected.Broadcast(Snapshot);
 	if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
-		|| bParadoxAcceptedForRun)
+		|| bRunFailureAcceptedForRun)
 	{
 		IgnoreTemporalCandidate(
 			Snapshot,
@@ -1515,15 +1602,52 @@ void UParadoxTimeLoopComponent::HandleTemporalOverlapDetected(
 	AcceptParadox(LastTemporalCandidate);
 }
 
+FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::AcceptPlayerDeath(
+	AParadoxPlayerCharacter& DeadPlayer,
+	const UDamageType* DamageType,
+	AController* InstigatedBy,
+	AActor* DamageCauser)
+{
+	if (!bTimeLoopEnabled
+		|| CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
+		|| PlayerCharacter != &DeadPlayer
+		|| bRunFailureAcceptedForRun)
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
+			FString::Printf(
+				TEXT("Player death for '%s' was received outside its authoritative ActiveRun."),
+				*GetNameSafe(&DeadPlayer)),
+			false);
+	}
+
+	FParadoxRunFailureContext Context;
+	Context.EventId = FGuid::NewGuid();
+	Context.Reason = EParadoxRunFailureReason::PlayerDeath;
+	Context.Player = &DeadPlayer;
+	Context.DamageTypeClass = DamageType
+		? DamageType->GetClass()
+		: UDamageType::StaticClass();
+	Context.InstigatedBy = InstigatedBy;
+	Context.DamageCauser = DamageCauser;
+	Context.DiagnosticMessage = FString::Printf(
+		TEXT("Player '%s' died during the active timeline."),
+		*GetNameSafe(&DeadPlayer));
+	EnterRunFailure(
+		Context,
+		EParadoxTimeLoopOperationStatus::PlayerDeathAccepted);
+	PresentRunFailureOrRecoverImmediately();
+	return LastOperationResult;
+}
+
 void UParadoxTimeLoopComponent::AcceptParadox(
 	const FParadoxTemporalCandidateSnapshot& Candidate)
 {
 	if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
-		|| bParadoxAcceptedForRun)
+		|| bRunFailureAcceptedForRun)
 	{
 		return;
 	}
-	bParadoxAcceptedForRun = true;
 
 	AParadoxCharacter* Observer =
 		Cast<AParadoxCharacter>(Candidate.PhysicalOverlap.Observer);
@@ -1554,22 +1678,39 @@ void UParadoxTimeLoopComponent::AcceptParadox(
 	LastParadoxContext.DiagnosticMessage =
 		Candidate.DiagnosticMessage;
 
-	SetPhase(EParadoxTimeLoopPhase::ParadoxFailure);
-	StopActiveRunWithoutConsolidation();
-
-	const FParadoxTimeLoopOperationResult Result = MakeResult(
-		EParadoxTimeLoopOperationStatus::ParadoxAccepted,
-		FString::Printf(
-			TEXT("Timeline collapse: T%d witnessed T%d."),
-			LastParadoxContext.ObserverTemporalIndex,
-			LastParadoxContext.TargetTemporalIndex));
-	OnRunEnded.Broadcast(Result);
+	FParadoxRunFailureContext FailureContext;
+	FailureContext.EventId = LastParadoxContext.EventId;
+	FailureContext.Reason = EParadoxRunFailureReason::TemporalParadox;
+	FailureContext.Player = PlayerCharacter;
+	FailureContext.ParadoxContext = LastParadoxContext;
+	FailureContext.DiagnosticMessage = FString::Printf(
+		TEXT("Timeline collapse: T%d witnessed T%d."),
+		LastParadoxContext.ObserverTemporalIndex,
+		LastParadoxContext.TargetTemporalIndex);
+	EnterRunFailure(
+		FailureContext,
+		EParadoxTimeLoopOperationStatus::ParadoxAccepted);
 	OnParadoxAccepted.Broadcast(LastParadoxContext);
-	PARADOX_LOG_WARNING(TEXT("%s"), *Result.DiagnosticMessage);
-	PresentParadoxOrRecoverImmediately();
+	PresentRunFailureOrRecoverImmediately();
 }
 
-bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterParadox(
+void UParadoxTimeLoopComponent::EnterRunFailure(
+	const FParadoxRunFailureContext& Context,
+	const EParadoxTimeLoopOperationStatus Status)
+{
+	bRunFailureAcceptedForRun = true;
+	LastRunFailureContext = Context;
+	SetPhase(EParadoxTimeLoopPhase::ParadoxFailure);
+	StopActiveRunWithoutConsolidation();
+	const FParadoxTimeLoopOperationResult Result = MakeResult(
+		Status,
+		Context.DiagnosticMessage);
+	OnRunEnded.Broadcast(Result);
+	OnRunFailureAccepted.Broadcast(LastRunFailureContext);
+	PARADOX_LOG_WARNING(TEXT("%s"), *Result.DiagnosticMessage);
+}
+
+bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterRunFailure(
 	FString& OutFailure)
 {
 	OutFailure.Reset();
@@ -1583,17 +1724,20 @@ bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterParadox(
 	if (!WorldState)
 	{
 		OutFailure =
-			TEXT("World State subsystem disappeared during paradox recovery.");
+			TEXT("World State subsystem disappeared during run-failure recovery.");
 		return false;
 	}
 	FWorldStateRestoreRequest RestoreRequest;
-	RestoreRequest.Reason = TEXT("ParadoxFailure");
+	RestoreRequest.Reason = LastRunFailureContext.Reason
+		== EParadoxRunFailureReason::PlayerDeath
+		? TEXT("PlayerDeath")
+		: TEXT("ParadoxFailure");
 	const FWorldStateRestoreResult RestoreResult =
 		WorldState->RestoreBaseline(RestoreRequest);
 	if (!RestoreResult.IsSuccess())
 	{
 		OutFailure = FString::Printf(
-			TEXT("Paradox World State restore failed with status %d at stage %d."),
+			TEXT("Run-failure World State restore failed with status %d at stage %d."),
 			static_cast<int32>(RestoreResult.Status),
 			static_cast<int32>(RestoreResult.FailureStage));
 		return false;
@@ -1611,7 +1755,7 @@ bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterParadox(
 	return true;
 }
 
-void UParadoxTimeLoopComponent::PresentParadoxOrRecoverImmediately()
+void UParadoxTimeLoopComponent::PresentRunFailureOrRecoverImmediately()
 {
 	AParadoxPlayerController* Controller = GetWorld()
 		? Cast<AParadoxPlayerController>(
@@ -1622,12 +1766,12 @@ void UParadoxTimeLoopComponent::PresentParadoxOrRecoverImmediately()
 			? Controller->GetOutcomePresentationComponent()
 			: nullptr;
 	if (Presentation
-		&& Presentation->BeginParadoxPresentation(
-			LastParadoxContext))
+		&& Presentation->BeginRunFailurePresentation(
+			LastRunFailureContext))
 	{
 		return;
 	}
-	ContinueParadoxRecovery(LastParadoxContext.EventId);
+	ContinueRunFailureRecovery(LastRunFailureContext.EventId);
 }
 
 void UParadoxTimeLoopComponent::PresentGameOver()

@@ -21,7 +21,8 @@ inventory-owned effect bookkeeping and preserve the `Inventory/CurrentHolder` an
 [Paradox insertable items and item slots](ITEM_SLOTS.md) for authoring and replay behavior.
 
 Use `HasItem`, `GetEquippedItem`, `CanEquip`, and `CanUnequip` for Blueprint-safe queries. Native
-Gameplay Actions call the validated `TryEquip`, `TrySwap`, and `TryDropAtTransform` transitions.
+Gameplay Actions call the validated `TryEquip`, `TrySwap`, `TryDropAtTransform`, and
+`TryUseEquippedItem` transitions.
 Recoverable failures return `FParadoxInventoryOperationResult` and a diagnostic instead of asserting.
 `OnEquippedItemChanged(PreviousItem, NewItem)` publishes only completed transitions; Swap emits its
 single final state and never exposes an empty intermediate slot. Reentrant transitions are rejected.
@@ -111,6 +112,52 @@ Character's ordinary Gameplay Actions component and is therefore journalled and 
 
 Empty effect/action arrays are valid. A missing special-action Definition fails with a diagnostic.
 
+### Generic Use and consumables
+
+`AParadoxPickupableActor` provides a reusable generic Use contract. The safe base implementation
+rejects Use as unsupported. A native or Blueprint child may override the protected
+`CanUseItem` and `ExecuteUseItem` hooks; it returns `FParadoxPickupableUseResult`, which separates
+effect success, a request to consume, the committed-consumption flag, a reason tag, and diagnostic
+text. `EvaluateEquippedItemUse` performs preflight without changing state.
+
+`TryUseEquippedItem` owns the complete transaction. It validates the expected item, authoritative
+holder/slot, reset state, concurrent inventory work, and living Character before invoking the item.
+The transaction guard remains active throughout the effect and consumption commit. A failed effect
+leaves slot, item, passives, and bindings unchanged. A successful consumable removes passives and
+bindings once, clears the slot, publishes one final inventory transition, and places the Actor in
+`Consumed`. A consumed Actor is hidden, collisionless, absent from GridWorld/navigation, and cannot
+be used again during that run; it is not destroyed.
+
+The reusable action assets are:
+
+- `/Game/Data/GameplayActions/DA_ParadoxUse`, using
+  `GameplayAction.Type.Paradox.Inventory.Use`, the Inventory lock, Reject blocked policy, and
+  journaling;
+- `/Game/Data/Inventory/DA_ParadoxUsePickupableAction`, the UI descriptor labelled `Use`.
+
+The immutable intent stores only the soft `Pickupable` parameter. It does not record effect values
+or resource state, so a Clone evaluates the same Use against its own current runtime state.
+
+### Authoring an Oxygen Canister
+
+Create a placeable Actor Blueprint with `AParadoxOxygenCanister` as parent and author mesh,
+materials, icon, audio, and VFX in that child. Do not add a separate interaction or HUD button: the
+native parent already includes the `Use` descriptor in its pickupable action catalog, and the
+existing Inventory widget discovers it through ordinary catalog/preflight logic.
+
+`OxygenRestoreSeconds` is measured in seconds and defaults to `30`. It must be finite and greater
+than zero; invalid values fail editor/runtime validation and are never silently corrected. Pickup,
+Drop, and Swap do not modify Oxygen. Generic Use requires a living authoritative holder, a valid
+non-depleted Oxygen component, and capacity below full. The effect calls only
+`RestoreOxygenSeconds`; any positive actual delta commits consumption, including a clamped restore
+such as `170 -> 180`. Full Oxygen, missing Oxygen, invalid tuning, death, or a zero actual restore
+leaves the canister equipped.
+
+Use `On Canister Use Succeeded` for presentation that needs the Character, requested seconds, and
+actual restored seconds. `On Canister Use Failed` exposes the reason tag and diagnostic. These hooks
+do not own gameplay state. The generic `On Use Committed` and `On Use Failed` hooks remain available
+to all pickupable subclasses.
+
 Set `PickupableDisplayName` and the soft `PickupableIcon` on each pickupable for native HUD
 presentation. `SetPickupableActions` validates and deduplicates a runtime replacement catalog, then
 publishes `OnPickupableActionsChanged`; native subclasses changing authored action state directly
@@ -134,7 +181,15 @@ After `Create Widget`, call `Set Inventory Character` with the Character being p
 `RequestPickupableAction`, and `RequestDrop`. Inventory, item-catalog, Drop Targeting and Gameplay
 Action lifecycle delegates update content and enabled states without Tick. Designers may replace the
 native layout in one Widget Blueprint; action entries use the configurable
-`ActionButtonWidgetClass` and require no per-action asset by default.
+`ActionButtonWidgetClass` and require no per-action asset by default. Set
+`PickupableActionButtonPadding` in the Inventory Widget Class Defaults to apply a uniform UMG margin
+to every entry generated inside `SpecialActionsContainer`.
+
+Inventory transitions publish their item-change delegate while the transaction guard is still
+active. The widget therefore rebuilds the catalog immediately and performs one coalesced
+availability refresh on the next world tick. This prevents a newly equipped item's valid actions
+from retaining the transition's temporary disabled state; it is event-driven and does not enable a
+permanent widget Tick.
 
 Blueprint replacements require `EquipmentStateSwitcher`, `EmptySlotIcon`, `EquippedItemIcon`,
 `DropButton`, and `SpecialActionsContainer` with those exact variable names. Page 0 of the switcher
@@ -203,6 +258,10 @@ completion or failure. World State restores existence and transform; pickupables
 world capabilities and the successful-baseline presentation hook. Gameplay Action abort remains the
 time loop's existing responsibility.
 
+Consumed pickupables use this same lifecycle: `Consumed -> RestorePending -> World`. Authored Oxygen
+Canisters therefore return from the immutable baseline without a respawn manager or a second
+consumable registry.
+
 Destroying an equipped item clears its inventory reference and passives. Character teardown uses
 the same idempotent cleanup path.
 
@@ -222,4 +281,10 @@ Run the focused scenarios with:
 
 ```text
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests Paradox.Inventory; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+The Oxygen Canister integration has its own suite:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests Paradox.OxygenCanister; Quit" -TestExit="Automation Test Queue Empty" -log
 ```

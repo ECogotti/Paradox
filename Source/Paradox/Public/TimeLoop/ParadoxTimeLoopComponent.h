@@ -89,7 +89,13 @@ public:
 	FParadoxAcceptedEvent OnParadoxAccepted;
 
 	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
+	FParadoxRunFailureEvent OnRunFailureAccepted;
+
+	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
 	FParadoxTimeLoopOperationEvent OnParadoxRecoveryCompleted;
+
+	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
+	FParadoxTimeLoopOperationEvent OnRunFailureRecoveryCompleted;
 
 	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
 	FParadoxGameOverEvent OnGameOver;
@@ -123,6 +129,17 @@ public:
 	/** Presentation acknowledgement that authorizes reset after the fade reached black. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult ContinueParadoxRecovery(FGuid ParadoxEventId);
+
+	/** Generic presentation acknowledgement for paradox and Player-death recovery. */
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
+	FParadoxTimeLoopOperationResult ContinueRunFailureRecovery(FGuid FailureEventId);
+
+	/** Character integration seam; accepted only for the authoritative Player during ActiveRun. */
+	FParadoxTimeLoopOperationResult AcceptPlayerDeath(
+		AParadoxPlayerCharacter& DeadPlayer,
+		const UDamageType* DamageType,
+		AController* InstigatedBy,
+		AActor* DamageCauser);
 
 	/** External puzzle authority command; the loop does not invent a victory condition. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
@@ -202,6 +219,12 @@ public:
 	FParadoxContext GetLastParadoxContext() const { return LastParadoxContext; }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
+	FParadoxRunFailureContext GetLastRunFailureContext() const
+	{
+		return LastRunFailureContext;
+	}
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
 	FParadoxGameOverContext GetLastGameOverContext() const
 	{
 		return LastGameOverContext;
@@ -224,6 +247,7 @@ private:
 		const FString& DiagnosticMessage,
 		bool bEnterErrorPhase);
 	void SetPhase(EParadoxTimeLoopPhase NewPhase);
+	void SetTemporalOxygenConsumptionActive(bool bActive);
 	void DiscoverChronoSpawns();
 	bool PrepareWorldState(FString& OutFailure);
 	bool EnsureWorldStateAnchor(FString& OutFailure);
@@ -240,8 +264,11 @@ private:
 	void EnableTemporalDetection();
 	void DisableTemporalDetection(bool bClearParticipants);
 	void AcceptParadox(const FParadoxTemporalCandidateSnapshot& Candidate);
-	bool RestoreWorldAndReconstructAfterParadox(FString& OutFailure);
-	void PresentParadoxOrRecoverImmediately();
+	void EnterRunFailure(
+		const FParadoxRunFailureContext& Context,
+		EParadoxTimeLoopOperationStatus Status);
+	bool RestoreWorldAndReconstructAfterRunFailure(FString& OutFailure);
+	void PresentRunFailureOrRecoverImmediately();
 	void PresentGameOver();
 	void PresentLevelComplete();
 	void StopActiveRunWithoutConsolidation();
@@ -348,6 +375,9 @@ private:
 	FParadoxContext LastParadoxContext;
 
 	UPROPERTY(Transient)
+	FParadoxRunFailureContext LastRunFailureContext;
+
+	UPROPERTY(Transient)
 	FParadoxGameOverContext LastGameOverContext;
 
 	UPROPERTY(Transient)
@@ -370,7 +400,7 @@ private:
 
 	bool bPlayerCollisionWasEnabled = true;
 	int32 TemporalDetectionSessionId = 0;
-	bool bParadoxAcceptedForRun = false;
+	bool bRunFailureAcceptedForRun = false;
 	bool bEntityRelationsOverrideApplied = false;
 
 #if WITH_DEV_AUTOMATION_TESTS

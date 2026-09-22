@@ -18,6 +18,17 @@ UParadoxOutcomePresentationComponent::UParadoxOutcomePresentationComponent()
 bool UParadoxOutcomePresentationComponent::BeginParadoxPresentation(
 	const FParadoxContext& Context)
 {
+	FParadoxRunFailureContext FailureContext;
+	FailureContext.EventId = Context.EventId;
+	FailureContext.Reason = EParadoxRunFailureReason::TemporalParadox;
+	FailureContext.ParadoxContext = Context;
+	FailureContext.DiagnosticMessage = Context.DiagnosticMessage;
+	return BeginRunFailurePresentation(FailureContext);
+}
+
+bool UParadoxOutcomePresentationComponent::BeginRunFailurePresentation(
+	const FParadoxRunFailureContext& Context)
+{
 	const AParadoxPlayerController* Controller =
 		Cast<AParadoxPlayerController>(GetOwner());
 	if (!Context.IsValid()
@@ -28,7 +39,7 @@ bool UParadoxOutcomePresentationComponent::BeginParadoxPresentation(
 		return false;
 	}
 
-	ActiveData = MakeParadoxPresentationData(Context);
+	ActiveData = MakeRunFailurePresentationData(Context);
 	bRecoveryRequested = false;
 	PresentationState = EParadoxOutcomePresentationState::FadingToBlack;
 	StageStartedAtSeconds = FPlatformTime::Seconds();
@@ -101,8 +112,8 @@ void UParadoxOutcomePresentationComponent::TickComponent(
 				bRecoveryRequested = true;
 				if (UParadoxTimeLoopComponent* TimeLoop = ResolveTimeLoop())
 				{
-					TimeLoop->ContinueParadoxRecovery(
-						ActiveData.ParadoxContext.EventId);
+					TimeLoop->ContinueRunFailureRecovery(
+						ActiveData.RunFailureContext.EventId);
 				}
 			}
 			PresentationState =
@@ -225,20 +236,48 @@ FParadoxOutcomePresentationData
 UParadoxOutcomePresentationComponent::MakeParadoxPresentationData(
 	const FParadoxContext& Context)
 {
+	FParadoxRunFailureContext FailureContext;
+	FailureContext.EventId = Context.EventId;
+	FailureContext.Reason = EParadoxRunFailureReason::TemporalParadox;
+	FailureContext.ParadoxContext = Context;
+	FailureContext.DiagnosticMessage = Context.DiagnosticMessage;
+	return MakeRunFailurePresentationData(FailureContext);
+}
+
+FParadoxOutcomePresentationData
+UParadoxOutcomePresentationComponent::MakeRunFailurePresentationData(
+	const FParadoxRunFailureContext& Context)
+{
 	FParadoxOutcomePresentationData Data;
-	Data.OutcomeType = EParadoxOutcomeType::TimelineCollapse;
-	Data.Title = NSLOCTEXT(
-		"Paradox",
-		"TimelineCollapseTitle",
-		"TIMELINE COLLAPSE");
-	Data.Message = FText::Format(
-		NSLOCTEXT(
+	Data.RunFailureContext = Context;
+	if (Context.Reason == EParadoxRunFailureReason::PlayerDeath)
+	{
+		Data.OutcomeType = EParadoxOutcomeType::PlayerDeath;
+		Data.Title = NSLOCTEXT(
 			"Paradox",
-			"TimelineCollapseMessage",
-			"T{0} witnessed T{1}.\nThe past saw the future."),
-		FText::AsNumber(Context.ObserverTemporalIndex),
-		FText::AsNumber(Context.TargetTemporalIndex));
-	Data.ParadoxContext = Context;
+			"PlayerDeathTitle",
+			"LIFE SIGNS LOST");
+		Data.Message = NSLOCTEXT(
+			"Paradox",
+			"PlayerDeathMessage",
+			"The current timeline ended with the Player's death.");
+	}
+	else
+	{
+		Data.OutcomeType = EParadoxOutcomeType::TimelineCollapse;
+		Data.Title = NSLOCTEXT(
+			"Paradox",
+			"TimelineCollapseTitle",
+			"TIMELINE COLLAPSE");
+		Data.Message = FText::Format(
+			NSLOCTEXT(
+				"Paradox",
+				"TimelineCollapseMessage",
+				"T{0} witnessed T{1}.\nThe past saw the future."),
+			FText::AsNumber(Context.ParadoxContext.ObserverTemporalIndex),
+			FText::AsNumber(Context.ParadoxContext.TargetTemporalIndex));
+		Data.ParadoxContext = Context.ParadoxContext;
+	}
 	Data.bShowRestart = false;
 	return Data;
 }

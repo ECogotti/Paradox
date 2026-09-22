@@ -6,7 +6,6 @@
 #include "CommonButtonBase.h"
 #include "CommonTextBlock.h"
 #include "Components/Image.h"
-#include "Components/PanelWidget.h"
 #include "Components/VerticalBox.h"
 #include "Components/WidgetSwitcher.h"
 #include "Controllers/ParadoxPlayerController.h"
@@ -14,8 +13,10 @@
 #include "Engine/World.h"
 #include "HUD/ParadoxGameplayHUDComponent.h"
 #include "HUD/ParadoxGameplayHUDWidget.h"
+#include "Health/ParadoxHealthWidget.h"
 #include "Inventory/ParadoxInventoryActionButtonWidget.h"
 #include "Inventory/ParadoxInventoryWidget.h"
+#include "Oxygen/ParadoxOxygenWidget.h"
 #include "UObject/UnrealType.h"
 #include "Widgets/TacticalPauseControlsWidget.h"
 
@@ -24,13 +25,6 @@ struct FParadoxGameplayHUDTestAccessor
 	static UWidgetSwitcher* GetModeSwitcher(UParadoxGameplayHUDWidget& Widget)
 	{
 		return Widget.HUDModeSwitcher.Get();
-	}
-
-	static UPanelWidget* GetSection(
-		UParadoxGameplayHUDWidget& Widget,
-		const EParadoxGameplayHUDSection Section)
-	{
-		return Widget.GetSectionContainer(Section);
 	}
 
 	static UParadoxInventoryWidget* GetEmbeddedEquipmentWidget(
@@ -43,6 +37,18 @@ struct FParadoxGameplayHUDTestAccessor
 		UParadoxGameplayHUDWidget& Widget)
 	{
 		return Widget.FindEmbeddedTacticalPauseWidget();
+	}
+
+	static UParadoxHealthWidget* GetEmbeddedHealthWidget(
+		UParadoxGameplayHUDWidget& Widget)
+	{
+		return Widget.FindEmbeddedHealthWidget();
+	}
+
+	static UParadoxOxygenWidget* GetEmbeddedOxygenWidget(
+		UParadoxGameplayHUDWidget& Widget)
+	{
+		return Widget.FindEmbeddedOxygenWidget();
 	}
 };
 
@@ -152,7 +158,7 @@ bool FParadoxGameplayHUDArchitectureTest::RunTest(const FString& Parameters)
 	}
 	TestEqual(TEXT("HUD defaults to Normal mode"), HUD->InitialHUDMode, EParadoxGameplayHUDMode::Normal);
 	TestEqual(TEXT("visibility policy defaults Automatic"), HUD->GetVisibilityOverride(), EParadoxGameplayHUDVisibilityOverride::Automatic);
-	TestEqual(TEXT("Status section is reserved and collapsed"), HUD->StatusSectionVisibility, ESlateVisibility::Collapsed);
+	TestEqual(TEXT("Status section is visible for Health and Oxygen"), HUD->StatusSectionVisibility, ESlateVisibility::Visible);
 	TestTrue(TEXT("native root class is configured"), HUD->GameplayHUDWidgetClass.Get() == UParadoxGameplayHUDWidget::StaticClass());
 	TestNull(
 		TEXT("Tactical Pause section class is no longer exposed by the coordinator"),
@@ -160,6 +166,18 @@ bool FParadoxGameplayHUDArchitectureTest::RunTest(const FString& Parameters)
 	TestNull(
 		TEXT("Equipment section class is no longer exposed by the coordinator"),
 		FindFProperty<FProperty>(UParadoxGameplayHUDComponent::StaticClass(), TEXT("EquipmentWidgetClass")));
+	TestNull(
+		TEXT("root no longer exposes a Tactical Pause container binding"),
+		FindFProperty<FProperty>(UParadoxGameplayHUDWidget::StaticClass(), TEXT("TacticalPauseContainer")));
+	TestNull(
+		TEXT("root no longer exposes an Equipment container binding"),
+		FindFProperty<FProperty>(UParadoxGameplayHUDWidget::StaticClass(), TEXT("EquipmentContainer")));
+	TestNull(
+		TEXT("root no longer exposes a Status container binding"),
+		FindFProperty<FProperty>(UParadoxGameplayHUDWidget::StaticClass(), TEXT("StatusContainer")));
+	TestNull(
+		TEXT("root no longer exposes a Collapsed mode container binding"),
+		FindFProperty<FProperty>(UParadoxGameplayHUDWidget::StaticClass(), TEXT("CollapsedModeContainer")));
 	TestTrue(TEXT("screen-space HUD input defaults to Game and UI routing"), HUD->bConfigureGameAndUIInputMode);
 	TestFalse(TEXT("inventory widget is concrete"), UParadoxInventoryWidget::StaticClass()->HasAnyClassFlags(CLASS_Abstract));
 	TestFalse(TEXT("action entry widget is concrete"), UParadoxInventoryActionButtonWidget::StaticClass()->HasAnyClassFlags(CLASS_Abstract));
@@ -195,6 +213,21 @@ bool FParadoxGameplayHUDArchitectureTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Set HUD Mode is Blueprint-visible"), UParadoxGameplayHUDComponent::StaticClass()->FindFunctionByName(TEXT("SetHUDMode")));
 	TestNotNull(TEXT("Toggle HUD Mode is Blueprint-visible"), UParadoxGameplayHUDComponent::StaticClass()->FindFunctionByName(TEXT("ToggleHUDMode")));
 	TestNotNull(TEXT("mode hook is reflected"), UParadoxGameplayHUDWidget::StaticClass()->FindFunctionByName(TEXT("OnModeChanged")));
+	TestNull(
+		TEXT("Oxygen widget exposes no Owning Player fallback"),
+		UParadoxOxygenWidget::StaticClass()->FindFunctionByName(TEXT("ReturnToOwningPlayer")));
+	TestNull(
+		TEXT("Health widget exposes no native progress-bar binding"),
+		FindFProperty<FProperty>(UParadoxHealthWidget::StaticClass(), TEXT("HealthProgressBar")));
+	TestNull(
+		TEXT("Health widget exposes no native state-text binding"),
+		FindFProperty<FProperty>(UParadoxHealthWidget::StaticClass(), TEXT("HealthStateText")));
+	TestNull(
+		TEXT("Oxygen widget exposes no native progress-bar binding"),
+		FindFProperty<FProperty>(UParadoxOxygenWidget::StaticClass(), TEXT("OxygenProgressBar")));
+	TestNull(
+		TEXT("Oxygen widget exposes no native countdown-text binding"),
+		FindFProperty<FProperty>(UParadoxOxygenWidget::StaticClass(), TEXT("OxygenCountdownText")));
 	return true;
 }
 
@@ -315,14 +348,19 @@ bool FParadoxGameplayHUDModeTest::RunTest(const FString& Parameters)
 	TestNotNull(
 		TEXT("native root fallback owns an Inventory widget"),
 		FParadoxGameplayHUDTestAccessor::GetEmbeddedEquipmentWidget(*Widget));
+	TestNull(
+		TEXT("native root fallback does not create a Health widget"),
+		FParadoxGameplayHUDTestAccessor::GetEmbeddedHealthWidget(*Widget));
+	TestNull(
+		TEXT("native root fallback does not create an Oxygen widget"),
+		FParadoxGameplayHUDTestAccessor::GetEmbeddedOxygenWidget(*Widget));
 	TestEqual(TEXT("initial page is Normal"), Switcher->GetActiveWidgetIndex(), UParadoxGameplayHUDWidget::GetNormalModePageIndex());
 	TestTrue(TEXT("Collapsed presentation applies"), Widget->ApplyHUDMode(EParadoxGameplayHUDMode::Collapsed));
 	TestEqual(TEXT("collapsed page index is stable"), Switcher->GetActiveWidgetIndex(), UParadoxGameplayHUDWidget::GetCollapsedModePageIndex());
 	TestEqual(TEXT("widget reports Collapsed"), Widget->GetHUDMode(), EParadoxGameplayHUDMode::Collapsed);
-	TestTrue(TEXT("designer collapsed container exists"), Widget->GetCollapsedModeContainer() != nullptr);
 	Widget->SetSectionVisibility(EParadoxGameplayHUDSection::Equipment, ESlateVisibility::Hidden);
-	UPanelWidget* Equipment = FParadoxGameplayHUDTestAccessor::GetSection(
-		*Widget, EParadoxGameplayHUDSection::Equipment);
+	UParadoxInventoryWidget* Equipment =
+		FParadoxGameplayHUDTestAccessor::GetEmbeddedEquipmentWidget(*Widget);
 	TestTrue(TEXT("normal section visibility remains independently writable"), Equipment && Equipment->GetVisibility() == ESlateVisibility::Hidden);
 	return true;
 }

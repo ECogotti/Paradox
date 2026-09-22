@@ -1,12 +1,13 @@
 #include "HUD/ParadoxGameplayHUDWidget.h"
 
 #include "Components/HorizontalBox.h"
-#include "Components/PanelWidget.h"
 #include "Components/VerticalBox.h"
 #include "Components/WidgetSwitcher.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "HUD/ParadoxGameplayHUDComponent.h"
+#include "Health/ParadoxHealthWidget.h"
 #include "Inventory/ParadoxInventoryWidget.h"
+#include "Oxygen/ParadoxOxygenWidget.h"
 #include "Paradox.h"
 #include "Settings/TacticalPauseSettings.h"
 #include "Blueprint/WidgetTree.h"
@@ -81,25 +82,36 @@ void UParadoxGameplayHUDWidget::SetSectionVisibility(
 	const EParadoxGameplayHUDSection Section,
 	const ESlateVisibility NewVisibility)
 {
-	if (UPanelWidget* Container = GetSectionContainer(Section))
+	switch (Section)
 	{
-		Container->SetVisibility(NewVisibility);
-		return;
-	}
-	if (Section == EParadoxGameplayHUDSection::Equipment)
-	{
+	case EParadoxGameplayHUDSection::Equipment:
 		if (UParadoxInventoryWidget* EmbeddedEquipment = FindEmbeddedEquipmentWidget())
 		{
 			EmbeddedEquipment->SetVisibility(NewVisibility);
 		}
-	}
-	else if (Section == EParadoxGameplayHUDSection::TacticalPause)
-	{
+		break;
+
+	case EParadoxGameplayHUDSection::TacticalPause:
 		if (UTacticalPauseControlsWidget* EmbeddedTacticalPause =
 			FindEmbeddedTacticalPauseWidget())
 		{
 			EmbeddedTacticalPause->SetVisibility(NewVisibility);
 		}
+		break;
+
+	case EParadoxGameplayHUDSection::Status:
+		if (UParadoxHealthWidget* EmbeddedHealth = FindEmbeddedHealthWidget())
+		{
+			EmbeddedHealth->SetVisibility(NewVisibility);
+		}
+		if (UParadoxOxygenWidget* EmbeddedOxygen = FindEmbeddedOxygenWidget())
+		{
+			EmbeddedOxygen->SetVisibility(NewVisibility);
+		}
+		break;
+
+	default:
+		break;
 	}
 }
 
@@ -121,16 +133,6 @@ void UParadoxGameplayHUDWidget::BuildNativeFallbackTree()
 	NormalPage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
 	HUDModeSwitcher->AddChild(NormalPage);
 
-	TacticalPauseContainer = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(), TEXT("TacticalPauseContainer"));
-	EquipmentContainer = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(), TEXT("EquipmentContainer"));
-	StatusContainer = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(), TEXT("StatusContainer"));
-	NormalPage->AddChild(TacticalPauseContainer);
-	NormalPage->AddChild(EquipmentContainer);
-	NormalPage->AddChild(StatusContainer);
-
 	const UTacticalPauseSettings* TacticalPauseSettings =
 		GetDefault<UTacticalPauseSettings>();
 	UClass* TacticalPauseClass = TacticalPauseSettings
@@ -146,15 +148,15 @@ void UParadoxGameplayHUDWidget::BuildNativeFallbackTree()
 	UTacticalPauseControlsWidget* TacticalPauseControls =
 		WidgetTree->ConstructWidget<UTacticalPauseControlsWidget>(
 			TacticalPauseClass, TEXT("TacticalPauseControls"));
-	TacticalPauseContainer->AddChild(TacticalPauseControls);
+	NormalPage->AddChild(TacticalPauseControls);
 	UParadoxInventoryWidget* Inventory = WidgetTree->ConstructWidget<UParadoxInventoryWidget>(
 		UParadoxInventoryWidget::StaticClass(), TEXT("InventoryWidget"));
-	EquipmentContainer->AddChild(Inventory);
+	NormalPage->AddChild(Inventory);
 
-	CollapsedModeContainer = WidgetTree->ConstructWidget<UVerticalBox>(
-		UVerticalBox::StaticClass(), TEXT("CollapsedModeContainer"));
-	CollapsedModeContainer->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
-	HUDModeSwitcher->AddChild(CollapsedModeContainer);
+	UVerticalBox* CollapsedPage = WidgetTree->ConstructWidget<UVerticalBox>(
+		UVerticalBox::StaticClass(), TEXT("CollapsedModePage"));
+	CollapsedPage->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	HUDModeSwitcher->AddChild(CollapsedPage);
 }
 
 UTacticalPauseControlsWidget* UParadoxGameplayHUDWidget::FindEmbeddedTacticalPauseWidget() const
@@ -220,18 +222,64 @@ UParadoxInventoryWidget* UParadoxGameplayHUDWidget::FindEmbeddedEquipmentWidget(
 	return Result;
 }
 
-UPanelWidget* UParadoxGameplayHUDWidget::GetSectionContainer(
-	const EParadoxGameplayHUDSection Section) const
+UParadoxHealthWidget* UParadoxGameplayHUDWidget::FindEmbeddedHealthWidget() const
 {
-	switch (Section)
+	if (!WidgetTree)
 	{
-	case EParadoxGameplayHUDSection::TacticalPause:
-		return TacticalPauseContainer;
-	case EParadoxGameplayHUDSection::Equipment:
-		return EquipmentContainer;
-	case EParadoxGameplayHUDSection::Status:
-		return StatusContainer;
-	default:
 		return nullptr;
 	}
+
+	TArray<UWidget*> Widgets;
+	WidgetTree->GetAllWidgets(Widgets);
+	UParadoxHealthWidget* Result = nullptr;
+	for (UWidget* Widget : Widgets)
+	{
+		UParadoxHealthWidget* HealthWidget = Cast<UParadoxHealthWidget>(Widget);
+		if (!HealthWidget)
+		{
+			continue;
+		}
+		if (!Result)
+		{
+			Result = HealthWidget;
+			continue;
+		}
+		PARADOX_LOG_WARNING(
+			TEXT("Gameplay HUD widget '%s' contains multiple embedded Health widgets; '%s' is authoritative and '%s' is ignored."),
+			*GetNameSafe(this),
+			*GetNameSafe(Result),
+			*GetNameSafe(HealthWidget));
+	}
+	return Result;
+}
+
+UParadoxOxygenWidget* UParadoxGameplayHUDWidget::FindEmbeddedOxygenWidget() const
+{
+	if (!WidgetTree)
+	{
+		return nullptr;
+	}
+
+	TArray<UWidget*> Widgets;
+	WidgetTree->GetAllWidgets(Widgets);
+	UParadoxOxygenWidget* Result = nullptr;
+	for (UWidget* Widget : Widgets)
+	{
+		UParadoxOxygenWidget* OxygenWidget = Cast<UParadoxOxygenWidget>(Widget);
+		if (!OxygenWidget)
+		{
+			continue;
+		}
+		if (!Result)
+		{
+			Result = OxygenWidget;
+			continue;
+		}
+		PARADOX_LOG_WARNING(
+			TEXT("Gameplay HUD widget '%s' contains multiple Oxygen widgets; '%s' is authoritative and '%s' is ignored."),
+			*GetNameSafe(this),
+			*GetNameSafe(Result),
+			*GetNameSafe(OxygenWidget));
+	}
+	return Result;
 }

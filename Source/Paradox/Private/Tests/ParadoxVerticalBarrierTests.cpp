@@ -109,9 +109,14 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Barrier attaches to inherited root"), Defaults->BarrierMesh && Defaults->BarrierMesh->GetAttachParent() == Defaults->BillboardRoot.Get());
 	TestTrue(TEXT("Audio follows BarrierMesh"), Defaults->MovementAudio && Defaults->MovementAudio->GetAttachParent() == Defaults->BarrierMesh.Get());
 	TestTrue(TEXT("VFX follows BarrierMesh"), Defaults->MovementVFX && Defaults->MovementVFX->GetAttachParent() == Defaults->BarrierMesh.Get());
-	TestTrue(TEXT("Occupancy volume mirrors modifier extent"),
-		Defaults->PassageOccupancyVolume && Defaults->GridNavigationModifier
-		&& Defaults->PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(Defaults->GridNavigationModifier->BoxExtent));
+	TestTrue(TEXT("Occupancy volume follows BarrierMesh"),
+		Defaults->PassageOccupancyVolume
+			&& Defaults->PassageOccupancyVolume->GetAttachParent() == Defaults->BarrierMesh.Get());
+	TestTrue(TEXT("Occupancy volume is movable with BarrierMesh"),
+		Defaults->PassageOccupancyVolume->Mobility == EComponentMobility::Movable);
+	TestTrue(TEXT("Grid modifier remains attached to the stationary root"),
+		Defaults->GridNavigationModifier
+			&& Defaults->GridNavigationModifier->GetAttachParent() == Defaults->BillboardRoot.Get());
 	TestFalse(TEXT("Barrier mesh does not own navigation"), Defaults->BarrierMesh->CanEverAffectNavigation());
 	TestFalse(TEXT("Stable endpoint navigation generation is opt-in"), Defaults->bGenerateNavigationAtStableEndpoints);
 	TestFalse(TEXT("Occupancy volume does not own navigation"), Defaults->PassageOccupancyVolume->CanEverAffectNavigation());
@@ -121,6 +126,8 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 		Defaults->EndArrow->GetRelativeLocation().Z < Defaults->StartArrow->GetRelativeLocation().Z);
 	TestTrue(TEXT("Closed Start blocks navigation by default"), Defaults->GridNavigationModifier->bBlockCells);
 	TestTrue(TEXT("Safe policy is the native default"), Defaults->bWaitForClearPassage);
+	TestTrue(TEXT("Attached-passenger collision suppression is enabled by default"),
+		Defaults->bDisableAttachedActorCollisionDuringTransport);
 	TestEqual(TEXT("Closed Start is the native initial endpoint"), Defaults->InitialPosition, EPuzzleTransformMoverInitialPosition::Start);
 	TestNotNull(TEXT("World State participant exists"), Defaults->WorldStateParticipant.Get());
 	TestNotNull(TEXT("Perception source exists"), Defaults->PerceptionSource.Get());
@@ -141,6 +148,147 @@ bool FParadoxVerticalBarrierArchitectureTest::RunTest(const FString& Parameters)
 	TestEqual(TEXT("Vertical Barrier permits an empty native interaction catalog"),
 		Defaults->InteractionComponent ? Defaults->InteractionComponent->InteractionDefinitions.Num() : INDEX_NONE,
 		0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxVerticalBarrierIndependentPassageComponentsTest,
+	"Paradox.VerticalBarrier.IndependentPassageComponents",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxVerticalBarrierIndependentPassageComponentsTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::VerticalBarrier::Tests;
+	FScopedWorld Scope;
+	if (!TestNotNull(TEXT("Independent-component test world exists"), Scope.World))
+	{
+		return false;
+	}
+
+	AParadoxVerticalBarrierTestActor* Barrier = Spawn<AParadoxVerticalBarrierTestActor>(
+		*Scope.World,
+		TEXT("IndependentPassageComponentsBarrier"));
+	if (!TestNotNull(TEXT("Independent-component barrier exists"), Barrier))
+	{
+		return false;
+	}
+
+	const FTransform ModifierRelativeTransform(
+		FRotator(0.0f, 35.0f, 0.0f),
+		FVector(45.0f, -20.0f, 90.0f));
+	const FVector ModifierExtent(35.0f, 55.0f, 75.0f);
+	const FTransform OccupancyRelativeTransform(
+		FRotator(10.0f, 0.0f, 20.0f),
+		FVector(-30.0f, 15.0f, 40.0f));
+	const FVector OccupancyExtent(60.0f, 25.0f, 100.0f);
+	Barrier->GridNavigationModifier->SetRelativeTransform(ModifierRelativeTransform);
+	Barrier->GridNavigationModifier->BoxExtent = ModifierExtent;
+	Barrier->PassageOccupancyVolume->SetRelativeTransform(OccupancyRelativeTransform);
+	Barrier->PassageOccupancyVolume->SetBoxExtent(OccupancyExtent);
+
+	Barrier->OnConstruction(Barrier->GetActorTransform());
+	TestTrue(TEXT("Construction preserves the authored modifier transform"),
+		Barrier->GridNavigationModifier->GetRelativeTransform().Equals(ModifierRelativeTransform));
+	TestTrue(TEXT("Construction preserves the authored modifier extent"),
+		Barrier->GridNavigationModifier->BoxExtent.Equals(ModifierExtent));
+	TestTrue(TEXT("Construction preserves the independent occupancy transform"),
+		Barrier->PassageOccupancyVolume->GetRelativeTransform().Equals(OccupancyRelativeTransform));
+	TestTrue(TEXT("Construction preserves the independent occupancy extent"),
+		Barrier->PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(OccupancyExtent));
+	Scope.StartPlay();
+	TestTrue(TEXT("Runtime initialization preserves the authored modifier bounds"),
+		Barrier->GridNavigationModifier->GetRelativeTransform().Equals(ModifierRelativeTransform)
+			&& Barrier->GridNavigationModifier->BoxExtent.Equals(ModifierExtent));
+	TestTrue(TEXT("Runtime initialization preserves the independent occupancy bounds"),
+		Barrier->PassageOccupancyVolume->GetRelativeTransform().Equals(OccupancyRelativeTransform)
+			&& Barrier->PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(OccupancyExtent));
+
+	const FVector InitialModifierLocation = Barrier->GridNavigationModifier->GetComponentLocation();
+	const FVector InitialOccupancyLocation = Barrier->PassageOccupancyVolume->GetComponentLocation();
+	const FVector BarrierDelta(0.0f, 0.0f, -80.0f);
+	Barrier->BarrierMesh->AddWorldOffset(BarrierDelta, false, nullptr, ETeleportType::TeleportPhysics);
+	TestTrue(TEXT("Occupancy volume follows BarrierMesh movement"),
+		Barrier->PassageOccupancyVolume->GetComponentLocation().Equals(
+			InitialOccupancyLocation + BarrierDelta,
+			0.01f));
+	TestTrue(TEXT("Grid modifier remains stationary when BarrierMesh moves"),
+		Barrier->GridNavigationModifier->GetComponentLocation().Equals(InitialModifierLocation, 0.01f));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxVerticalBarrierPassengerCollisionTest,
+	"Paradox.VerticalBarrier.AttachedPassengerCollision",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxVerticalBarrierPassengerCollisionTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::VerticalBarrier::Tests;
+	FScopedWorld Scope;
+	if (!TestNotNull(TEXT("Passenger-collision test world exists"), Scope.World))
+	{
+		return false;
+	}
+
+	AParadoxVerticalBarrierTestActor* Barrier = Spawn<AParadoxVerticalBarrierTestActor>(
+		*Scope.World,
+		TEXT("PassengerCollisionBarrier"));
+	AParadoxVerticalBarrierTestOccupant* Occupant = Spawn<AParadoxVerticalBarrierTestOccupant>(
+		*Scope.World,
+		TEXT("PassengerCollisionActor"),
+		FVector(0.0f, 0.0f, 360.0f));
+	if (!TestNotNull(TEXT("Passenger-collision barrier exists"), Barrier)
+		|| !TestNotNull(TEXT("Passenger-collision Actor exists"), Occupant))
+	{
+		return false;
+	}
+
+	Occupant->EnablePhysicalOverlap();
+	Occupant->Root->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+	Occupant->Root->SetSimulatePhysics(true);
+	Occupant->Root->SetCanEverAffectNavigation(true);
+	Occupant->SecondComponent->SetCanEverAffectNavigation(true);
+	Barrier->bWaitForClearPassage = false;
+	Barrier->ForwardMovementTime = 1.0f;
+	Barrier->bEmitNoiseOnRaiseStart = false;
+	Barrier->bEmitNoiseOnLowerStart = false;
+	Barrier->bEmitNoiseOnReachedEndpoint = false;
+	Scope.StartPlay();
+
+	Barrier->SimulateBeginOverlap(Occupant, Occupant->Root);
+	TestTrue(TEXT("Collision test starts lowering"), Barrier->RequestEndForTest());
+	TestTrue(TEXT("Collision test Actor is attached for transport"), Barrier->IsActorBeingLifted(Occupant));
+	TestEqual(TEXT("Root collision is disabled during transport"),
+		Occupant->Root->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+	TestEqual(TEXT("Child collision is disabled during transport"),
+		Occupant->SecondComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+	TestFalse(TEXT("Root navigation relevance is disabled during transport"),
+		Occupant->Root->CanEverAffectNavigation());
+	TestFalse(TEXT("Child navigation relevance is disabled during transport"),
+		Occupant->SecondComponent->CanEverAffectNavigation());
+
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Collision test reaches lower endpoint"), Barrier->IsAtEnd());
+	TestEqual(TEXT("Root collision mode is restored exactly"),
+		Occupant->Root->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+	TestEqual(TEXT("Child collision mode is restored exactly"),
+		Occupant->SecondComponent->GetCollisionEnabled(), ECollisionEnabled::QueryOnly);
+	TestTrue(TEXT("Root navigation relevance is restored"), Occupant->Root->CanEverAffectNavigation());
+	TestTrue(TEXT("Child navigation relevance is restored"), Occupant->SecondComponent->CanEverAffectNavigation());
+	TestTrue(TEXT("Root physics simulation is restored after collision"), Occupant->Root->IsSimulatingPhysics());
+
+	Barrier->bDisableAttachedActorCollisionDuringTransport = false;
+	Barrier->SimulateBeginOverlap(Occupant, Occupant->Root);
+	TestTrue(TEXT("Opt-out collision test starts raising"), Barrier->RequestStartForTest());
+	TestTrue(TEXT("Opt-out Actor is still transported"), Barrier->IsActorBeingLifted(Occupant));
+	TestEqual(TEXT("Opt-out preserves root collision during transport"),
+		Occupant->Root->GetCollisionEnabled(), ECollisionEnabled::QueryAndPhysics);
+	TestEqual(TEXT("Opt-out preserves child collision during transport"),
+		Occupant->SecondComponent->GetCollisionEnabled(), ECollisionEnabled::QueryOnly);
+	TestTrue(TEXT("Opt-out preserves root navigation relevance"), Occupant->Root->CanEverAffectNavigation());
+	TestTrue(TEXT("Opt-out preserves child navigation relevance"), Occupant->SecondComponent->CanEverAffectNavigation());
+	Barrier->Tick(1.0f);
+	TestTrue(TEXT("Opt-out collision test reaches upper endpoint"), Barrier->IsAtStart());
 	return true;
 }
 
@@ -376,6 +524,37 @@ bool FParadoxVerticalBarrierLiftPolicyTest::RunTest(const FString& Parameters)
 	TestTrue(TEXT("Endpoint restores physics simulation"), Occupant->Root->IsSimulatingPhysics());
 	TestFalse(TEXT("Endpoint restores the previous gravity state"), Occupant->Root->IsGravityEnabled());
 	TestTrue(TEXT("Closed Start remains navigation-blocking"), Barrier->IsPassageBlockingNavigation());
+
+	const FVector InitialDescendingActorLocation = Occupant->GetActorLocation();
+	const FVector InitialDescendingBarrierLocation = Barrier->GetMovedComponent()->GetComponentLocation();
+	TestTrue(TEXT("Lift mode accepts lowering while occupied"), Barrier->RequestEndForTest());
+	TestTrue(TEXT("Movable Actor becomes a passenger before lowering"), Barrier->IsActorBeingLifted(Occupant));
+	TestTrue(TEXT("Lowering passenger root attaches to moved component"),
+		Occupant->GetRootComponent()->GetAttachParent() == Barrier->GetMovedComponent());
+	TestFalse(TEXT("Lowering passenger physics simulation is disabled while attached"), Occupant->Root->IsSimulatingPhysics());
+
+	Barrier->Tick(0.5f);
+	const FVector DescendingActorDelta = Occupant->GetActorLocation() - InitialDescendingActorLocation;
+	const FVector DescendingBarrierDelta = Barrier->GetMovedComponent()->GetComponentLocation() - InitialDescendingBarrierLocation;
+	TestTrue(TEXT("Passenger follows the barrier downward"), DescendingActorDelta.Equals(DescendingBarrierDelta, 0.01f));
+
+	AParadoxVerticalBarrierTestOccupant* LateOccupant = Spawn<AParadoxVerticalBarrierTestOccupant>(
+		*Scope.World,
+		TEXT("LateLoweringActor"),
+		Barrier->PassageOccupancyVolume->GetComponentLocation());
+	LateOccupant->EnablePhysicalOverlap();
+	Barrier->SimulateBeginOverlap(LateOccupant, LateOccupant->Root);
+	TestTrue(TEXT("Actor entering during lowering becomes a passenger"), Barrier->IsActorBeingLifted(LateOccupant));
+	TestTrue(TEXT("Late lowering passenger attaches to moved component"),
+		LateOccupant->GetRootComponent()->GetAttachParent() == Barrier->GetMovedComponent());
+
+	Barrier->Tick(0.5f);
+	TestTrue(TEXT("Barrier reaches open End after lowering"), Barrier->IsAtEnd());
+	TestFalse(TEXT("Lower endpoint releases the original passenger"), Barrier->IsActorBeingLifted(Occupant));
+	TestFalse(TEXT("Lower endpoint releases the late passenger"), Barrier->IsActorBeingLifted(LateOccupant));
+	TestNull(TEXT("Lower endpoint restores original passenger attachment"), Occupant->GetRootComponent()->GetAttachParent());
+	TestNull(TEXT("Lower endpoint restores late passenger attachment"), LateOccupant->GetRootComponent()->GetAttachParent());
+	TestTrue(TEXT("Lower endpoint restores original passenger physics simulation"), Occupant->Root->IsSimulatingPhysics());
 	return true;
 }
 

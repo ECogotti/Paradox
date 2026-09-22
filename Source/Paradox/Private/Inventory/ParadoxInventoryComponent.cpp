@@ -3,6 +3,7 @@
 #include "Characters/ParadoxCharacter.h"
 #include "Components/ArrowComponent.h"
 #include "Engine/World.h"
+#include "Health/ParadoxHealthComponent.h"
 #include "Inventory/ParadoxInsertablePickupableActor.h"
 #include "Inventory/ParadoxItemSlotActor.h"
 #include "Inventory/ParadoxPickupableActor.h"
@@ -296,6 +297,133 @@ FParadoxInventoryOperationResult UParadoxInventoryComponent::TryDropAtTransform(
 	return MakeResult(EParadoxInventoryOperationStatus::Succeeded, TEXT("Pickupable dropped into the world."));
 }
 
+FParadoxPickupableUseResult UParadoxInventoryComponent::EvaluateEquippedItemUse(
+	AParadoxPickupableActor* ExpectedItem) const
+{
+	AParadoxCharacter* Character = GetParadoxCharacter();
+	if (!Character)
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_InvalidRequest,
+			TEXT("Use requires an Inventory owned by a valid Paradox Character."));
+	}
+	if (!IsValid(ExpectedItem))
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_SlotEmpty,
+			TEXT("Use requires a valid expected equipped item."));
+	}
+	if (ExpectedItem->GetPickupableState() == EParadoxPickupableState::Consumed)
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_ItemAlreadyConsumed,
+			TEXT("The requested pickupable has already been consumed in this run."));
+	}
+	if (bResetInProgress)
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_ItemUnavailable,
+			TEXT("Use is disabled during World State restore."));
+	}
+	if (bOperationInProgress)
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_ItemUnavailable,
+			TEXT("A reentrant Use or inventory transition was rejected."));
+	}
+	if (!IsValid(EquippedItem.Get()))
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_SlotEmpty,
+			TEXT("Use requires an equipped pickupable."));
+	}
+	if (EquippedItem.Get() != ExpectedItem
+		|| ExpectedItem->GetCurrentHolder() != Character
+		|| ExpectedItem->GetPickupableState() != EParadoxPickupableState::Held)
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_OwnershipConflict,
+			TEXT("The requested pickupable is not the item authoritatively held by this Character."));
+	}
+	if (!IsValid(Character->GetHealthComponent())
+		|| !Character->GetHealthComponent()->IsAlive())
+	{
+		return MakeUseFailure(
+			ParadoxGameplayTags::Result_Failure_Inventory_OwnerNotOperational,
+			TEXT("A dead or invalid Character cannot use an equipped item."));
+	}
+
+	return ExpectedItem->EvaluateUseInternal(Character);
+}
+
+FParadoxPickupableUseResult UParadoxInventoryComponent::TryUseEquippedItem(
+	AParadoxPickupableActor* ExpectedItem)
+{
+	FParadoxPickupableUseResult Validation = EvaluateEquippedItemUse(ExpectedItem);
+	if (!Validation.IsSuccess())
+	{
+		return Validation;
+	}
+
+	AParadoxCharacter* Character = GetParadoxCharacter();
+	UE::Paradox::Inventory::Private::FOperationGuard Guard(bOperationInProgress);
+	FParadoxPickupableUseResult Result = ExpectedItem->ExecuteUseInternal(Character);
+	if (!Result.IsSuccess())
+	{
+		if (IsValid(ExpectedItem))
+		{
+			ExpectedItem->HandleUseFailed(Character, Result);
+		}
+		return Result;
+	}
+
+	if (Result.bConsumeItemOnSuccess)
+	{
+		if (!IsValid(ExpectedItem)
+			|| EquippedItem.Get() != ExpectedItem
+			|| ExpectedItem->GetCurrentHolder() != Character
+			|| ExpectedItem->GetPickupableState() != EParadoxPickupableState::Held)
+		{
+			FParadoxPickupableUseResult Failure = MakeUseFailure(
+				ParadoxGameplayTags::Result_Failure_Inventory_ConsumptionFailed,
+				TEXT("The Use effect succeeded, but authoritative item ownership changed before consumption could commit."));
+			PARADOX_LOG_ERROR(
+				TEXT("Inventory '%s' on '%s' could not consume pickupable '%s' after a successful Use effect."),
+				*GetNameSafe(this),
+				*GetNameSafe(Character),
+				*GetNameSafe(ExpectedItem));
+			if (IsValid(ExpectedItem))
+			{
+				ExpectedItem->HandleUseFailed(Character, Failure);
+			}
+			return Failure;
+		}
+
+		RemoveAppliedPassiveEffects(ExpectedItem);
+		UnbindEquippedItem(ExpectedItem);
+		EquippedItem = nullptr;
+		ExpectedItem->SetExternallyOwnedStateNative(
+			EParadoxPickupableState::Consumed,
+			true);
+		Result.bItemConsumed = true;
+		BroadcastTransition(ExpectedItem, nullptr);
+	}
+
+	if (IsValid(ExpectedItem))
+	{
+		ExpectedItem->HandleUseCommitted(Character, Result);
+	}
+	else
+	{
+		PARADOX_LOG_ERROR(
+			TEXT("Inventory '%s' on '%s' lost pickupable validity before the successful Use notification."),
+			*GetNameSafe(this),
+			*GetNameSafe(Character));
+	}
+	LogDebugState(Result.bItemConsumed ? TEXT("UseConsumed") : TEXT("UseCommitted"));
+	return Result;
+}
+
 FParadoxInventoryOperationResult UParadoxInventoryComponent::ClearInventoryForReset()
 {
 	if (bOperationInProgress)
@@ -325,6 +453,16 @@ FParadoxInventoryOperationResult UParadoxInventoryComponent::MakeResult(
 {
 	FParadoxInventoryOperationResult Result;
 	Result.Status = Status;
+	Result.DiagnosticMessage = MoveTemp(Diagnostic);
+	return Result;
+}
+
+FParadoxPickupableUseResult UParadoxInventoryComponent::MakeUseFailure(
+	const FGameplayTag ReasonTag,
+	FString Diagnostic) const
+{
+	FParadoxPickupableUseResult Result;
+	Result.ReasonTag = ReasonTag;
 	Result.DiagnosticMessage = MoveTemp(Diagnostic);
 	return Result;
 }

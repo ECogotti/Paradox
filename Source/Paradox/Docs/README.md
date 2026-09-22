@@ -30,9 +30,14 @@ responsibility and their implementations use the matching path under `Private`:
   slot queries/submission, and the replay-safe interaction Gameplay Action template;
 - `Public/Inventory` and `Private/Inventory` contain the shared single-slot inventory, native
   pickupables and insertables, authoritative item slots, passive effects, Pickup/Swap/Drop/Insert
-  actions, player Drop targeting, puzzle-slot composition, and the inventory widget base;
+  actions, generic replay-safe Use, the native Oxygen Canister consumable, player Drop targeting,
+  puzzle-slot composition, and the inventory widget base;
 - `Public/HUD` and `Private/HUD` contain the Player Controller-owned Gameplay HUD coordinator,
   persistent Normal/Collapsed root widget, Tactical Pause section and Equipment presentation;
+- `Public/Health` and `Private/Health` contain Character-owned health and the explicitly bound
+  Player/Clone-compatible presentation widget;
+- `Public/Oxygen` and `Private/Oxygen` contain the seconds-based simulation-time resource,
+  source-owned effects, depletion damage type, and explicitly bound presentation widget;
 - `Public/Paradox.h` exposes the module log category and native gameplay tags;
 - `Private/Tests` contains module automation tests.
 
@@ -54,6 +59,10 @@ runtime roles:
 - `UEntityIdentityComponent`, the generic Entity Relations identity;
 - `UParadoxTemporalEntityComponent`, the Paradox role, Temporal Index, and optional replay track.
 - `UParadoxInventoryComponent`, the authoritative single slot shared by players and clones.
+- `UParadoxHealthComponent`, the native Unreal-damage-backed life state shared by players and
+  clones.
+- `UParadoxOxygenComponent`, the seconds-based breathable-time resource shared by players and
+  clones.
 
 `AParadoxPlayerCharacter` keeps the character-mounted camera as a fallback for maps without a
 Paradox camera volume and adds `UTacticalPauseActionQueueComponent`. `AParadoxCloneCharacter`
@@ -104,12 +113,20 @@ Intent Replay, selected GridWorld cells, World State cleanup, and input arbitrat
 [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
 
 The Character-owned single slot, native pickupables, passive effects, special actions, atomic
-Pickup/Swap, semantic GridWorld Drop, targeting, reset behavior and authoring workflow are documented
+Pickup/Swap, generic Use/consumption, Oxygen Canister, semantic GridWorld Drop, targeting, reset
+behavior and authoring workflow are documented
 in [Paradox single-slot inventory](INVENTORY.md).
 
 Gameplay HUD ownership, automatic visibility, `Tab` Normal/Collapsed mode, root Blueprint contract,
 Tactical Pause embedding and the concrete Equipment section are documented in
 [Paradox Gameplay HUD](GAMEPLAY_HUD.md).
+
+Native damage, Player/Clone death consequences, event ordering, and explicit Health widget binding
+are documented in [Paradox Health System](HEALTH_SYSTEM.md).
+
+Simulation-time Oxygen, direct seconds operations, source-owned speed/block handles, depletion
+through Health, Oxygen Canister recovery, and explicit Oxygen widget binding are documented in
+[Paradox Oxygen System](OXYGEN_SYSTEM.md).
 
 Insertable traits, atomic Inventory-to-Slot transfers, native slot interaction assets, WorldState
 reconstruction, event-driven perception and Puzzle slot output are documented in

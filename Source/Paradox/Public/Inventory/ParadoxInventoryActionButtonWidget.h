@@ -66,4 +66,8 @@ private:
 	TObjectPtr<UParadoxPickupableAction> PickupableAction = nullptr;
 
 	bool bPresentationEnabled = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FParadoxInventoryWidgetTestAccessor;
+#endif
 };

@@ -12,4 +12,11 @@ After a successful full or incremental editor build, GridWorld marks the package
 
 The editor module depends on the runtime module, while `GridWorld` has no dependency on `GridWorldEditor` or other editor-only modules.
 
+## Modifier bounds visualization
+
+Selecting an Actor with a `UGridNavigationModifierComponent` displays its oriented `BoxExtent` as a
+foreground wire box in the level or Blueprint viewport. Blocking modifiers are red and non-blocking
+modifiers are green. This is an editor-only component visualizer: it does not create collision,
+rendering components, runtime Tick, or a dependency from `GridWorld` back to `GridWorldEditor`.
+
 Validation reports invalid or zero Actor scale, non-box brushes, invalid dimensions, duplicate grid GUIDs and ambiguous overlaps through `LogGridWorld`. Full Actor rotation and non-uniform scale are supported. Validation and failed builds never clear the last valid runtime snapshot.

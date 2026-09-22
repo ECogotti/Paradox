@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Activators/PuzzleTransformMover.h"
+#include "Engine/EngineTypes.h"
 #include "GameplayTagContainer.h"
 #include "Types/WorldStateTypes.h"
 #include "ParadoxVerticalBarrier.generated.h"
@@ -106,10 +107,11 @@ public:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Barrier|Components")
 	TObjectPtr<UNiagaraComponent> MovementVFX = nullptr;
 
+	/** Moving overlap region authored independently from GridNavigationModifier. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Barrier|Components")
 	TObjectPtr<UBoxComponent> PassageOccupancyVolume = nullptr;
 
-	/** Authoritative passage transform and box extent; the overlap volume mirrors this component. */
+	/** Stationary GridWorld passage region authored independently from PassageOccupancyVolume. */
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Barrier|Components")
 	TObjectPtr<UGridNavigationModifierComponent> GridNavigationModifier = nullptr;
 
@@ -131,9 +133,20 @@ public:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Vertical Barrier|Components")
 	TObjectPtr<UParadoxInteractionComponent> InteractionComponent = nullptr;
 
-	/** Safe mode waits for an empty passage; disabled mode transports eligible occupants upward. */
+	/** Safe mode waits for an empty passage; disabled mode transports eligible occupants in either direction. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Barrier|Occupants")
 	bool bWaitForClearPassage = true;
+
+	/**
+	 * Temporarily disables collision and navigation relevance on attached non-Character passengers.
+	 * Character passengers keep collision because their moving-base transport depends on it.
+	 */
+	UPROPERTY(
+		EditAnywhere,
+		BlueprintReadOnly,
+		Category = "Paradox Barrier|Occupants",
+		meta = (EditCondition = "!bWaitForClearPassage"))
+	bool bDisableAttachedActorCollisionDuringTransport = true;
 
 	/**
 	 * Lets BarrierMesh contribute a walkable surface to dynamic navigation at Start and End.
@@ -331,6 +344,13 @@ protected:
 		int32 OtherBodyIndex);
 
 private:
+	struct FPassengerPrimitiveState
+	{
+		TWeakObjectPtr<UPrimitiveComponent> Component;
+		ECollisionEnabled::Type CollisionEnabled = ECollisionEnabled::NoCollision;
+		bool bCanEverAffectNavigation = false;
+	};
+
 	struct FLiftedActorRecord
 	{
 		TWeakObjectPtr<AActor> Actor;
@@ -344,6 +364,7 @@ private:
 		bool bPhysicsStateChanged = false;
 		bool bOwnsMovementLock = false;
 		bool bCharacter = false;
+		TArray<FPassengerPrimitiveState> PrimitiveStates;
 	};
 
 	bool IsOccupantAccepted(AActor* Actor, UPrimitiveComponent* Component) const;
@@ -351,6 +372,8 @@ private:
 	void AddOverlappingComponent(AActor* Actor, UPrimitiveComponent* Component);
 	void RemoveOverlappingComponent(AActor* Actor, UPrimitiveComponent* Component);
 	void NotifyOccupancyChanged(int32 PreviousCount);
+	void ProcessNewPassageOccupant(AActor* Actor);
+	void ReconcileMovingPassageOccupants();
 	void ClearOverlappingActors();
 	void BindActorDestroyed(AActor* Actor);
 	void UnbindActorDestroyedIfUnused(AActor* Actor);
@@ -368,11 +391,12 @@ private:
 	bool PrepareActorForLift(AActor* Actor);
 	bool PrepareCharacterForLift(ACharacter* Character, FLiftedActorRecord& OutRecord);
 	bool PrepareAttachedActorForLift(AActor* Actor, FLiftedActorRecord& OutRecord);
+	void SuppressAttachedActorCollision(AActor* Actor, FLiftedActorRecord& OutRecord);
+	void RestoreAttachedActorCollision(const FLiftedActorRecord& Record);
 	void ReportLiftFailure(AActor* Actor, EParadoxBarrierLiftFailureReason Reason);
 	void ReleaseLiftedActor(const TWeakObjectPtr<AActor>& ActorKey, EParadoxBarrierPassengerReleaseReason Reason);
 	void ApplyCharacterTransportDelta();
 
-	void SynchronizePassageBounds();
 	void EnforceComponentInvariants();
 	void SetBarrierMeshNavigationRelevant(bool bRelevant);
 	void RefreshBarrierMeshNavigationRelevance();

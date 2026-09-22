@@ -49,6 +49,17 @@ public:
 	/** Validated native transition used by Drop Actions after exact cell revalidation. */
 	FParadoxInventoryOperationResult TryDropAtTransform(const FTransform& WorldTransform);
 
+	/** Side-effect-free validation used by Use Action preflight and HUD availability. */
+	FParadoxPickupableUseResult EvaluateEquippedItemUse(
+		AParadoxPickupableActor* ExpectedItem) const;
+
+	/**
+	 * Executes Use while holding the Inventory transition guard and commits item consumption only
+	 * after the item reports a successful effect.
+	 */
+	FParadoxPickupableUseResult TryUseEquippedItem(
+		AParadoxPickupableActor* ExpectedItem);
+
 	/** Idempotent cleanup used by World State restore and owner teardown. */
 	FParadoxInventoryOperationResult ClearInventoryForReset();
 
@@ -72,6 +83,9 @@ private:
 		AParadoxInsertablePickupableActor& Item);
 	FParadoxInventoryOperationResult MakeResult(
 		EParadoxInventoryOperationStatus Status,
+		FString Diagnostic) const;
+	FParadoxPickupableUseResult MakeUseFailure(
+		FGameplayTag ReasonTag,
 		FString Diagnostic) const;
 	AParadoxCharacter* GetParadoxCharacter() const;
 	void ApplyPassiveEffects(AParadoxPickupableActor& Item);

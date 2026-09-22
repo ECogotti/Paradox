@@ -9,7 +9,8 @@ enum class EParadoxOutcomeType : uint8
 {
 	TimelineCollapse,
 	GameOver,
-	LevelComplete
+	LevelComplete,
+	PlayerDeath
 };
 
 /** Presentation-only value copy; widgets never reconstruct authoritative loop context. */
@@ -29,6 +30,9 @@ struct PARADOX_API FParadoxOutcomePresentationData
 
 	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Presentation")
 	FParadoxContext ParadoxContext;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Presentation")
+	FParadoxRunFailureContext RunFailureContext;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Presentation")
 	FParadoxGameOverContext GameOverContext;

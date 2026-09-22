@@ -43,10 +43,11 @@ rejects an empty baseline.
 Invalid requests return `FParadoxTimeLoopOperationResult` without changing phase. Failures after
 irreversible recording or reset mutations enter `Error` and retain diagnostics.
 
-An accepted temporal paradox branches from `ActiveRun` to `ParadoxFailure`, then returns to
-`ChronoSpawnSelection` after presentation-authorized recovery. Consolidating the final playable
-timeline enters `GameOver`. An external puzzle authority can branch from `ActiveRun` to
-`LevelComplete`.
+An accepted temporal paradox or Player death branches from `ActiveRun` to `ParadoxFailure`, then
+returns to `ChronoSpawnSelection` after presentation-authorized recovery. Both use the generic
+`FParadoxRunFailureContext`; its reason distinguishes `TemporalParadox` from `PlayerDeath`, and the
+latter retains damage type, instigator, and causer. Consolidating the final playable timeline
+enters `GameOver`. An external puzzle authority can branch from `ActiveRun` to `LevelComplete`.
 
 ## Chrono Spawns and recording
 
@@ -327,21 +328,25 @@ stale callbacks. Consolidated tracks remain unchanged.
 
 ## Recovery, Game Over, and Level Complete
 
-At full black, the controller-owned outcome presenter acknowledges the paradox event. The loop
+At full black, the controller-owned outcome presenter acknowledges the run-failure event. The loop
 then destroys only runtime clones, restores the World State baseline, reapplies occupied spawn
 states, reconstructs consolidated timelines, releases the failed run's selected spawn, and returns
-to `ChronoSpawnSelection`. A paradox on the last selectable spawn is still retryable because the
-failed partial run was never consolidated.
+to `ChronoSpawnSelection`. A paradox or death on the last selectable spawn is still retryable
+because the failed partial run was never consolidated. The persistent Player is reactivated with
+`ResetHealth` and `ResetOxygen`; reconstructed Clones are newly spawned at full Health and Oxygen.
+Oxygen consumption is authorized only during `ActiveRun` and is suspended on every phase exit.
+Tactical Pause and simulation speed work through Unreal's paused, dilated game-time clock.
 
 The native presentation fallback uses real time and never changes input mode, mouse capture, or UI
 focus:
 
 - paradox: `TIMELINE COLLAPSE` and
   `T{Observer} witnessed T{Target}. The past saw the future.`;
+- Player death: `LIFE SIGNS LOST` and a distinct recoverable-run message;
 - Game Over: `NO TIMELINES REMAIN` and `The loop has no future left`;
 - completion: `LEVEL COMPLETE`.
 
-Paradox presentation fades to black, authorizes recovery, holds briefly, then fades back to
+Run-failure presentation fades to black, authorizes recovery, holds briefly, then fades back to
 gameplay. In headless worlds or without a local presenter, recovery is immediate. Game Over and
 Level Complete remain terminal and show Restart. `RequestRestartLevel` stops runtime systems and
 reopens the current map, constructing a fresh World, GameMode, and loop.
@@ -363,7 +368,8 @@ Primary commands:
 - `Initialize Time Loop`;
 - `Select Chrono Spawn`;
 - `Request Time Rewind`;
-- `Continue Paradox Recovery` for the current event ID;
+- `Continue Run Failure Recovery` for the current event ID;
+- `Continue Paradox Recovery`, retained as a paradox-specific compatibility wrapper;
 - `Request Level Complete`;
 - `Request Restart Level`.
 
@@ -378,7 +384,7 @@ Primary loop queries:
   aggregate deduplicated actor-pair count;
 - a copied Temporal Vision debug snapshot by Temporal Index, including local/global debug gates,
   detection session, authority, filtered actor pairs, and broad-phase primitive count;
-- last copied temporal candidate and last paradox context;
+- last copied temporal candidate, paradox context, and generic run-failure context;
 - copied Game Over and Level Complete contexts.
 
 Playback queries return copies:
@@ -394,7 +400,7 @@ Events:
 - run started/ended;
 - timeline consolidated, World State reset, clone reconstructed;
 - clone ready, playback started/completed/failed/stopped;
-- temporal overlap, ignored candidate, paradox accepted, recovery completed;
+- temporal overlap, ignored candidate, paradox accepted, run failure accepted, recovery completed;
 - Game Over, level completed, and restart requested;
 - operation failed and terminal error.
 

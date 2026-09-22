@@ -9,6 +9,8 @@
 
 class AParadoxCharacter;
 class AParadoxChronoSpawn;
+class AController;
+class UDamageType;
 class UIntentReplayTrack;
 class UIntentReplayTimelineBundle;
 
@@ -29,6 +31,15 @@ enum class EParadoxTimeLoopPhase : uint8
 	GameOver,
 	LevelComplete,
 	Error
+};
+
+/** Recoverable reason that ended the current, unconsolidated run. */
+UENUM(BlueprintType)
+enum class EParadoxRunFailureReason : uint8
+{
+	None,
+	TemporalParadox,
+	PlayerDeath
 };
 
 /** Runtime presentation and availability state of one Chrono Spawn. */
@@ -88,7 +99,9 @@ enum class EParadoxTimeLoopOperationStatus : uint8
 	GameOverReached,
 	LevelCompleteReached,
 	RestartRequested,
-	InternalFailure
+	InternalFailure,
+	PlayerDeathAccepted,
+	RunFailureRecoveryFailed
 };
 
 /** Why a physical temporal-vision overlap did not become an accepted paradox. */
@@ -194,6 +207,49 @@ struct PARADOX_API FParadoxContext
 			&& TargetComponent != nullptr
 			&& ObserverTemporalIndex >= 0
 			&& TargetTemporalIndex >= 0;
+	}
+};
+
+/** Generic immutable context shared by every recoverable current-run failure. */
+USTRUCT(BlueprintType)
+struct PARADOX_API FParadoxRunFailureContext
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	FGuid EventId;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	EParadoxRunFailureReason Reason = EParadoxRunFailureReason::None;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	TObjectPtr<AParadoxCharacter> Player = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	TSubclassOf<UDamageType> DamageTypeClass;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	TObjectPtr<AController> InstigatedBy = nullptr;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	TObjectPtr<AActor> DamageCauser = nullptr;
+
+	/** Populated only for Reason == TemporalParadox. */
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	FParadoxContext ParadoxContext;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Failure")
+	FString DiagnosticMessage;
+
+	bool IsValid() const
+	{
+		if (!EventId.IsValid() || Reason == EParadoxRunFailureReason::None)
+		{
+			return false;
+		}
+		return Reason == EParadoxRunFailureReason::TemporalParadox
+			? ParadoxContext.IsValid()
+			: Player != nullptr;
 	}
 };
 
@@ -391,6 +447,10 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FParadoxAcceptedEvent,
 	const FParadoxContext&, Context);
+
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
+	FParadoxRunFailureEvent,
+	const FParadoxRunFailureContext&, Context);
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(
 	FParadoxGameOverEvent,

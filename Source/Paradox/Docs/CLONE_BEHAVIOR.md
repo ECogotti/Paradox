@@ -24,6 +24,7 @@ unexpected noise from a newly introduced clone enters `Investigating`.
 Replay -- accepted comparison --> Investigating
 Investigating -- recovery complete --> Replay
 Replay/Investigating -- explicit future handoff --> Goap (terminal)
+Replay/Investigating/Goap -- Health death --> Stopped (terminal)
 ```
 
 Entering `Investigating` atomically pauses the playback clock, captures every replay-owned active
@@ -36,6 +37,13 @@ Intent Replay Execution Journal and are not replay fractures.
 calls it, the coordinator stops replay and investigation, commits terminal `Goap`, safely stops the
 Behavior Tree, and broadcasts the external handoff. The transition cannot be reversed for that
 run.
+
+`StopForDeath` is an idempotent terminal stop. It rejects every later replay, investigation, or
+GOAP request; stops Intent Replay, observation comparison, investigation, Behavior Tree, Gameplay
+Actions, and movement; and releases GridWorld traffic/occupancy. The dead Clone is disabled as a
+temporal observer but keeps identity, Temporal Index, and temporal target registration. Its ragdoll
+and capsule do not block Pawns or affect NavMesh. Time-loop reset destroys and reconstructs it
+instead of reviving it in place. See [Paradox Health System](HEALTH_SYSTEM.md).
 
 ## Read-only diagnostics
 

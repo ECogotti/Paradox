@@ -143,6 +143,7 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Insert, "GameplayAction.Type.Paradox.ItemSlot.Insert");
 	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Pickup, "GameplayAction.Type.Paradox.ItemSlot.Pickup");
 	UE_DEFINE_GAMEPLAY_TAG(Action_Inventory_Drop, "GameplayAction.Type.Paradox.Inventory.Drop");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Inventory_Use, "GameplayAction.Type.Paradox.Inventory.Use");
 	UE_DEFINE_GAMEPLAY_TAG(Lock_Inventory, "GameplayAction.Lock.Paradox.Inventory");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Pickup, "Interaction.Paradox.Inventory.Pickup");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Swap, "Interaction.Paradox.Inventory.Swap");
@@ -163,6 +164,15 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_InvalidCell, "GameplayAction.Result.Failure.Paradox.Inventory.InvalidCell");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_NoReachableExecutionCell, "GameplayAction.Result.Failure.Paradox.Inventory.NoReachableExecutionCell");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_TargetInvalidated, "GameplayAction.Result.Failure.Paradox.Inventory.TargetInvalidated");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_UseUnsupported, "GameplayAction.Result.Failure.Paradox.Inventory.UseUnsupported");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_OwnerNotOperational, "GameplayAction.Result.Failure.Paradox.Inventory.OwnerNotOperational");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_ItemAlreadyConsumed, "GameplayAction.Result.Failure.Paradox.Inventory.ItemAlreadyConsumed");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_UseEffectFailed, "GameplayAction.Result.Failure.Paradox.Inventory.UseEffectFailed");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Inventory_ConsumptionFailed, "GameplayAction.Result.Failure.Paradox.Inventory.ConsumptionFailed");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Oxygen_MissingComponent, "GameplayAction.Result.Failure.Paradox.Oxygen.MissingComponent");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Oxygen_AlreadyFull, "GameplayAction.Result.Failure.Paradox.Oxygen.AlreadyFull");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Oxygen_InvalidRestoreAmount, "GameplayAction.Result.Failure.Paradox.Oxygen.InvalidRestoreAmount");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_Oxygen_RestoreFailed, "GameplayAction.Result.Failure.Paradox.Oxygen.RestoreFailed");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Result_Failure_Interaction_InvalidRequest,
 		"GameplayAction.Result.Failure.Paradox.Interaction.InvalidRequest");

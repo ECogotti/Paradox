@@ -102,6 +102,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Clone Behavior|GOAP")
 	FParadoxCloneBehaviorOperationResult RequestEnterGoapMode();
 
+	/** Idempotently terminates every active behavior path after authoritative Health death. */
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Clone Behavior")
+	FParadoxCloneBehaviorOperationResult StopForDeath();
+
 	/** Supplies controller-owned BT/Blackboard instances; Blackboard remains a mirror only. */
 	void SetBehaviorTreeContext(
 		UBehaviorTreeComponent* InBehaviorTree,
@@ -115,6 +119,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Clone Behavior")
 	bool IsReplayStartAuthorized() const { return bReplayStartAuthorized; }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Clone Behavior")
+	bool IsStoppedForDeath() const { return bStoppedForDeath; }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Clone Behavior")
 	bool HasValidInvestigation() const { return CurrentInvestigation.IsValid(); }
@@ -247,6 +254,7 @@ private:
 	bool bWaitingForRecoveryMove = false;
 	bool bRecoveryBlocked = false;
 	bool bGoapHandoffTerminal = false;
+	bool bStoppedForDeath = false;
 
 	FParadoxCloneBehaviorModeChangedNativeDelegate ModeChangedNative;
 	FParadoxReplayAuthorizedNativeDelegate ReplayAuthorizedNative;

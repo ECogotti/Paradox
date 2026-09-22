@@ -57,6 +57,12 @@ FParadoxCloneBehaviorOperationResult
 UParadoxCloneBehaviorCoordinatorComponent::InitializeForRun(
 	UIntentReplayTimelineBundle* TimelineBundle)
 {
+	if (bStoppedForDeath)
+	{
+		return MakeResult(
+			EParadoxCloneBehaviorOperationStatus::InvalidState,
+			TEXT("A dead clone cannot initialize behavior."));
+	}
 	if (bGoapHandoffTerminal)
 	{
 		return MakeResult(
@@ -182,7 +188,7 @@ UParadoxCloneBehaviorCoordinatorComponent::InitializeForRun(
 FParadoxCloneBehaviorOperationResult
 UParadoxCloneBehaviorCoordinatorComponent::AuthorizeReplayStart()
 {
-	if (!bInitializedForRun || bGoapHandoffTerminal)
+	if (!bInitializedForRun || bGoapHandoffTerminal || bStoppedForDeath)
 	{
 		return MakeResult(
 			EParadoxCloneBehaviorOperationStatus::NotInitialized,
@@ -205,7 +211,7 @@ FParadoxCloneBehaviorOperationResult
 UParadoxCloneBehaviorCoordinatorComponent::
 	StartAuthorizedReplayFromBehaviorTree()
 {
-	if (!bInitializedForRun || !ReplayComponent)
+	if (!bInitializedForRun || !ReplayComponent || bStoppedForDeath)
 	{
 		return MakeResult(
 			EParadoxCloneBehaviorOperationStatus::NotInitialized,
@@ -264,6 +270,12 @@ UParadoxCloneBehaviorCoordinatorComponent::CompleteInvestigation(
 	const FParadoxInvestigationContext& CompletedContext,
 	const FGameplayActionResult& Result)
 {
+	if (bStoppedForDeath)
+	{
+		return MakeResult(
+			EParadoxCloneBehaviorOperationStatus::InvalidState,
+			TEXT("A dead clone cannot complete an investigation."));
+	}
 	if (CurrentMode != EParadoxCloneBehaviorMode::Investigating
 		|| !CurrentInvestigation.IsValid()
 		|| CompletedContext.InvestigationRevision
@@ -292,6 +304,12 @@ UParadoxCloneBehaviorCoordinatorComponent::CompleteInvestigation(
 FParadoxCloneBehaviorOperationResult
 UParadoxCloneBehaviorCoordinatorComponent::RetryReplayContinuity()
 {
+	if (bStoppedForDeath)
+	{
+		return MakeResult(
+			EParadoxCloneBehaviorOperationStatus::InvalidState,
+			TEXT("A dead clone cannot retry replay continuity."));
+	}
 	if (CurrentMode != EParadoxCloneBehaviorMode::Investigating
 		|| !bRecoveryBlocked)
 	{
@@ -311,6 +329,12 @@ UParadoxCloneBehaviorCoordinatorComponent::RetryReplayContinuity()
 FParadoxCloneBehaviorOperationResult
 UParadoxCloneBehaviorCoordinatorComponent::RequestEnterGoapMode()
 {
+	if (bStoppedForDeath)
+	{
+		return MakeResult(
+			EParadoxCloneBehaviorOperationStatus::InvalidState,
+			TEXT("A dead clone cannot enter GOAP mode."));
+	}
 	if (bGoapHandoffTerminal)
 	{
 		return MakeResult(
@@ -350,6 +374,59 @@ UParadoxCloneBehaviorCoordinatorComponent::RequestEnterGoapMode()
 	return MakeResult(
 		EParadoxCloneBehaviorOperationStatus::Succeeded,
 		TEXT("Behavior Tree stopped safely; external GOAP handoff requested."));
+}
+
+FParadoxCloneBehaviorOperationResult
+UParadoxCloneBehaviorCoordinatorComponent::StopForDeath()
+{
+	if (bStoppedForDeath)
+	{
+		return MakeResult(
+			EParadoxCloneBehaviorOperationStatus::AlreadyInState,
+			TEXT("Clone behavior is already stopped for death."));
+	}
+
+	bStoppedForDeath = true;
+	bInitializedForRun = false;
+	bReplayStartAuthorized = false;
+	bReplayResumeAvailable = false;
+	bWaitingForRecoveryMove = false;
+	bRecoveryBlocked = false;
+	if (InvestigationComponent)
+	{
+		InvestigationComponent->CancelInvestigation(
+			GameplayActionTags::Result_Cancelled_ByRequester);
+	}
+	if (ReplayComponent)
+	{
+		const EIntentReplayPlaybackState State =
+			ReplayComponent->GetPlaybackState();
+		if (State == EIntentReplayPlaybackState::Preparing
+			|| State == EIntentReplayPlaybackState::Ready
+			|| State == EIntentReplayPlaybackState::Playing
+			|| State == EIntentReplayPlaybackState::Paused)
+		{
+			ReplayComponent->StopReplay();
+		}
+	}
+	if (ObservationComponent
+		&& ObservationComponent->GetActiveObservationComparisonSession())
+	{
+		ObservationComponent->StopObservationComparison();
+	}
+	if (BehaviorTreeComponent)
+	{
+		BehaviorTreeComponent->StopTree(EBTStopMode::Safe);
+	}
+	UnbindRuntimeDelegates();
+	CurrentInvestigation = FParadoxInvestigationContext();
+	ReplayResumeContext.Reset();
+	PendingRecoveryIntentId = FRecordedIntentId();
+	LastModeTransitionReason = TEXT("HealthDeath");
+	UpdateBlackboardMirror();
+	return MakeResult(
+		EParadoxCloneBehaviorOperationStatus::Succeeded,
+		TEXT("Clone behavior stopped for authoritative Health death."));
 }
 
 void UParadoxCloneBehaviorCoordinatorComponent::SetBehaviorTreeContext(
@@ -880,6 +957,7 @@ bool UParadoxCloneBehaviorCoordinatorComponent::IsComparisonAuthoritative(
 {
 	return bInitializedForRun
 		&& !bGoapHandoffTerminal
+		&& !bStoppedForDeath
 		&& ExpectedPlaybackSessionId.IsValid()
 		&& Event.PlaybackSessionId == ExpectedPlaybackSessionId
 		&& ExpectedObservationTrackId.IsValid()
@@ -929,5 +1007,6 @@ void UParadoxCloneBehaviorCoordinatorComponent::EndPlay(
 {
 	UnbindRuntimeDelegates();
 	bInitializedForRun = false;
+	bStoppedForDeath = true;
 	Super::EndPlay(EndPlayReason);
 }

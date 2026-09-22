@@ -186,6 +186,43 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Inventory|Actions", meta = (BlueprintProtected = "true"))
 	void NotifyPickupableActionsChanged();
 
+	/** Item-specific validation reached only after Inventory ownership and Character life checks pass. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox|Inventory|Use", meta = (BlueprintProtected = "true"))
+	bool CanUseItem(
+		AParadoxCharacter* Character,
+		FGameplayTag& OutFailureReason,
+		FString& OutDiagnostic) const;
+	virtual bool CanUseItem_Implementation(
+		AParadoxCharacter* Character,
+		FGameplayTag& OutFailureReason,
+		FString& OutDiagnostic) const;
+
+	/** Applies the item-specific effect. Inventory commits any requested consumption afterward. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox|Inventory|Use", meta = (BlueprintProtected = "true"))
+	FParadoxPickupableUseResult ExecuteUseItem(AParadoxCharacter* Character);
+	virtual FParadoxPickupableUseResult ExecuteUseItem_Implementation(
+		AParadoxCharacter* Character);
+
+	/** Native specialization seam invoked after the Inventory transaction has committed. */
+	virtual void HandleUseCommitted(
+		AParadoxCharacter* Character,
+		const FParadoxPickupableUseResult& Result);
+
+	/** Native specialization seam invoked for execution-time failures, never HUD preflight queries. */
+	virtual void HandleUseFailed(
+		AParadoxCharacter* Character,
+		const FParadoxPickupableUseResult& Result);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Inventory|Use", meta = (DisplayName = "On Use Committed"))
+	void ReceiveUseCommitted(
+		AParadoxCharacter* Character,
+		FParadoxPickupableUseResult Result);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Inventory|Use", meta = (DisplayName = "On Use Failed"))
+	void ReceiveUseFailed(
+		AParadoxCharacter* Character,
+		FParadoxPickupableUseResult Result);
+
 	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Inventory", meta = (DisplayName = "On Picked Up"))
 	void ReceivePickedUp(AParadoxCharacter* NewHolder);
 
@@ -213,6 +250,8 @@ private:
 	void ClearSelectionPresentation();
 	void SetHeldStateNative(AParadoxCharacter& NewHolder, bool bNotify);
 	void SetWorldStateNative(const FTransform& WorldTransform, AParadoxCharacter* PreviousHolder, bool bNotifyDrop);
+	FParadoxPickupableUseResult EvaluateUseInternal(AParadoxCharacter* Character) const;
+	FParadoxPickupableUseResult ExecuteUseInternal(AParadoxCharacter* Character);
 	void PrepareForWorldStateRestore();
 	void FinishWorldStateRestore(bool bRestoreSucceeded);
 	void LogDebugState(const TCHAR* EventName) const;

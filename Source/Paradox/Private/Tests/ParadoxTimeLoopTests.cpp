@@ -23,11 +23,14 @@
 #include "GameFramework/Actor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
+#include "GameFramework/DamageType.h"
 #include "GameModes/ParadoxGameMode.h"
 #include "Inventory/ParadoxDropAction.h"
 #include "Navigation/GridNavigationData.h"
 #include "Navigation/GridNavigationQueryFilter.h"
 #include "Navigation/GridWorldSnapshot.h"
+#include "Oxygen/ParadoxOxygenComponent.h"
+#include "Oxygen/ParadoxOxygenDepletionDamageType.h"
 #include "Paradox.h"
 #include "Perception/ParadoxTemporalVisionComponent.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
@@ -59,7 +62,8 @@ struct FParadoxTimeLoopTestAccessor
 		}
 		TimeLoop.MaximumTimelineCount = TimeLoop.ChronoSpawns.Num();
 		TimeLoop.SelectedChronoSpawn = &SelectedSpawn;
-		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::ActiveRun;
+		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::RunPreparation;
+		TimeLoop.SetPhase(EParadoxTimeLoopPhase::ActiveRun);
 		TimeLoop.bPlayerCollisionWasEnabled = true;
 		SelectedSpawn.SetRuntimeState(EParadoxChronoSpawnState::Selected);
 	}
@@ -118,7 +122,7 @@ struct FParadoxTimeLoopTestAccessor
 		TimeLoop.PlayerCharacter = &Player;
 		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::ActiveRun;
 		TimeLoop.TemporalDetectionSessionId = DetectionSessionId;
-		TimeLoop.bParadoxAcceptedForRun = false;
+		TimeLoop.bRunFailureAcceptedForRun = false;
 	}
 
 	static void SubmitTemporalOverlap(
@@ -1932,6 +1936,98 @@ bool FParadoxExternalLevelCompleteTest::RunTest(const FString& Parameters)
 	TestTrue(
 		TEXT("Level Complete context has a stable event ID"),
 		TimeLoop->GetLastLevelCompleteContext().EventId.IsValid());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxPlayerDeathRunFailureTest,
+	"Paradox.TimeLoop.PlayerDeathUsesRunFailureRecovery",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxPlayerDeathRunFailureTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::TimeLoop::Tests;
+	FScopedTestWorld TestWorld(TEXT("ParadoxPlayerDeathFailureWorld"));
+	if (!TestNotNull(TEXT("Player-death test world exists"), TestWorld.World))
+	{
+		return false;
+	}
+
+	FActorSpawnParameters SpawnParameters;
+	SpawnParameters.SpawnCollisionHandlingOverride =
+		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AParadoxPlayerCharacter* Player =
+		TestWorld.World->SpawnActor<AParadoxPlayerCharacter>(
+			AParadoxPlayerCharacter::StaticClass(),
+			FTransform::Identity,
+			SpawnParameters);
+	AActor* Authority = TestWorld.World->SpawnActor<AActor>();
+	AParadoxChronoSpawn* Spawn = SpawnChronoSpawn(
+		*TestWorld.World,
+		FVector::ZeroVector,
+		TEXT("PlayerDeathRetryChronoSpawn"));
+	if (!TestNotNull(TEXT("Player exists"), Player)
+		|| !TestNotNull(TEXT("time-loop authority exists"), Authority)
+		|| !TestNotNull(TEXT("retry Chrono Spawn exists"), Spawn))
+	{
+		return false;
+	}
+
+	UParadoxTimeLoopComponent* TimeLoop =
+		NewObject<UParadoxTimeLoopComponent>(
+			Authority,
+			TEXT("PlayerDeathTimeLoop"),
+			RF_Transient);
+	Authority->AddInstanceComponent(TimeLoop);
+	TimeLoop->RegisterComponent();
+	TestWorld.StartPlay();
+	for (AActor* Actor : { static_cast<AActor*>(Player), Authority, static_cast<AActor*>(Spawn) })
+	{
+		if (Actor && !Actor->HasActorBegunPlay())
+		{
+			Actor->DispatchBeginPlay();
+		}
+	}
+
+	FString Failure;
+	TestTrue(
+		TEXT("World State baseline is available for death recovery"),
+		FParadoxTimeLoopTestAccessor::PrepareWorldState(*TimeLoop, Failure));
+	const TArray<AParadoxChronoSpawn*> Spawns = { Spawn };
+	FParadoxTimeLoopTestAccessor::ConfigureActiveRun(
+		*TimeLoop,
+		*Player,
+		Spawns,
+		*Spawn);
+
+	UParadoxOxygenComponent* Oxygen = Player->GetOxygenComponent();
+	TestTrue(TEXT("ActiveRun starts Player Oxygen"), Oxygen && Oxygen->IsRunConsumptionActive());
+	if (Oxygen)
+	{
+		Oxygen->ConsumeOxygenSeconds(Oxygen->GetOxygenDurationSeconds());
+	}
+	TimeLoop->AcceptPlayerDeath(
+		*Player,
+		GetDefault<UParadoxOxygenDepletionDamageType>(),
+		nullptr,
+		Player);
+	const FParadoxRunFailureContext Context =
+		TimeLoop->GetLastRunFailureContext();
+	TestTrue(TEXT("Player death publishes a valid run-failure context"), Context.IsValid());
+	TestEqual(TEXT("failure reason is PlayerDeath"), Context.Reason, EParadoxRunFailureReason::PlayerDeath);
+	TestEqual(TEXT("failure context retains the Player"), Context.Player.Get(), static_cast<AParadoxCharacter*>(Player));
+	TestEqual(TEXT("failure context retains the damage causer"), Context.DamageCauser.Get(), static_cast<AActor*>(Player));
+	TestEqual(
+		TEXT("failure context retains Oxygen depletion classification"),
+		Context.DamageTypeClass.Get(),
+		UParadoxOxygenDepletionDamageType::StaticClass());
+	TestEqual(
+		TEXT("headless Player-death recovery returns to spawn selection"),
+		TimeLoop->GetCurrentPhase(),
+		EParadoxTimeLoopPhase::ChronoSpawnSelection);
+	TestEqual(TEXT("failed death run remains unconsolidated"), TimeLoop->GetConsolidatedTimelineCount(), 0);
+	TestEqual(TEXT("failed Chrono Spawn is retryable"), Spawn->GetChronoSpawnState(), EParadoxChronoSpawnState::Available);
 	return true;
 }
 

@@ -6,6 +6,18 @@
 > meaning is superseded by this clarification. Raising/occupant safety therefore applies while
 > moving toward `Start`; Receiver activation in the default PingPong setup moves toward open `End`.
 
+> **Passage-component clarification (authoritative):** `GridNavigationModifier` and
+> `PassageOccupancyVolume` are intentionally independent authored boxes. The modifier remains
+> attached to `BillboardRoot`; the occupancy volume is a movable child of `BarrierMesh` and follows
+> it. Any later shared-bounds or root-attached occupancy requirement in this original specification
+> is superseded by this clarification.
+
+> **Attached-passenger collision clarification (authoritative):** lift mode exposes an editor flag,
+> enabled by default, that temporarily disables collision and navigation relevance for every
+> primitive owned by an attached non-Character passenger. Exact collision modes and navigation
+> relevance are restored before physics simulation at release. Character passengers remain
+> unaffected because their non-attached moving-base/collision transport requires collision.
+
 This file defines the project-specific vertical door / rising-wall Actor built on top of the existing PuzzleSystem activator template.
 
 It supplements, and must be read together with:
@@ -55,7 +67,7 @@ The class must:
 - use a box overlap to track every Actor currently occupying the affected passage;
 - expose an editor flag that chooses between waiting for a clear passage and lifting current occupants;
 - when waiting is enabled, defer raising until the passage is free;
-- when waiting is disabled, raise normally while moving all detected occupants upward through project-appropriate handling;
+- when waiting is disabled, move normally in either direction while transporting all detected occupants through project-appropriate handling;
 - temporarily suppress locomotion authority for player and clone Characters while they are being lifted;
 - attach eligible non-Character Actors to the moving barrier component for the duration of the lift;
 - restore every temporary movement lock, action interruption, attachment, and physics override safely;
@@ -197,8 +209,8 @@ AParadoxVerticalBarrier : APuzzleTransformMover
 ├── UStaticMeshComponent                          FrameMesh                    [attached to BillboardRoot]
 ├── UStaticMeshComponent                          BarrierMesh                  [attached to BillboardRoot]
 │   ├── UAudioComponent                           MovementAudio                [attached to BarrierMesh]
-│   └── UNiagaraComponent                         MovementVFX                  [attached to BarrierMesh]
-├── UBoxComponent                                 PassageOccupancyVolume       [attached to BillboardRoot]
+│   ├── UNiagaraComponent                         MovementVFX                  [attached to BarrierMesh]
+│   └── UBoxComponent                             PassageOccupancyVolume       [attached to BarrierMesh]
 ├── UGridNavigationModifierComponent              GridNavigationModifier
 └── existing WorldState / PerceptionKnowledge capability required by real APIs
 ```
@@ -344,35 +356,20 @@ per-frame cell rebuild logic
 
 `GridNavigationModifier` is the authoritative mechanism that marks the passage cells traversable or non-traversable.
 
-## Shared bounds rule
+## Independent bounds rule
 
-The overlap region and GridWorld modifier must describe the same authored passage region.
-
-There must be one authoritative bounds source.
-
-Codex must inspect the actual `UGridNavigationModifierComponent` design and use the correct existing pattern:
-
-### When the modifier accepts a shape component
-
-Use `PassageOccupancyVolume` as the shared bounds source for both:
+The two components serve different spatial responsibilities and must remain independently authored:
 
 ```text
+GridNavigationModifier
+    -> stationary GridWorld cells blocked or opened by barrier state
+
 PassageOccupancyVolume
-    -> overlap queries
-    -> GridNavigationModifier bounds
+    -> moving overlap, clearance, and lift-acquisition region attached to BarrierMesh
 ```
 
-### When the modifier owns explicit bounds configuration
-
-Synchronize `PassageOccupancyVolume` from the modifier's real bounds through construction/editor-safe logic and validate that they remain equivalent.
-
-Do not expose two unrelated editable extents that can silently diverge.
-
-### When the modifier uses another established bounds-provider interface
-
-Implement or reuse that interface through `PassageOccupancyVolume` without duplicating GridWorld logic.
-
-The final design must allow a designer to author the passage region once.
+Do not synchronize their relative transforms or extents during construction, registration,
+property editing, or runtime initialization. Changing one component must not overwrite the other.
 
 ## Navigation state rule
 
@@ -453,13 +450,13 @@ The flag described later changes the response to occupants. It never disables ov
 
 Required defaults:
 
-- attached to `BillboardRoot`, not to `BarrierMesh`;
+- attached to `BarrierMesh` and movable so it follows the moved component;
 - query-only collision;
 - overlap generation enabled;
 - no physics simulation;
 - no direct navigation relevance;
 - hidden in game unless project debug requires otherwise;
-- designer-authored through the shared GridNavigationModifier bounds contract;
+- transform and extent authored independently from `GridNavigationModifier`;
 - collision object responses configurable through the normal Details panel;
 - no world searches or permanent polling.
 
@@ -568,7 +565,7 @@ bWaitForClearPassage = true
 bWaitForClearPassage = false
     -> lifting barrier policy
     -> overlap and occupant count still run
-    -> raising starts after occupants are prepared for transport
+    -> movement in either direction starts after occupants are prepared for transport
     -> Characters have locomotion authority temporarily blocked
     -> eligible non-Character Actors are attached to BarrierMesh
 ```
@@ -701,9 +698,9 @@ Do not use `EPuzzleTransformMoverDeactivationBehavior` to model this safety reve
 
 ---
 
-# LIFT POLICY — RAISE WITH OCCUPANTS
+# LIFT POLICY — TRANSPORT WITH OCCUPANTS
 
-When `bWaitForClearPassage` is false, occupants do not defer the End request.
+When `bWaitForClearPassage` is false, occupants do not defer an accepted movement request in either direction.
 
 The barrier must still:
 
@@ -717,21 +714,21 @@ The barrier must still:
 Required sequence:
 
 ```text
-request movement toward End
+request movement toward either endpoint
     -> RefreshPassageOccupants()
     -> prepare every current occupant
-    -> mark GridNavigationModifier non-traversable
-    -> start inherited movement toward End
+    -> apply the direction's normal GridNavigationModifier transition
+    -> start inherited movement toward the requested endpoint
 ```
 
 A failure to prepare one non-critical occupant must not crash the Actor or silently corrupt other occupants.
 
 Use a structured result and one warning/event for the failed Actor.
 
-Whether a preparation failure cancels the entire raise or allows the barrier to continue must be an explicit native policy. For the initial implementation, prefer:
+Whether a preparation failure cancels the traversal or allows the barrier to continue must be an explicit native policy. For the initial implementation, prefer:
 
 ```text
-continue raising after reporting the failed occupant
+continue moving after reporting the failed occupant
 ```
 
 unless project safety conventions require fail-closed behavior.
@@ -757,7 +754,7 @@ OverlappingActors
     = Actors currently inside PassageOccupancyVolume
 
 LiftedActors
-    = Actors whose movement/attachment state is owned temporarily by this barrier's current lift cycle
+    = Actors whose movement/attachment state is owned temporarily by this barrier's current transport cycle
 ```
 
 An acquired Actor may leave the overlap volume while remaining a passenger.
@@ -789,8 +786,8 @@ do not attach the Character to BarrierMesh
 stop current locomotion request/velocity through the real owner
 prevent new locomotion commands from competing with the barrier
 leave CharacterMovement capable of receiving moving-base/collision motion
-allow BarrierMesh movement and collision to carry/push the Character upward
-restore locomotion authority when the lift cycle ends
+allow BarrierMesh movement and collision to carry/push the Character in the active direction
+restore locomotion authority when the transport cycle ends
 ```
 
 Do not use `AActor::DisableInput()` as the generic solution.
@@ -905,6 +902,7 @@ Conceptual behavior:
 cache previous attachment state
 cache only physics/gravity state that will be changed
 prepare physics when required
+when enabled, cache and disable owned primitive collision/navigation relevance
 AttachToComponent(BarrierMesh, KeepWorldTransform)
 mark Actor as acquired
 ```
@@ -954,9 +952,23 @@ Do not leave simulation disabled after reset or EndPlay.
 
 A missing or unsupported physics policy must produce an observable structured failure for that Actor.
 
+## Collision and navigation suppression
+
+The optional attached-passenger collision flag defaults to enabled. Before attachment, cache every
+owned `UPrimitiveComponent`'s exact collision mode and `CanEverAffectNavigation` value, disable
+navigation relevance, then set collision to `NoCollision`. Disabling navigation relevance first
+prevents the collision transition and subsequent parent movement from generating repeated dirty
+areas. On every passenger-release path, restore collision first, navigation relevance second, and
+root physics simulation last. Invalid or destroyed components are skipped safely.
+
+This suppression applies only to the non-Character attachment path. Do not disable Character
+collision: Characters are not attached and rely on moving-base/collision transport. When the flag is
+disabled, attachment and physics handling remain active while all primitive collision and navigation
+settings remain untouched.
+
 ---
 
-# ACTORS ENTERING DURING AN ACTIVE RAISE
+# ACTORS ENTERING DURING ACTIVE MOVEMENT
 
 Overlap remains active while the barrier moves.
 
@@ -965,18 +977,16 @@ Overlap remains active while the barrier moves.
 When `bWaitForClearPassage` is false:
 
 ```text
-new valid Actor enters during MovingTowardEnd
+new valid Actor enters during MovingTowardEnd or MovingTowardStart
     -> acquire it immediately when not already a passenger
     -> Character: cancel/lock locomotion
     -> non-Character: attach to BarrierMesh
-    -> carry it through the remaining upward movement
+    -> carry it through the remaining movement in the active direction
 ```
 
 Do not teleport the Actor to the top of the barrier.
 
 Preserve its current world transform at acquisition and apply only future barrier motion.
-
-Actors entering during `MovingTowardStart` are tracked as overlapping but are not automatically acquired as lift passengers.
 
 ## Safe mode
 
@@ -1172,7 +1182,7 @@ A return to Start before reaching End does not consume the latch.
 
 Each accepted activation selects the inherited opposite endpoint.
 
-Clearance/lift handling runs only when the accepted target is End.
+Safe clearance handling runs only for the closing direction. Lift-mode transport runs for either accepted target.
 
 ## PingPong
 
@@ -1502,7 +1512,7 @@ resume inherited movement only when the restored mover contract explicitly repre
 
 Post-restore overlap reconciliation must not automatically acquire lift passengers.
 
-Passenger acquisition occurs only when a genuine future End movement begins.
+Passenger acquisition occurs only when a genuine future movement request begins in lift mode.
 
 Do not emit retroactive movement noise or presentation for restored state.
 
@@ -1653,7 +1663,7 @@ Recommended editor behavior:
 - lift-only settings are hidden or disabled while waiting is enabled;
 - wait-only settings are hidden or disabled while waiting is disabled;
 - optional feedback settings use edit conditions;
-- Passage bounds are authored from one source;
+- GridWorld and occupancy bounds are authored independently for their distinct responsibilities;
 - runtime-only maps, locks, and state flags are not editable;
 - tooltips explain that Start is lowered/open and End is raised/closed;
 - tooltips explain that any state other than exact Start blocks GridWorld navigation.
@@ -1670,7 +1680,7 @@ Required conceptual sequence:
 construct native component hierarchy
 resolve/assign BarrierMesh through inherited mover API
 validate Start and End semantics
-resolve GridNavigationModifier bounds source
+validate the independent GridNavigationModifier and PassageOccupancyVolume shapes
 bind PassageOccupancyVolume overlap delegates
 initialize inherited mover state and Receiver synchronization
 rebuild exact BarrierMesh transform
@@ -1761,7 +1771,7 @@ PassageOccupancyVolume cyan
 Suggested debug elements:
 
 - inherited Start/End arrows and path;
-- box for shared passage bounds;
+- boxes for the independent stationary navigation and moving occupancy bounds;
 - line to each current occupant when local debug is enabled;
 - different marker/label for each acquired passenger;
 - compact text with state, alpha, timing, policy, occupancy, passenger count, pending state, and GridWorld state;
@@ -1796,7 +1806,7 @@ BarrierMesh is the valid inherited moved component
 BarrierMesh mobility is Movable
 PassageOccupancyVolume exists
 PassageOccupancyVolume generates query overlaps
-PassageOccupancyVolume and GridNavigationModifier share equivalent bounds
+PassageOccupancyVolume is a movable child of BarrierMesh
 GridNavigationModifier exists
 GridNavigationModifier can switch traversability at runtime
 Start and End transforms are not accidentally identical
@@ -1868,7 +1878,7 @@ At minimum document:
 class purpose and ownership
 component hierarchy
 Start = lowered/open and End = raised/closed convention
-how to author the shared passage bounds
+how to author the independent navigation and moving occupancy bounds
 GridNavigationModifier behavior
 navigation state for every mover state
 bWaitForClearPassage semantics
@@ -2022,14 +2032,14 @@ barrier raises
 
 A non-player/non-clone Character is stopped and temporarily prevented from issuing locomotion through the most generic compatible project path, then restored safely.
 
-## 13. Movable Actor lift
+## 13. Movable Actor transport
 
 ```text
 non-Character movable Actor overlaps
 -> previous attachment/physics state cached
 -> Actor attached to BarrierMesh with world transform preserved
--> Actor moves upward
--> AtEnd reached
+-> Actor follows the barrier in the active direction
+-> requested endpoint reached
 -> Actor released
 -> prior attachment and physics state restored
 ```
@@ -2038,13 +2048,13 @@ non-Character movable Actor overlaps
 
 A physics-simulating Actor follows the documented preparation and restoration policy without remaining attached, non-simulating, or gravity-disabled after release.
 
-## 15. Actor enters during lift raise
+## 15. Actor enters during lift-mode raising
 
 An Actor entering during `MovingTowardEnd` is acquired once and receives only the remaining barrier movement.
 
 ## 16. Actor enters during lowering
 
-The Actor is counted as an overlap but is not acquired automatically as a passenger.
+In lift mode, the Actor is acquired once and receives only the remaining downward barrier movement.
 
 ## 17. Passenger leaves overlap
 
@@ -2087,7 +2097,7 @@ A Latch request is deferred by occupants and is not considered completed until t
 
 ## 22. FlipFlop direction handling
 
-Occupancy gating/transport runs only when the accepted FlipFlop target is End. Movement toward Start does not acquire new passengers.
+Safe occupancy gating runs only for the closing direction. Lift-mode transport runs for either accepted FlipFlop target and acquires new passengers in both directions.
 
 ## 23. Lowering navigation
 
@@ -2211,7 +2221,8 @@ Required constraints:
 
 - no permanent Actor Tick;
 - movement Tick only while inherited interpolation actively advances;
-- no periodic overlap polling;
+- no idle or timer-based overlap polling; the moving child volume may reconcile overlaps after each
+  active inherited movement update because parent movement does not update child primitive overlaps;
 - no world searches;
 - no per-frame GridNavigationModifier changes;
 - no per-frame path invalidation calls;
@@ -2246,7 +2257,7 @@ activate Receivers directly
 create a second GridWorld modifier implementation
 rebuild GridWorld every movement Tick
 use BarrierMesh navigation relevance as the dynamic passage authority
-allow GridNavigationModifier and overlap bounds to drift silently
+silently overwrite one authored passage component from the other
 turn off overlap tracking when bWaitForClearPassage is false
 count primitive components as separate occupants
 world-search for occupants
@@ -2283,7 +2294,7 @@ Use this order unless existing repository structure requires a safer sequence:
 3. inspect `APuzzleTransformMover` extension points and add only a minimal generic movement-request gate when genuinely missing;
 4. create `AParadoxVerticalBarrier` and native component hierarchy;
 5. configure `BarrierMesh` as inherited moved component;
-6. integrate the existing `UGridNavigationModifierComponent` and shared bounds source;
+6. integrate the existing `UGridNavigationModifierComponent` and independent moving occupancy volume;
 7. implement event-driven distinct-Actor overlap tracking;
 8. implement navigation state mapping from inherited mover state;
 9. implement `bWaitForClearPassage = true` defer/retry/cancellation behavior;
@@ -2316,7 +2327,7 @@ AParadoxVerticalBarrier
 native FrameMesh and BarrierMesh
 native PassageOccupancyVolume
 existing UGridNavigationModifierComponent integration
-shared bounds authoring/validation
+independent GridWorld and moving occupancy bounds authoring/validation
 Start lowered/open and End raised/closed convention
 bWaitForClearPassage
 safe defer/retry/cancellation policy
@@ -2379,7 +2390,7 @@ The task is complete only when:
 - `FrameMesh`, `BarrierMesh`, `PassageOccupancyVolume`, `MovementAudio`, and `MovementVFX` exist with the required hierarchy;
 - `BarrierMesh` is assigned through the inherited moved-component API;
 - the existing `UGridNavigationModifierComponent` is used;
-- overlap and GridWorld modifier use one authoritative passage bounds definition;
+- overlap and GridWorld modifier preserve independent authored transforms and extents;
 - exact `AtStart` is the only navigable barrier state;
 - movement, paused partial state, and `AtEnd` are non-traversable;
 - no per-frame GridWorld update exists;
@@ -2388,7 +2399,7 @@ The task is complete only when:
 - `bWaitForClearPassage` defaults to true;
 - safe mode defers raising until clear and retries event-driven;
 - safe mode returns toward Start when an Actor enters during raising;
-- lift mode prepares current occupants and raises without waiting;
+- lift mode prepares current occupants and transports them in either movement direction without waiting;
 - player click movement is cancelled and locked without disabling unrelated input;
 - clone movement action is interrupted through the authoritative API without editing replay data;
 - Character locomotion is temporarily blocked while moving-base/collision transport remains functional;

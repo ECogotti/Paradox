@@ -47,6 +47,12 @@ placed modifier out of the editor overlay as well. `Activate` and `Deactivate` b
 overlay refresh when the effective component state changes. This closes the initialization-order
 case where runtime topology exists before an auto-activating blocker enters its active state.
 
+Selecting an Actor that owns a `UGridNavigationModifierComponent` in an editor viewport draws the
+component's oriented wire box even though the runtime component itself has no render primitive. Red
+means the modifier currently blocks cells; green means it contributes a non-blocking effect. The
+visualizer uses the authored relative transform, scale, and `BoxExtent` and exists only in the
+`GridWorldEditor` module.
+
 ## Query behavior
 
 `FGridAStar` is a non-UObject algorithm using integer costs, preallocated node memory, deterministic neighbor order and deterministic tie breaks. Orthogonal movement costs 1000 and diagonal movement costs 1414 before cell, area, modifier or occupancy costs. The ordinary heuristic ignores `Layer`: changing quantized layer while walking a ramp is not an additional graph step. Diagonal no-corner-cutting resolves the two actually published orthogonal neighbors by horizontal coordinate, so those neighbors may occupy different layers on an incline.

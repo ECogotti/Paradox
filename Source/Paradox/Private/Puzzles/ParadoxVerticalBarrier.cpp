@@ -67,10 +67,12 @@ AParadoxVerticalBarrier::AParadoxVerticalBarrier()
 	GridNavigationModifier->bBlockCells = true;
 
 	PassageOccupancyVolume = CreateDefaultSubobject<UBoxComponent>(TEXT("PassageOccupancyVolume"));
-	PassageOccupancyVolume->SetupAttachment(BillboardRoot.Get());
-	PassageOccupancyVolume->SetMobility(EComponentMobility::Static);
-	PassageOccupancyVolume->InitBoxExtent(GridNavigationModifier->BoxExtent);
-	PassageOccupancyVolume->SetRelativeTransform(GridNavigationModifier->GetRelativeTransform());
+	PassageOccupancyVolume->SetupAttachment(BarrierMesh);
+	PassageOccupancyVolume->SetMobility(EComponentMobility::Movable);
+	PassageOccupancyVolume->InitBoxExtent(FVector(75.0f, 75.0f, 120.0f));
+	// Keep the native open-End overlap at the former passage position while making it follow the
+	// BarrierMesh through movement (End defaults to 240 cm below Start).
+	PassageOccupancyVolume->SetRelativeLocation(FVector(0.0f, 0.0f, 360.0f));
 	PassageOccupancyVolume->SetCollisionProfileName(TEXT("Trigger"));
 	PassageOccupancyVolume->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 	PassageOccupancyVolume->SetGenerateOverlapEvents(true);
@@ -105,7 +107,6 @@ AParadoxVerticalBarrier::AParadoxVerticalBarrier()
 void AParadoxVerticalBarrier::OnConstruction(const FTransform& Transform)
 {
 	Super::OnConstruction(Transform);
-	SynchronizePassageBounds();
 	if (BarrierMesh && StartArrow && EndArrow && GetWorld() && !GetWorld()->IsGameWorld())
 	{
 		BarrierMesh->SetWorldTransform(
@@ -125,7 +126,6 @@ void AParadoxVerticalBarrier::OnConstruction(const FTransform& Transform)
 void AParadoxVerticalBarrier::PostRegisterAllComponents()
 {
 	Super::PostRegisterAllComponents();
-	SynchronizePassageBounds();
 	EnforceComponentInvariants();
 }
 
@@ -133,7 +133,6 @@ void AParadoxVerticalBarrier::BeginPlay()
 {
 	bSuppressPresentation = true;
 	bBarrierInitialized = true;
-	SynchronizePassageBounds();
 	EnforceComponentInvariants();
 
 	if (PassageOccupancyVolume)
@@ -266,21 +265,18 @@ EDataValidationResult AParadoxVerticalBarrier::IsDataValid(FDataValidationContex
 			"BarrierNavigationSurface",
 			"Generate Navigation At Stable Endpoints requires BarrierMesh to own a Static Mesh with query collision enabled."));
 	}
-	if (!PassageOccupancyVolume || PassageOccupancyVolume->GetAttachParent() != BillboardRoot.Get()
+	if (!PassageOccupancyVolume || PassageOccupancyVolume->GetAttachParent() != BarrierMesh.Get()
+		|| PassageOccupancyVolume->Mobility != EComponentMobility::Movable
 		|| !PassageOccupancyVolume->GetGenerateOverlapEvents()
 		|| !CollisionEnabledHasQuery(PassageOccupancyVolume->GetCollisionEnabled()))
 	{
-		AddError(LOCTEXT("OccupancyVolume", "Vertical Barrier requires a query-enabled overlap volume attached to BillboardRoot."));
+		AddError(LOCTEXT(
+			"OccupancyVolume",
+			"Vertical Barrier requires a movable, query-enabled overlap volume attached to BarrierMesh."));
 	}
 	if (!GridNavigationModifier || GridNavigationModifier->GetAttachParent() != BillboardRoot.Get())
 	{
 		AddError(LOCTEXT("GridModifier", "Vertical Barrier requires its native GridNavigationModifier."));
-	}
-	if (PassageOccupancyVolume && GridNavigationModifier
-		&& (!PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(GridNavigationModifier->BoxExtent)
-			|| !PassageOccupancyVolume->GetRelativeTransform().Equals(GridNavigationModifier->GetRelativeTransform())))
-	{
-		AddError(LOCTEXT("BoundsMismatch", "PassageOccupancyVolume must exactly mirror GridNavigationModifier transform and BoxExtent."));
 	}
 	if (!WorldStateParticipant || !PerceptionSource)
 	{
@@ -318,7 +314,6 @@ EDataValidationResult AParadoxVerticalBarrier::IsDataValid(FDataValidationContex
 void AParadoxVerticalBarrier::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
 {
 	Super::PostEditChangeProperty(PropertyChangedEvent);
-	SynchronizePassageBounds();
 	EnforceComponentInvariants();
 }
 #endif
@@ -454,25 +449,26 @@ EPuzzleTransformMoverRequestDecision AParadoxVerticalBarrier::EvaluateMovementRe
 	{
 		return EPuzzleTransformMoverRequestDecision::Reject;
 	}
-	if (RequestedTarget == EPuzzleTransformMoverTarget::End)
-	{
-		return EPuzzleTransformMoverRequestDecision::Accept;
-	}
 
 	RefreshPassageOccupants();
-	if (bWaitForClearPassage && IsPassageOccupied())
+	if (RequestedTarget == EPuzzleTransformMoverTarget::Start
+		&& bWaitForClearPassage
+		&& IsPassageOccupied())
 	{
 		SetRaiseRequestPending(true);
 		return EPuzzleTransformMoverRequestDecision::Defer;
 	}
 
-	bRaiseRequestPending = false;
-	ClearPendingRaiseRetry();
 	if (!bWaitForClearPassage)
 	{
 		PrepareCurrentOccupantsForLift();
 	}
-	SetPassageNavigationBlocking(true);
+	if (RequestedTarget == EPuzzleTransformMoverTarget::Start)
+	{
+		bRaiseRequestPending = false;
+		ClearPendingRaiseRetry();
+		SetPassageNavigationBlocking(true);
+	}
 	return EPuzzleTransformMoverRequestDecision::Accept;
 }
 
@@ -523,6 +519,7 @@ void AParadoxVerticalBarrier::OnMovementPausedNative()
 void AParadoxVerticalBarrier::OnMovementUpdatedNative(float CurrentMovementAlpha, float CurrentEasedAlpha)
 {
 	ApplyCharacterTransportDelta();
+	ReconcileMovingPassageOccupants();
 }
 
 void AParadoxVerticalBarrier::OnReachedStartNative()
@@ -581,20 +578,7 @@ void AParadoxVerticalBarrier::HandlePassageBeginOverlap(
 	const int32 PreviousCount = OverlappingActors.Num();
 	AddOverlappingComponent(OtherActor, OtherComponent);
 	NotifyOccupancyChanged(PreviousCount);
-
-	if (GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart)
-	{
-		if (bWaitForClearPassage)
-		{
-			SetRaiseRequestPending(true);
-			bSafetyReturnInProgress = true;
-			RequestMoveTowardEnd();
-		}
-		else
-		{
-			PrepareActorForLift(OtherActor);
-		}
-	}
+	ProcessNewPassageOccupant(OtherActor);
 }
 
 void AParadoxVerticalBarrier::HandlePassageEndOverlap(
@@ -683,6 +667,58 @@ void AParadoxVerticalBarrier::NotifyOccupancyChanged(const int32 PreviousCount)
 	{
 		HandlePassageOccupancyChanged(OverlappingActors.Num());
 		OnPassageOccupancyChanged.Broadcast(this, OverlappingActors.Num());
+	}
+}
+
+void AParadoxVerticalBarrier::ProcessNewPassageOccupant(AActor* Actor)
+{
+	const EPuzzleTransformMoverState State = GetMoverState();
+	if (State != EPuzzleTransformMoverState::MovingTowardStart
+		&& State != EPuzzleTransformMoverState::MovingTowardEnd)
+	{
+		return;
+	}
+	if (!bWaitForClearPassage)
+	{
+		PrepareActorForLift(Actor);
+	}
+	else if (State == EPuzzleTransformMoverState::MovingTowardStart)
+	{
+		SetRaiseRequestPending(true);
+		bSafetyReturnInProgress = true;
+		RequestMoveTowardEnd();
+	}
+}
+
+void AParadoxVerticalBarrier::ReconcileMovingPassageOccupants()
+{
+	TSet<TWeakObjectPtr<AActor>> PreviousActors;
+	PreviousActors.Reserve(OverlappingActors.Num());
+	for (const TPair<TWeakObjectPtr<AActor>, TSet<TWeakObjectPtr<UPrimitiveComponent>>>& Entry : OverlappingActors)
+	{
+		PreviousActors.Add(Entry.Key);
+	}
+	const int32 PreviousCount = PreviousActors.Num();
+	if (RefreshPassageOccupants() != EParadoxBarrierOccupancyRefreshResult::Succeeded)
+	{
+		return;
+	}
+
+	for (const TPair<TWeakObjectPtr<AActor>, TSet<TWeakObjectPtr<UPrimitiveComponent>>>& Entry : OverlappingActors)
+	{
+		if (!PreviousActors.Contains(Entry.Key))
+		{
+			ProcessNewPassageOccupant(Entry.Key.Get());
+		}
+	}
+	if (PreviousCount > 0 && OverlappingActors.IsEmpty())
+	{
+		if (!bSuppressPresentation)
+		{
+			HandlePassageClearanceRestored();
+			OnPassageClearanceRestored.Broadcast(this);
+		}
+		TryRetryPendingRaise();
 	}
 }
 
@@ -905,9 +941,11 @@ bool AParadoxVerticalBarrier::PrepareAttachedActorForLift(AActor* Actor, FLifted
 			Primitive->SetSimulatePhysics(false);
 		}
 	}
+	SuppressAttachedActorCollision(Actor, OutRecord);
 
 	if (!Root->AttachToComponent(GetMovedComponent(), FAttachmentTransformRules::KeepWorldTransform))
 	{
+		RestoreAttachedActorCollision(OutRecord);
 		if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Root); OutRecord.bPhysicsStateChanged && Primitive)
 		{
 			Primitive->SetEnableGravity(OutRecord.bWasGravityEnabled);
@@ -917,6 +955,64 @@ bool AParadoxVerticalBarrier::PrepareAttachedActorForLift(AActor* Actor, FLifted
 		return false;
 	}
 	return true;
+}
+
+void AParadoxVerticalBarrier::SuppressAttachedActorCollision(AActor* Actor, FLiftedActorRecord& OutRecord)
+{
+	if (!bDisableAttachedActorCollisionDuringTransport || !IsValid(Actor))
+	{
+		return;
+	}
+
+	TInlineComponentArray<UPrimitiveComponent*> PrimitiveComponents;
+	Actor->GetComponents(PrimitiveComponents, false);
+	OutRecord.PrimitiveStates.Reserve(PrimitiveComponents.Num());
+	for (UPrimitiveComponent* Primitive : PrimitiveComponents)
+	{
+		if (!IsValid(Primitive) || Primitive->GetOwner() != Actor)
+		{
+			continue;
+		}
+
+		FPassengerPrimitiveState& State = OutRecord.PrimitiveStates.AddDefaulted_GetRef();
+		State.Component = Primitive;
+		State.CollisionEnabled = Primitive->GetCollisionEnabled();
+		State.bCanEverAffectNavigation = Primitive->CanEverAffectNavigation();
+
+		// Disable navigation relevance first so the collision change and every following parent
+		// transform produce no repeated navigation dirty areas during transport.
+		if (State.bCanEverAffectNavigation)
+		{
+			Primitive->SetCanEverAffectNavigation(false);
+		}
+		if (State.CollisionEnabled != ECollisionEnabled::NoCollision)
+		{
+			Primitive->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		}
+	}
+}
+
+void AParadoxVerticalBarrier::RestoreAttachedActorCollision(const FLiftedActorRecord& Record)
+{
+	for (const FPassengerPrimitiveState& State : Record.PrimitiveStates)
+	{
+		UPrimitiveComponent* Primitive = State.Component.Get();
+		if (!IsValid(Primitive))
+		{
+			continue;
+		}
+
+		// Restore collision while navigation relevance is still disabled, then publish the final
+		// component state to navigation once instead of once per restored setting.
+		if (Primitive->GetCollisionEnabled() != State.CollisionEnabled)
+		{
+			Primitive->SetCollisionEnabled(State.CollisionEnabled);
+		}
+		if (Primitive->CanEverAffectNavigation() != State.bCanEverAffectNavigation)
+		{
+			Primitive->SetCanEverAffectNavigation(State.bCanEverAffectNavigation);
+		}
+	}
 }
 
 void AParadoxVerticalBarrier::ReportLiftFailure(AActor* Actor, const EParadoxBarrierLiftFailureReason Reason)
@@ -968,11 +1064,13 @@ void AParadoxVerticalBarrier::ReleaseLiftedActor(
 						Record.PreviousSocket);
 				}
 			}
-			if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Root); Record.bPhysicsStateChanged && Primitive)
-			{
-				Primitive->SetEnableGravity(Record.bWasGravityEnabled);
-				Primitive->SetSimulatePhysics(Record.bWasSimulatingPhysics);
-			}
+		}
+		RestoreAttachedActorCollision(Record);
+		if (UPrimitiveComponent* Primitive = Cast<UPrimitiveComponent>(Record.RootComponent.Get());
+			Record.bPhysicsStateChanged && Primitive)
+		{
+			Primitive->SetEnableGravity(Record.bWasGravityEnabled);
+			Primitive->SetSimulatePhysics(Record.bWasSimulatingPhysics);
 		}
 	}
 	UnbindActorDestroyedIfUnused(Actor);
@@ -1023,22 +1121,6 @@ void AParadoxVerticalBarrier::ApplyCharacterTransportDelta()
 		}
 		FHitResult Hit;
 		Character->AddActorWorldOffset(Delta, true, &Hit, ETeleportType::None);
-	}
-}
-
-void AParadoxVerticalBarrier::SynchronizePassageBounds()
-{
-	if (!GridNavigationModifier || !PassageOccupancyVolume)
-	{
-		return;
-	}
-	if (!PassageOccupancyVolume->GetRelativeTransform().Equals(GridNavigationModifier->GetRelativeTransform()))
-	{
-		PassageOccupancyVolume->SetRelativeTransform(GridNavigationModifier->GetRelativeTransform());
-	}
-	if (!PassageOccupancyVolume->GetUnscaledBoxExtent().Equals(GridNavigationModifier->BoxExtent))
-	{
-		PassageOccupancyVolume->SetBoxExtent(GridNavigationModifier->BoxExtent, false);
 	}
 }
 

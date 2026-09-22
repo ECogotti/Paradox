@@ -2,6 +2,7 @@
 
 #include "Blueprint/UserWidget.h"
 #include "CoreMinimal.h"
+#include "Engine/TimerHandle.h"
 #include "Inventory/ParadoxDropTargetingComponent.h"
 #include "Types/GameplayActionTypes.h"
 #include "ParadoxInventoryWidget.generated.h"
@@ -18,6 +19,7 @@ class UImage;
 class UTexture2D;
 class UVerticalBox;
 class UWidgetSwitcher;
+class UWorld;
 
 /** Event-driven one-slot equipment presentation with a complete native fallback layout. */
 UCLASS(BlueprintType, Blueprintable)
@@ -71,6 +73,10 @@ public:
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Inventory|Widget|Presentation")
 	TSubclassOf<UParadoxInventoryActionButtonWidget> ActionButtonWidgetClass;
 
+	/** Padding applied to every dynamically generated pickupable-action entry. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Inventory|Widget|Presentation")
+	FMargin PickupableActionButtonPadding = FMargin(0.0f);
+
 protected:
 	virtual void NativeOnInitialized() override;
 	virtual TSharedRef<SWidget> RebuildWidget() override;
@@ -120,6 +126,9 @@ private:
 	void UnbindPresentationSources();
 	void RebuildActionButtons();
 	void RefreshActionButtonAvailability();
+	void ScheduleActionAvailabilityRefresh();
+	void CancelActionAvailabilityRefresh();
+	void HandleDeferredActionAvailabilityRefresh();
 
 	UFUNCTION()
 	void HandleEquippedItemChanged(
@@ -158,4 +167,13 @@ private:
 
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UParadoxInventoryActionButtonWidget>> GeneratedActionButtons;
+
+	FTimerHandle PendingActionAvailabilityRefreshTimer;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UWorld> PendingActionAvailabilityRefreshWorld;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FParadoxInventoryWidgetTestAccessor;
+#endif
 };

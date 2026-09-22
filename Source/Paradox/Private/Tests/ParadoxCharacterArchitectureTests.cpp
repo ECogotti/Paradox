@@ -14,6 +14,8 @@
 #include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/ParadoxCloneController.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Health/ParadoxHealthComponent.h"
+#include "Oxygen/ParadoxOxygenComponent.h"
 #include "Perception/ParadoxTemporalVisionComponent.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
@@ -40,6 +42,12 @@ bool FParadoxCharacterComponentOwnershipTest::RunTest(const FString& Parameters)
 		TestNotNull(
 			TEXT("Every temporal avatar owns Paradox temporal identity"),
 			SharedDefaults->GetTemporalEntityComponent());
+		TestNotNull(
+			TEXT("Every temporal avatar owns authoritative Health"),
+			SharedDefaults->GetHealthComponent());
+		TestNotNull(
+			TEXT("Every temporal avatar owns simulation-time Oxygen"),
+			SharedDefaults->GetOxygenComponent());
 		TestNull(
 			TEXT("The shared character has no player-only planning component"),
 			SharedDefaults->FindComponentByClass<UTacticalPauseActionQueueComponent>());

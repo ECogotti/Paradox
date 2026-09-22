@@ -10,7 +10,9 @@ class AParadoxCharacter;
 class AParadoxPlayerController;
 class APawn;
 class UParadoxGameplayHUDWidget;
+class UParadoxHealthWidget;
 class UParadoxInventoryWidget;
+class UParadoxOxygenWidget;
 class UParadoxTimeLoopComponent;
 
 /** Local Player Controller-owned coordinator for Gameplay HUD lifetime, policy and data binding. */
@@ -93,9 +95,9 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Gameplay HUD|Sections")
 	ESlateVisibility EquipmentSectionVisibility = ESlateVisibility::Visible;
 
-	/** Reserved presentation location for future gameplay status widgets such as Oxygen. */
+	/** Shared visibility applied to embedded Health and Oxygen widgets when present. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Gameplay HUD|Sections")
-	ESlateVisibility StatusSectionVisibility = ESlateVisibility::Collapsed;
+	ESlateVisibility StatusSectionVisibility = ESlateVisibility::Visible;
 
 protected:
 	virtual void BeginPlay() override;
@@ -129,6 +131,12 @@ private:
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UParadoxInventoryWidget> EquipmentWidget;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UParadoxHealthWidget> HealthWidget;
+
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UParadoxOxygenWidget> OxygenWidget;
 
 	UPROPERTY(Transient)
 	TObjectPtr<UParadoxTimeLoopComponent> BoundTimeLoop = nullptr;

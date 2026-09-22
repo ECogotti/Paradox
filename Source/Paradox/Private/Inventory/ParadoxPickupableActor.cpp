@@ -11,6 +11,7 @@
 #include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Engine/World.h"
+#include "GameplayActionTags.h"
 #include "Interaction/ParadoxInteractionComponent.h"
 #include "Interaction/ParadoxSelectableComponent.h"
 #include "Interaction/ParadoxSelectionComponent.h"
@@ -149,6 +150,101 @@ void AParadoxPickupableActor::SetPickupableActions(
 void AParadoxPickupableActor::NotifyPickupableActionsChanged()
 {
 	OnPickupableActionsChanged.Broadcast(this);
+}
+
+bool AParadoxPickupableActor::CanUseItem_Implementation(
+	AParadoxCharacter* Character,
+	FGameplayTag& OutFailureReason,
+	FString& OutDiagnostic) const
+{
+	(void)Character;
+	OutFailureReason = ParadoxGameplayTags::Result_Failure_Inventory_UseUnsupported;
+	OutDiagnostic = TEXT("This equipped pickupable does not implement the generic Use behavior.");
+	return false;
+}
+
+FParadoxPickupableUseResult AParadoxPickupableActor::ExecuteUseItem_Implementation(
+	AParadoxCharacter* Character)
+{
+	(void)Character;
+	FParadoxPickupableUseResult Result;
+	Result.ReasonTag = ParadoxGameplayTags::Result_Failure_Inventory_UseUnsupported;
+	Result.DiagnosticMessage = TEXT("This equipped pickupable does not implement the generic Use behavior.");
+	return Result;
+}
+
+void AParadoxPickupableActor::HandleUseCommitted(
+	AParadoxCharacter* Character,
+	const FParadoxPickupableUseResult& Result)
+{
+	ReceiveUseCommitted(Character, Result);
+}
+
+void AParadoxPickupableActor::HandleUseFailed(
+	AParadoxCharacter* Character,
+	const FParadoxPickupableUseResult& Result)
+{
+	ReceiveUseFailed(Character, Result);
+}
+
+FParadoxPickupableUseResult AParadoxPickupableActor::EvaluateUseInternal(
+	AParadoxCharacter* Character) const
+{
+	FParadoxPickupableUseResult Result;
+	FGameplayTag FailureReason;
+	FString Diagnostic;
+	if (!CanUseItem(Character, FailureReason, Diagnostic))
+	{
+		Result.ReasonTag = FailureReason.IsValid()
+			? FailureReason
+			: ParadoxGameplayTags::Result_Failure_Inventory_UseEffectFailed;
+		Result.DiagnosticMessage = Diagnostic.IsEmpty()
+			? TEXT("The equipped pickupable rejected Use without a diagnostic.")
+			: MoveTemp(Diagnostic);
+		return Result;
+	}
+
+	Result.bSucceeded = true;
+	Result.ReasonTag = GameplayActionTags::Result_Success;
+	Result.DiagnosticMessage = TEXT("The equipped pickupable can execute Use.");
+	return Result;
+}
+
+FParadoxPickupableUseResult AParadoxPickupableActor::ExecuteUseInternal(
+	AParadoxCharacter* Character)
+{
+	FParadoxPickupableUseResult Validation = EvaluateUseInternal(Character);
+	if (!Validation.IsSuccess())
+	{
+		return Validation;
+	}
+
+	FParadoxPickupableUseResult Result = ExecuteUseItem(Character);
+	Result.bItemConsumed = false;
+	if (Result.IsSuccess())
+	{
+		if (!Result.ReasonTag.IsValid())
+		{
+			Result.ReasonTag = GameplayActionTags::Result_Success;
+		}
+		if (Result.DiagnosticMessage.IsEmpty())
+		{
+			Result.DiagnosticMessage = TEXT("The equipped pickupable applied its Use effect.");
+		}
+	}
+	else
+	{
+		Result.bConsumeItemOnSuccess = false;
+		if (!Result.ReasonTag.IsValid())
+		{
+			Result.ReasonTag = ParadoxGameplayTags::Result_Failure_Inventory_UseEffectFailed;
+		}
+		if (Result.DiagnosticMessage.IsEmpty())
+		{
+			Result.DiagnosticMessage = TEXT("The equipped pickupable Use effect failed without a diagnostic.");
+		}
+	}
+	return Result;
 }
 
 void AParadoxPickupableActor::BeginPlay()

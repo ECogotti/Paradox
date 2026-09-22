@@ -3,8 +3,11 @@
 #include "GridWorldEditorModule.h"
 
 #include "AI/Navigation/NavigationDirtyArea.h"
+#include "Components/GridNavigationModifierComponent.h"
+#include "Components/GridNavigationModifierComponentVisualizer.h"
 #include "Components/PrimitiveComponent.h"
 #include "Editor.h"
+#include "Editor/UnrealEdEngine.h"
 #include "Engine/Selection.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
@@ -13,6 +16,7 @@
 #include "Navigation/GridNavigationData.h"
 #include "NavigationSystem.h"
 #include "ToolMenus.h"
+#include "UnrealEdGlobals.h"
 
 #define LOCTEXT_NAMESPACE "GridWorldEditor"
 
@@ -55,10 +59,20 @@ IMPLEMENT_MODULE(FGridWorldEditorModule, GridWorldEditor)
 void FGridWorldEditorModule::StartupModule()
 {
 	UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateRaw(this, &FGridWorldEditorModule::RegisterMenus));
+	if (GUnrealEd)
+	{
+		TSharedPtr<FComponentVisualizer> Visualizer = MakeShared<FGridNavigationModifierComponentVisualizer>();
+		GUnrealEd->RegisterComponentVisualizer(UGridNavigationModifierComponent::StaticClass()->GetFName(), Visualizer);
+		Visualizer->OnRegister();
+	}
 }
 
 void FGridWorldEditorModule::ShutdownModule()
 {
+	if (GUnrealEd)
+	{
+		GUnrealEd->UnregisterComponentVisualizer(UGridNavigationModifierComponent::StaticClass()->GetFName());
+	}
 	UToolMenus::UnRegisterStartupCallback(this);
 	UToolMenus::UnregisterOwner(this);
 }

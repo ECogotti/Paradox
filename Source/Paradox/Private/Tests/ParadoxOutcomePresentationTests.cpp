@@ -2,6 +2,7 @@
 
 #if WITH_DEV_AUTOMATION_TESTS
 
+#include "Characters/ParadoxPlayerCharacter.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Presentation/ParadoxOutcomePresentationComponent.h"
 #include "Presentation/ParadoxOutcomeWidget.h"
@@ -20,6 +21,13 @@ struct FParadoxOutcomePresentationTestAccessor
 	{
 		return UParadoxOutcomePresentationComponent::
 			MakeGameOverPresentationData(Context);
+	}
+
+	static FParadoxOutcomePresentationData MakeRunFailureData(
+		const FParadoxRunFailureContext& Context)
+	{
+		return UParadoxOutcomePresentationComponent::
+			MakeRunFailurePresentationData(Context);
 	}
 
 	static FParadoxOutcomePresentationData MakeLevelCompleteData(
@@ -84,6 +92,26 @@ bool FParadoxOutcomePresentationDefaultsTest::RunTest(
 	TestFalse(
 		TEXT("Collapse fallback does not expose restart"),
 		ParadoxData.bShowRestart);
+
+	FParadoxRunFailureContext DeathContext;
+	DeathContext.EventId = FGuid::NewGuid();
+	DeathContext.Reason = EParadoxRunFailureReason::PlayerDeath;
+	DeathContext.Player = const_cast<AParadoxPlayerCharacter*>(
+		GetDefault<AParadoxPlayerCharacter>());
+	const FParadoxOutcomePresentationData DeathData =
+		FParadoxOutcomePresentationTestAccessor::MakeRunFailureData(
+			DeathContext);
+	TestEqual(
+		TEXT("Player death selects its distinct outcome"),
+		DeathData.OutcomeType,
+		EParadoxOutcomeType::PlayerDeath);
+	TestEqual(
+		TEXT("Player death has deterministic native title"),
+		DeathData.Title.ToString(),
+		FString(TEXT("LIFE SIGNS LOST")));
+	TestFalse(
+		TEXT("Player death remains a recoverable run failure"),
+		DeathData.bShowRestart);
 
 	FParadoxGameOverContext GameOverContext;
 	GameOverContext.EventId = FGuid::NewGuid();

@@ -7,6 +7,7 @@
 #include "Components/GameplayActionComponent.h"
 #include "Components/Image.h"
 #include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Engine/Texture2D.h"
@@ -17,6 +18,7 @@
 #include "Inventory/ParadoxPickupableAction.h"
 #include "Inventory/ParadoxPickupableActor.h"
 #include "Paradox.h"
+#include "TimerManager.h"
 
 #define LOCTEXT_NAMESPACE "ParadoxInventoryWidget"
 
@@ -45,6 +47,7 @@ void UParadoxInventoryWidget::SetInventoryCharacter(AParadoxCharacter* Character
 	{
 		return;
 	}
+	CancelActionAvailabilityRefresh();
 	AParadoxPickupableActor* PreviousItem = GetEquippedPickupable();
 	UnbindPresentationSources();
 	UnbindInventory();
@@ -177,6 +180,7 @@ void UParadoxInventoryWidget::NativeConstruct()
 
 void UParadoxInventoryWidget::NativeDestruct()
 {
+	CancelActionAvailabilityRefresh();
 	if (DropButton)
 	{
 		DropButton->OnClicked().RemoveAll(this);
@@ -372,7 +376,7 @@ void UParadoxInventoryWidget::RebuildActionButtons()
 			continue;
 		}
 		UParadoxInventoryActionButtonWidget* Entry =
-			CreateWidget<UParadoxInventoryActionButtonWidget>(GetOwningPlayer(), EntryClass);
+			CreateWidget<UParadoxInventoryActionButtonWidget>(this, EntryClass);
 		if (!Entry)
 		{
 			PARADOX_LOG_WARNING(
@@ -386,7 +390,11 @@ void UParadoxInventoryWidget::RebuildActionButtons()
 			this,
 			&ThisClass::HandleSpecialActionRequested);
 		Entry->RefreshActionPresentation(CanExecutePickupableAction(Action));
-		SpecialActionsContainer->AddChild(Entry);
+		if (UVerticalBoxSlot* EntrySlot =
+			SpecialActionsContainer->AddChildToVerticalBox(Entry))
+		{
+			EntrySlot->SetPadding(PickupableActionButtonPadding);
+		}
 		GeneratedActionButtons.Add(Entry);
 	}
 }
@@ -403,6 +411,41 @@ void UParadoxInventoryWidget::RefreshActionButtonAvailability()
 	}
 }
 
+void UParadoxInventoryWidget::ScheduleActionAvailabilityRefresh()
+{
+	CancelActionAvailabilityRefresh();
+	UWorld* World = InventoryCharacter.IsValid()
+		? InventoryCharacter->GetWorld()
+		: GetWorld();
+	if (!World)
+	{
+		return;
+	}
+
+	PendingActionAvailabilityRefreshWorld = World;
+	PendingActionAvailabilityRefreshTimer = World->GetTimerManager().SetTimerForNextTick(
+		this,
+		&ThisClass::HandleDeferredActionAvailabilityRefresh);
+}
+
+void UParadoxInventoryWidget::CancelActionAvailabilityRefresh()
+{
+	if (PendingActionAvailabilityRefreshWorld.IsValid())
+	{
+		PendingActionAvailabilityRefreshWorld->GetTimerManager().ClearTimer(
+			PendingActionAvailabilityRefreshTimer);
+	}
+	PendingActionAvailabilityRefreshTimer.Invalidate();
+	PendingActionAvailabilityRefreshWorld.Reset();
+}
+
+void UParadoxInventoryWidget::HandleDeferredActionAvailabilityRefresh()
+{
+	PendingActionAvailabilityRefreshTimer.Invalidate();
+	PendingActionAvailabilityRefreshWorld.Reset();
+	RefreshActionButtonAvailability();
+}
+
 void UParadoxInventoryWidget::HandleEquippedItemChanged(
 	AParadoxPickupableActor* PreviousItem,
 	AParadoxPickupableActor* NewItem)
@@ -410,6 +453,9 @@ void UParadoxInventoryWidget::HandleEquippedItemChanged(
 	BindPresentationSources();
 	ReceiveInventoryItemChanged(PreviousItem, NewItem);
 	RefreshInventoryPresentation(true);
+	// The Inventory broadcasts while its transaction guard is still active. Re-query once
+	// the transition has completed so valid item actions do not retain that transient failure.
+	ScheduleActionAvailabilityRefresh();
 }
 
 void UParadoxInventoryWidget::HandlePickupableActionsChanged(

@@ -4,7 +4,11 @@
 #include "Controllers/ParadoxPlayerController.h"
 #include "GameModes/ParadoxGameMode.h"
 #include "HUD/ParadoxGameplayHUDWidget.h"
+#include "Health/ParadoxHealthComponent.h"
+#include "Health/ParadoxHealthWidget.h"
 #include "Inventory/ParadoxInventoryWidget.h"
+#include "Oxygen/ParadoxOxygenComponent.h"
+#include "Oxygen/ParadoxOxygenWidget.h"
 #include "Paradox.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
 
@@ -234,12 +238,22 @@ void UParadoxGameplayHUDComponent::DestroyGameplayHUD()
 	{
 		EquipmentWidget->SetInventoryCharacter(nullptr);
 	}
+	if (HealthWidget.IsValid())
+	{
+		HealthWidget->ClearObservedHealthComponent();
+	}
+	if (OxygenWidget.IsValid())
+	{
+		OxygenWidget->ClearObservedOxygenComponent();
+	}
 	if (GameplayHUDWidget)
 	{
 		GameplayHUDWidget->ClearHUDContext();
 		GameplayHUDWidget->RemoveFromParent();
 	}
 	EquipmentWidget.Reset();
+	HealthWidget.Reset();
+	OxygenWidget.Reset();
 	GameplayHUDWidget = nullptr;
 }
 
@@ -268,6 +282,20 @@ void UParadoxGameplayHUDComponent::ResolveEmbeddedSectionWidgets()
 	if (EquipmentWidget.IsValid())
 	{
 		EquipmentWidget->SetInventoryCharacter(Cast<AParadoxCharacter>(Controller->GetPawn()));
+	}
+	HealthWidget = GameplayHUDWidget->FindEmbeddedHealthWidget();
+	if (HealthWidget.IsValid())
+	{
+		AParadoxCharacter* Character = Cast<AParadoxCharacter>(Controller->GetPawn());
+		HealthWidget->SetObservedHealthComponent(
+			Character ? Character->GetHealthComponent() : nullptr);
+	}
+	OxygenWidget = GameplayHUDWidget->FindEmbeddedOxygenWidget();
+	if (OxygenWidget.IsValid())
+	{
+		AParadoxCharacter* Character = Cast<AParadoxCharacter>(Controller->GetPawn());
+		OxygenWidget->SetObservedOxygenComponent(
+			Character ? Character->GetOxygenComponent() : nullptr);
 	}
 }
 
@@ -341,6 +369,18 @@ void UParadoxGameplayHUDComponent::HandlePossessedPawnChanged(
 	if (EquipmentWidget.IsValid())
 	{
 		EquipmentWidget->SetInventoryCharacter(Cast<AParadoxCharacter>(NewPawn));
+	}
+	if (HealthWidget.IsValid())
+	{
+		AParadoxCharacter* Character = Cast<AParadoxCharacter>(NewPawn);
+		HealthWidget->SetObservedHealthComponent(
+			Character ? Character->GetHealthComponent() : nullptr);
+	}
+	if (OxygenWidget.IsValid())
+	{
+		AParadoxCharacter* Character = Cast<AParadoxCharacter>(NewPawn);
+		OxygenWidget->SetObservedOxygenComponent(
+			Character ? Character->GetOxygenComponent() : nullptr);
 	}
 	if (!BoundTimeLoop)
 	{

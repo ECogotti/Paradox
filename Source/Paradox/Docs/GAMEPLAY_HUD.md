@@ -9,8 +9,9 @@ root-authored Tactical Pause and Equipment controls, and removes the root symmet
 controllers do not create UI.
 
 The component is the authority for root visibility, section visibility, and presentation mode.
-Widgets observe or request those states; they do not duplicate them. The native classes provide a
-working C++ fallback, so a Blueprint asset is optional.
+Widgets observe or request those states; they do not duplicate them. The native root provides a
+minimal C++ fallback for Tactical Pause and Equipment, so a Blueprint asset is optional for those
+sections. Health and Oxygen presentation is designer-authored and is never injected by C++.
 
 ## Normal and Collapsed modes
 
@@ -34,25 +35,26 @@ coordinator.
 ## Authoring a root Widget Blueprint
 
 Derive from `UParadoxGameplayHUDWidget`. The native fallback is used when no Blueprint class is
-assigned. For an authored hierarchy, provide these optional bindings with the exact names:
+assigned. The authored hierarchy has one optional named root binding:
 
-- `HUDModeSwitcher`, with at least two pages;
-- `TacticalPauseContainer`, under Normal page 0;
-- `EquipmentContainer`, under Normal page 0;
-- `StatusContainer`, under Normal page 0;
-- `CollapsedModeContainer`, under Collapsed page 1.
+- `HUDModeSwitcher`, with at least two pages.
 
 The root owns the complete HUD composition. An authored root must contain exactly one
 `UTacticalPauseControlsWidget` descendant and exactly one `UParadoxInventoryWidget` descendant.
 The coordinator discovers those existing descendants, binds the Inventory widget to the possessed
 Character, and never creates, reparents, or replaces section widgets. The native root fallback
-constructs both descendants inside its own containers, resolving the Tactical Pause plugin's
+constructs both descendants directly under Normal page 0, resolving the Tactical Pause plugin's
 configured default widget class, so it remains complete without a Paradox root Blueprint asset.
-When a named section container is absent, section visibility is applied directly
-to the matching embedded descendant.
-The Collapsed container is never populated by C++; it belongs to the designer. A missing switcher or fewer than
-two pages produces a `LogParadox` warning and leaves the authoritative mode intact instead of
-crashing.
+Health and Oxygen are opt-in presentation widgets. Place a `UParadoxHealthWidget` and/or
+`UParadoxOxygenWidget` anywhere below the authored root when that presentation is wanted. The root
+never creates either widget. The coordinator discovers existing descendants, supplies the
+possessed Character's `UParadoxHealthComponent` and `UParadoxOxygenComponent` explicitly, and
+clears/rebinds both on possession changes. Section visibility is applied directly to the matching
+Tactical Pause, Inventory, Health, and Oxygen descendants; no specially named section containers
+are required.
+Collapsed page content belongs entirely to the designer and requires no named container. A missing
+switcher or fewer than two pages produces a `LogParadox` warning and leaves the authoritative mode
+intact instead of crashing.
 
 Assign the root class through the inherited `GameplayHUDComponent` on the Player Controller
 Blueprint. `HUDZOrder` controls viewport order. The coordinator deliberately exposes no Tactical
@@ -71,8 +73,8 @@ Automatic visibility is:
 - hidden when no valid Paradox Pawn is possessed.
 
 `Automatic`, `ForcedVisible`, and `ForcedHidden` provide an explicit root override. Tactical Pause,
-Equipment, and Status have independent `ESlateVisibility` values. Status defaults to `Collapsed`
-and is reserved for future systems such as Oxygen; this feature does not create an Oxygen model.
+Equipment, and Status have independent `ESlateVisibility` values. Status defaults to `Visible` and
+controls every embedded Health and Oxygen widget that exists.
 
 The coordinator configures the local Player Controller with `Game and UI` input mode after adding
 the HUD to the player screen. Screen-space widgets therefore receive mouse hover/click first, while
@@ -113,6 +115,31 @@ For custom item content, set the pickupable presentation fields and call the pro
 `NotifyPickupableActionsChanged` hook after a native runtime action-catalog change. Blueprint uses
 `SetPickupableActions`, which validates, deduplicates, assigns and broadcasts atomically.
 
+## Health section
+
+`UParadoxHealthWidget` receives its source only through `SetObservedHealthComponent` and
+`ClearObservedHealthComponent`. It does not discover Health from an owning Player Controller or
+Pawn. A future Clone panel can reuse the same class by explicitly passing the selected Clone's
+component.
+
+The presentation exposes current, maximum, normalized and dead state plus `Fine`, `Caution`,
+`Danger`, and `Dead`. The default normalized thresholds are 0.60 and 0.30. The native class creates
+no visuals and requires no named child widgets; authored widgets build their complete presentation
+from the Blueprint update/death/reset/source events and value queries.
+See [Paradox Health System](HEALTH_SYSTEM.md) for the complete gameplay contract.
+
+## Oxygen section
+
+`UParadoxOxygenWidget` receives its source only through `SetObservedOxygenComponent` and
+`ClearObservedOxygenComponent`. Like Health, it never discovers a component from the owning Player
+Controller or Pawn. A future Clone panel supplies the selected Clone's component explicitly.
+
+The presentation exposes remaining/duration seconds, whole seconds, normalized Oxygen, effective
+speed, blocked/depleted state, formatted `MM:SS`, and `Normal`, `Low`, `Critical`, `Depleted`
+warning states. The native class creates no visuals and requires no named child widgets; authored
+widgets drive their complete layout from Blueprint events and value queries. See
+[Paradox Oxygen System](OXYGEN_SYSTEM.md).
+
 ## Tactical Pause section
 
 `UTacticalPauseControlsWidget` is now a persistent `UUserWidget`. It binds in `NativeConstruct` and
@@ -128,8 +155,8 @@ creation or manually call `AddToViewport`/`RemoveFromParent`.
 
 The coordinator exposes `GetGameplayHUDWidget`, `GetHUDMode`, `IsHUDCollapsed`, `SetHUDMode`,
 `ToggleHUDMode`, `SetVisibilityOverride`, `SetSectionVisibility`, and `RefreshHUDVisibility`.
-The root widget exposes read-only coordinator, Player Controller, mode and Collapsed container
-queries plus context and mode presentation hooks.
+The root widget exposes read-only coordinator, Player Controller and mode queries plus context and
+mode presentation hooks.
 
 ## Troubleshooting
 
@@ -140,7 +167,8 @@ queries plus context and mode presentation hooks.
 - Blueprint does not switch pages: verify `HUDModeSwitcher` is a variable with that exact name and
   has Normal at index 0 and Collapsed at index 1.
 - Empty normal sections: verify the root contains one Tactical Pause controls widget and one
-  Inventory widget; named containers are optional presentation groups, not widget factories.
+  Inventory widget. Add Health and Oxygen widgets manually to the authored hierarchy when wanted;
+  C++ deliberately leaves them absent otherwise.
 - Embedded Inventory is visible but does not react to the mouse: keep its visibility `Visible` or
   `Self Hit Test Invisible`, ensure no ancestor is `Not Hit-Testable (Self & All Children)`, and
   leave `bConfigureGameAndUIInputMode` enabled on the Gameplay HUD component.

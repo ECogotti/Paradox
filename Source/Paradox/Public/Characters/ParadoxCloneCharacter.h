@@ -49,7 +49,16 @@ public:
 		return InvestigationComponent.Get();
 	}
 
+protected:
+	virtual void HandleHealthDeath(
+		const UDamageType* DamageType,
+		AController* InstigatedBy,
+		AActor* DamageCauser) override;
+
 private:
+	void DisableGridPresenceForDeath();
+	void EnterRagdollCorpseState();
+
 	/**
 	 * Exposes clone state to World State while leaving existence and reconstruction under the
 	 * authoritative time loop.

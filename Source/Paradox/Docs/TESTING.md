@@ -2,22 +2,38 @@
 
 ## Gameplay HUD
 
-Run `Paradox.GameplayHUD.*` to validate the native root, root-owned Tactical Pause and Inventory
-descendants, absence of coordinator section-class overrides, fixed switcher indices,
-Normal/Collapsed transitions, default section state, Blueprint reflection contract and Player
-Controller-owned component defaults. `TacticalPause.Runtime.Widget.*` covers the persistent
+Run `Paradox.GameplayHUD.*` to validate the native root, root-owned Tactical Pause and Inventory,
+absence of automatic Health/Oxygen injection and obsolete section-container bindings, fixed
+switcher indices, Normal/Collapsed transitions, direct descendant section visibility, Blueprint
+reflection contract and Player Controller-owned component defaults. `TacticalPause.Runtime.Widget.*` covers the persistent
 `UUserWidget` lifecycle.
 Inventory regressions under `Paradox.Inventory.*` cover empty/equipped state sources, Drop and
 pickupable action requests. PIE acceptance should additionally verify `Tab` during ordinary play and
 Tactical Pause, automatic hiding during Chrono Spawn/reset, and preservation of Collapsed mode after
 a temporary hide.
 
+Run `Paradox.Health.*` to validate native generic/point/radial damage, actual HP-delta return values,
+death/heal/reset/`Kill`, the visual-tree-free widget base, explicit Player-to-Clone widget rebinding,
+source destruction, and the passive temporal-corpse contract. `Paradox.TimeLoop.PlayerDeathUsesRunFailureRecovery` verifies that
+Player death uses the same World State/Clone reconstruction path as a temporal paradox.
+
+Run `Paradox.Oxygen.*` to validate seconds-based resource operations, simulation pause/dilation,
+speed modifiers, independent blockers, depletion event order, native Health classification, Clone
+death, the visual-tree-free widget base, explicit widget rebinding, source destruction, countdown
+formatting, and reset cleanup.
+
+Run `Paradox.OxygenCanister.*` to validate the two authored Use assets, the single soft replay
+parameter, Pickup/Drop/Swap without recovery, 30-second restore and capacity clamp, atomic
+consumption, failure cases that preserve the item, reentrancy guards, exactly-once passive/slot
+updates, Inventory widget discovery, Clone replay against live Oxygen, divergent full-Oxygen
+failure, and repeated World State baseline restoration.
+
 ## Automation
 
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Health+StartsWith:Paradox.Oxygen+StartsWith:Paradox.GameplayHUD+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -38,10 +54,12 @@ containment, and dynamic rotation-safe zoom limits after current Camera Volume b
 event-free whole-state reconstruction. `GameplayActions.Locks.SourceOwnedExternalAuthority` covers
 conflicting-action interruption, new-request rejection, and independent lock owners.
 `Paradox.VerticalBarrier.*` covers native composition, authored End startup and World State baseline
-reset, shared bounds, stable-endpoint-only moving surface navigation, distinct-Actor occupancy,
+reset, independent navigation/occupancy bounds and moving-volume attachment,
+stable-endpoint-only moving surface navigation, distinct-Actor occupancy,
 safe defer/retry, safety return, navigation ordering, attachment persistence after EndOverlap,
-Paradox Character Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport,
-and endpoint cleanup.
+attached-passenger collision/navigation suppression and opt-out restoration, Paradox Character
+Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport, and endpoint
+cleanup.
 
 `Paradox.Selection.*` covers hover/selected stencil transitions, exact restoration of existing
 Custom Depth/Stencil/write-mask state, RMB toggle/replacement and empty-world deselection,
@@ -135,6 +153,13 @@ from valid, invalid, and no-hit cursor locations. Run it with:
 
 ```text
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -ExecCmds="Automation RunTests Paradox.Inventory; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+`Paradox.OxygenCanister.*` contains five focused scenarios for consumable Use and its Inventory,
+Oxygen, Gameplay Actions, Intent Replay, UI preflight, and World State boundaries. Run it with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -ExecCmds="Automation RunTests Paradox.OxygenCanister; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 `Paradox.ItemSlots.*` contains 36 focused scenarios covering the requested 25 behavioral cases plus

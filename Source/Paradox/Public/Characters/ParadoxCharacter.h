@@ -12,6 +12,9 @@ class UIntentReplayComponent;
 class UIntentReplayObservationComponent;
 class UNiagaraComponent;
 class UEntityIdentityComponent;
+class UDamageType;
+class UParadoxHealthComponent;
+class UParadoxOxygenComponent;
 class UParadoxFootstepNoiseComponent;
 class UParadoxInventoryComponent;
 class UParadoxTemporalEntityComponent;
@@ -74,6 +77,11 @@ public:
 
 	/** Constructor */
 	AParadoxCharacter();
+	virtual float TakeDamage(
+		float DamageAmount,
+		const FDamageEvent& DamageEvent,
+		AController* EventInstigator,
+		AActor* DamageCauser) override;
 
 	/** Returns the authoritative Gameplay Actions component. */
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
@@ -120,5 +128,35 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
 	UParadoxInventoryComponent* GetInventoryComponent() const { return InventoryComponent.Get(); }
 
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxHealthComponent* GetHealthComponent() const { return HealthComponent.Get(); }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Components")
+	UParadoxOxygenComponent* GetOxygenComponent() const { return OxygenComponent.Get(); }
+
+protected:
+	virtual void BeginPlay() override;
+	virtual void EndPlay(const EEndPlayReason::Type EndPlayReason) override;
+
+	/** Project-role hook invoked once after Health commits the death transition. */
+	virtual void HandleHealthDeath(
+		const UDamageType* DamageType,
+		AController* InstigatedBy,
+		AActor* DamageCauser);
+
+private:
+	UFUNCTION()
+	void HandleHealthDeathEvent(
+		const UDamageType* DamageType,
+		AController* InstigatedBy,
+		AActor* DamageCauser);
+
+	/** Shared authoritative health and life state for player and clone temporal avatars. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxHealthComponent> HealthComponent;
+
+	/** Shared simulation-time breathable resource for player and clone temporal avatars. */
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category="Components", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UParadoxOxygenComponent> OxygenComponent;
 };
 

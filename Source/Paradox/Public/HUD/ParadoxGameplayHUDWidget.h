@@ -6,9 +6,10 @@
 #include "ParadoxGameplayHUDWidget.generated.h"
 
 class AParadoxPlayerController;
-class UPanelWidget;
 class UParadoxGameplayHUDComponent;
+class UParadoxHealthWidget;
 class UParadoxInventoryWidget;
+class UParadoxOxygenWidget;
 class UWidgetSwitcher;
 class UTacticalPauseControlsWidget;
 
@@ -37,10 +38,6 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Gameplay HUD")
 	static int32 GetCollapsedModePageIndex() { return 1; }
-
-	/** Read-only access to the designer-owned collapsed page container. */
-	UFUNCTION(BlueprintPure, Category = "Paradox|Gameplay HUD")
-	UPanelWidget* GetCollapsedModeContainer() const { return CollapsedModeContainer.Get(); }
 
 	/** Internal coordinator boundary. Blueprint should request changes through the HUD component. */
 	void AssignHUDContext(
@@ -71,24 +68,13 @@ protected:
 	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional), Category = "Paradox|Gameplay HUD")
 	TObjectPtr<UWidgetSwitcher> HUDModeSwitcher = nullptr;
 
-	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional), Category = "Paradox|Gameplay HUD")
-	TObjectPtr<UPanelWidget> TacticalPauseContainer = nullptr;
-
-	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional), Category = "Paradox|Gameplay HUD")
-	TObjectPtr<UPanelWidget> EquipmentContainer = nullptr;
-
-	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional), Category = "Paradox|Gameplay HUD")
-	TObjectPtr<UPanelWidget> StatusContainer = nullptr;
-
-	UPROPERTY(BlueprintReadOnly, Transient, meta = (BindWidgetOptional), Category = "Paradox|Gameplay HUD")
-	TObjectPtr<UPanelWidget> CollapsedModeContainer = nullptr;
-
 private:
 	void EnsureNativeFallbackTree();
 	void BuildNativeFallbackTree();
 	UTacticalPauseControlsWidget* FindEmbeddedTacticalPauseWidget() const;
 	UParadoxInventoryWidget* FindEmbeddedEquipmentWidget() const;
-	UPanelWidget* GetSectionContainer(EParadoxGameplayHUDSection Section) const;
+	UParadoxHealthWidget* FindEmbeddedHealthWidget() const;
+	UParadoxOxygenWidget* FindEmbeddedOxygenWidget() const;
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UParadoxGameplayHUDComponent> HUDComponent;

@@ -52,11 +52,15 @@ the Receiver command after authoritative revalidation.
    `InitialPosition=Start` to begin closed or choose End to begin open. With the default
    `bAnimateInitialReceiverState=false`, an initially inactive Receiver leaves this authored endpoint
    unchanged; only a real Receiver transition can move it afterward.
-4. Author passage shape only on `GridNavigationModifier`: set its relative transform and
-   `BoxExtent`. `PassageOccupancyVolume` mirrors those values during construction, registration, and
-   runtime initialization.
-5. Keep the occupancy volume on a collision setup that generates overlaps for intended Characters
-   and props. The native `Trigger` profile is the default.
+4. Author `GridNavigationModifier` and `PassageOccupancyVolume` independently. The modifier remains
+   attached to `BillboardRoot` and defines only the stationary GridWorld region whose cells are
+   blocked or opened. The occupancy volume is attached to `BarrierMesh`, has its own relative
+   transform and box extent, and follows the barrier through the complete movement.
+5. Size and position the moving occupancy volume for the intended clearance/lift acquisition
+   behavior, then keep its collision setup generating overlaps for the intended Characters and
+   props. The native `Trigger` profile is the default. Editing either component no longer changes
+   the other. With the native 240 cm downward End offset, the native occupancy offset keeps the box
+   centered on the same open-passage region used before it became a child of `BarrierMesh`.
 6. Bind an `APuzzleController` output to the inherited `PuzzleReceiver`. The barrier never binds
    directly to Emitters.
 7. Optionally assign direction-specific sounds and Niagara Systems. Empty assets never affect
@@ -83,8 +87,10 @@ overlaps from one Actor count once. The final component exit retries the still-v
 event-driven. If an Actor enters during raising, the barrier returns to open End while remaining
 blocked during motion, waits for clearance, then retries only if the original command remains valid.
 
-With `bWaitForClearPassage=false`, current occupants are prepared before GridWorld is blocked and
-movement starts. Paradox player and clone Characters have current Movement actions interrupted with
+With `bWaitForClearPassage=false`, current occupants are prepared before movement starts in either
+direction. Actors entering the moving occupancy volume are also acquired during both raising and
+lowering, so objects resting on the barrier follow the complete traversal. Paradox player and clone
+Characters have current Movement actions interrupted with
 `GameplayAction.Result.Interrupted.Paradox.Barrier.Transport`; the barrier then owns an exact
 `GameplayAction.Lock.Movement` on each Character scheduler. New click/action movement is rejected,
 while camera, pause, UI, stance, and unrelated input remain available. Characters are not attached:
@@ -92,10 +98,22 @@ engine moving-base motion is preserved and a world-delta adapter applies only wh
 not based on `BarrierMesh`.
 
 Movable non-Character Actors are attached to the moved component with world transform preserved.
-Their previous parent/socket and any changed physics/gravity state are restored. Leaving the overlap
-volume does not release a passenger. Release occurs at a stable endpoint, reset, WorldState restore,
+`Disable Attached Actor Collision During Transport` defaults to enabled. It caches every owned
+primitive's exact collision mode and navigation-relevance flag, disables both before attachment, and
+restores them before restoring root physics at release. This prevents an attached prop such as
+`BP_Battery` from dirtying navigation on every movement update. Disable the option when a transported
+prop must remain collidable despite that cost. Character passengers are intentionally unaffected:
+they are not attached and retain collision for moving-base/collision transport. Previous
+parent/socket and any changed physics/gravity state are also restored. Leaving the overlap volume
+does not release a passenger. Release occurs at a stable endpoint, reset, WorldState restore,
 moved-component replacement, invalidation, or EndPlay. Cleanup removes only locks owned by this
 barrier and is idempotent.
+
+Because Unreal parent movement does not automatically reconcile every child primitive's overlap
+list, the barrier refreshes the moving volume's overlap state after each active mover update. This
+work runs only while inherited movement Tick is active; the idle barrier does not poll overlaps.
+Existing passengers are transported before that reconciliation, so an Actor newly acquired during a
+frame receives only subsequent barrier motion.
 
 An unsupported ordinary Character is stopped through its Controller/CharacterMovement when
 possible, reports `MissingLocomotionLockOwner`, and is not recorded as a safely locked passenger.
@@ -123,8 +141,9 @@ cells:
   intersecting `GridNavigationBoundsVolume`;
 - the bounds volume must include the top surface at both endpoint heights;
 - **Auto Rebuild On Geometry Changes** must be enabled on that bounds volume;
-- `GridNavigationModifier` must cover the passage without overlapping the top cells that should
-  remain walkable while the passage itself is blocked.
+- `GridNavigationModifier` must cover the stationary passage cells without overlapping the top
+  cells that should remain walkable while the passage itself is blocked. Its bounds are independent
+  from the moving occupancy volume.
 
 The modifier auto-activates in Game/PIE, while GridWorld also composes its construction-time state
 in editor worlds so **Show Navigation** reflects the authored passage state before Begin Play.
@@ -169,9 +188,11 @@ runs first, the Blueprint hook second, and the matching multicast delegate last.
 events follow the same native-hook/Blueprint/delegate order.
 
 Enable local `bEnableDebug` and global `Paradox.VerticalBarrier.Debug 1` together. During active
-movement the overlay shows shared bounds, navigation/pending policy, occupants, passengers, mover
-state, alpha, restore guard, and the last structured diagnostic. Disabled debug performs no Actor
-enumeration or drawing.
+movement the runtime overlay shows the moving occupancy bounds, navigation/pending policy,
+occupants, passengers, mover state, alpha, restore guard, and the last structured diagnostic.
+In editor viewports, selecting the barrier or `GridNavigationModifier` draws the modifier's
+independent wire box (red while blocking, green while non-blocking). Disabled runtime debug performs
+no Actor enumeration or drawing.
 
 Editor validation permits the native empty interaction catalog and null Smart Object Definition.
 Once content is added, it reports a missing direct Smart Object component, invalid or duplicate
@@ -197,3 +218,7 @@ collision settings must still be checked in an interactive PIE session:
 7. repeat with a replay clone and confirm its immutable Replay Track is unchanged;
 8. repeat with an attached prop and a physics prop, confirming parent, simulation, and gravity are
    restored.
+
+`Paradox.VerticalBarrier.LiftAttachmentLifetime` additionally verifies non-Character transport in
+both directions, including an object already resting on the barrier before lowering and an object
+entering the occupancy volume after downward movement has started.

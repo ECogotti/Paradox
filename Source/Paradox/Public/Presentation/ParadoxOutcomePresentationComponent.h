@@ -28,6 +28,7 @@ public:
 	UParadoxOutcomePresentationComponent();
 
 	bool BeginParadoxPresentation(const FParadoxContext& Context);
+	bool BeginRunFailurePresentation(const FParadoxRunFailureContext& Context);
 	void PresentGameOver(const FParadoxGameOverContext& Context);
 	void PresentLevelComplete(const FParadoxLevelCompleteContext& Context);
 	void ClearPresentation();
@@ -71,6 +72,8 @@ private:
 	void ApplyOpacity(float Opacity);
 	static FParadoxOutcomePresentationData MakeParadoxPresentationData(
 		const FParadoxContext& Context);
+	static FParadoxOutcomePresentationData MakeRunFailurePresentationData(
+		const FParadoxRunFailureContext& Context);
 	static FParadoxOutcomePresentationData MakeGameOverPresentationData(
 		const FParadoxGameOverContext& Context);
 	static FParadoxOutcomePresentationData MakeLevelCompletePresentationData(
