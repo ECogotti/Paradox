@@ -2160,7 +2160,9 @@ void UIntentReplayComponent::SubmitDueReplayEntries()
 	const double Elapsed = GetPlaybackElapsedSeconds(Session);
 	// One timer wake-up may cover several equal/overdue timestamps. Order remains the contiguous
 	// TrackSequence order validated by UIntentReplayTrack.
-	while (Session.NextEntryIndex < Entries.Num()
+	while (ActivePlaybackSession == &Session
+		&& Session.State == EIntentReplayPlaybackState::Playing
+		&& Session.NextEntryIndex < Entries.Num()
 		&& Entries[Session.NextEntryIndex].RelativeAcceptedTimeSeconds <= Elapsed + KINDA_SMALL_NUMBER)
 	{
 		const int32 EntryIndex = Session.NextEntryIndex++;
@@ -2217,6 +2219,14 @@ void UIntentReplayComponent::SubmitDueReplayEntries()
 				return;
 			}
 		}
+	}
+
+	// Submission may synchronously pause, stop, or fail this exact session. Never submit another
+	// equal/overdue entry from the stale wake-up after such a reentrant transition.
+	if (ActivePlaybackSession != &Session
+		|| Session.State != EIntentReplayPlaybackState::Playing)
+	{
+		return;
 	}
 
 	if (Session.NextEntryIndex >= Entries.Num())

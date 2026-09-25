@@ -25,6 +25,26 @@ Mutation commands return `ETacticalPauseRequestResult`. Callers should handle su
 
 Pause ownership is represented by Unreal's `FCanUnpause` delegate. The module releases only its own pause. Time-dilation ownership records the pre-acquisition value and the last value written by the plugin. Restoration occurs only when the live value still matches that last write.
 
+### Movable cameras and temporal rendering
+
+Tactical Pause continues to use Unreal's real World pause, so gameplay timers, physics, AI, and
+skeletal animation remain stopped. A paused World normally also marks its render view family as
+paused. That renderer assumption is unsuitable when a project deliberately keeps a camera ticking
+during pause: TSR/TAA, Lumen, Virtual Shadow Maps, and motion blur can receive incoherent temporal
+history after the view moves.
+
+`Keep Temporal Rendering Active While Paused` is enabled by default under **Project Settings >
+Game > Tactical Pause > Rendering**. While this subsystem owns pause, a per-World scene view
+extension clears only the renderer's `bWorldIsPaused` flag. It does not unpause the World, tick
+Actors, advance animations, change time dilation, or enumerate gameplay objects. `Play`, failure
+rollback, World end play, and subsystem teardown disable the override. A pause owned only by an
+external system is never modified.
+
+Disable the setting to restore Unreal's legacy paused-view rendering when the camera is guaranteed
+to remain stationary. `Is Temporal Rendering Override Active` and `TacticalPause.Status` expose the
+live diagnostic state. The setting is read when the World subsystem initializes, so restart the
+World or PIE session after changing it.
+
 The subsystem has no Tick. It synchronizes observed Unreal state on relevant public operations, emits state/speed events, and performs symmetric restoration in both `OnWorldEndPlay` and `Deinitialize`.
 
 Preset validation occurs per world during initialization. Valid presets have a non-empty unique ID and a finite positive multiplier within the configured limit; mutation commands also enforce the world's engine limit.
@@ -56,6 +76,9 @@ Public dependencies are `Core`, `CoreUObject`, `Engine`, `DeveloperSettings`, `C
 ## Tests
 
 Development automation tests live in `Private/Tests/TacticalPauseTests.cpp` under the `TacticalPause.Runtime` prefix. They use an injected private temporal driver and focused test worlds to validate transitions, validation, presets, external ownership/restoration, `UUserWidget` inheritance/BindWidget metadata, preset-slot mapping, and command routing. The designer asset is not loaded by automation until its required buttons have been placed and compiled.
+
+Rendering tests also validate that the temporal override follows plugin pause ownership, remains
+isolated per World, respects its setting, ignores external pauses, and is cleared during restoration.
 
 Optional generic participant registration is not part of this milestone. Add it only with a concrete adapter requirement and defined ordering, ownership, failure reporting, and rollback behavior.
 

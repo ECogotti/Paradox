@@ -200,10 +200,12 @@ void UParadoxSelectionComponent::SetHoveredSelectable(
 		PreviousSelectable->SetHoveredFromSelection(false);
 	}
 	CurrentHoveredSelectable = NewHoveredSelectable;
+	ReconcileSelectableAvailabilityBinding(PreviousSelectable);
 	if (IsValid(NewHoveredSelectable))
 	{
 		NewHoveredSelectable->SetHoveredFromSelection(true);
 	}
+	ReconcileSelectableAvailabilityBinding(NewHoveredSelectable);
 	AActor* NewActor = IsValid(NewHoveredSelectable) ? NewHoveredSelectable->GetOwner() : nullptr;
 	OnHoveredActorChanged.Broadcast(PreviousActor, NewActor);
 
@@ -233,11 +235,13 @@ void UParadoxSelectionComponent::SetSelectedSelectable(
 		PreviousSelectable->SetSelectedFromSelection(false, this);
 	}
 	CurrentSelectedSelectable = NewSelectedSelectable;
+	ReconcileSelectableAvailabilityBinding(PreviousSelectable);
 	if (IsValid(NewSelectedSelectable))
 	{
 		NewSelectedSelectable->SetSelectedFromSelection(true, this);
 		BeginInteractionCellPresentation(NewSelectedSelectable);
 	}
+	ReconcileSelectableAvailabilityBinding(NewSelectedSelectable);
 	AActor* NewActor = IsValid(NewSelectedSelectable) ? NewSelectedSelectable->GetOwner() : nullptr;
 	OnSelectedActorChanged.Broadcast(PreviousActor, NewActor);
 
@@ -248,6 +252,52 @@ void UParadoxSelectionComponent::SetSelectedSelectable(
 			*GetNameSafe(GetOwner()),
 			*GetNameSafe(PreviousActor),
 			*GetNameSafe(NewActor));
+	}
+}
+
+void UParadoxSelectionComponent::ReconcileSelectableAvailabilityBinding(
+	UParadoxSelectableComponent* Selectable)
+{
+	if (!IsValid(Selectable))
+	{
+		return;
+	}
+
+	const bool bStillObserved = CurrentHoveredSelectable.Get() == Selectable
+		|| CurrentSelectedSelectable.Get() == Selectable;
+	FDelegateHandle* ExistingHandle =
+		SelectableAvailabilityBindings.Find(Selectable);
+	if (bStillObserved && !ExistingHandle)
+	{
+		const FDelegateHandle Handle =
+			Selectable->OnSelectionAvailabilityChangedNative().AddUObject(
+				this,
+				&ThisClass::HandleSelectableAvailabilityChanged);
+		SelectableAvailabilityBindings.Add(Selectable, Handle);
+	}
+	else if (!bStillObserved && ExistingHandle)
+	{
+		Selectable->OnSelectionAvailabilityChangedNative().Remove(*ExistingHandle);
+		SelectableAvailabilityBindings.Remove(Selectable);
+	}
+}
+
+void UParadoxSelectionComponent::HandleSelectableAvailabilityChanged(
+	UParadoxSelectableComponent* Selectable)
+{
+	if (!IsValid(Selectable))
+	{
+		return;
+	}
+	if (CurrentHoveredSelectable.Get() == Selectable
+		&& !Selectable->bCanBeHovered)
+	{
+		SetHoveredSelectable(nullptr);
+	}
+	if (CurrentSelectedSelectable.Get() == Selectable
+		&& !Selectable->bCanBeSelected)
+	{
+		SetSelectedSelectable(nullptr);
 	}
 }
 

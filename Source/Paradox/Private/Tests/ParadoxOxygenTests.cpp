@@ -14,8 +14,10 @@
 #include "Oxygen/ParadoxOxygenComponent.h"
 #include "Oxygen/ParadoxOxygenDepletionDamageType.h"
 #include "Oxygen/ParadoxOxygenWidget.h"
+#include "Oxygen/ParadoxOxygenWorldSubsystem.h"
 #include "Tests/ParadoxHealthTestTypes.h"
 #include "Tests/ParadoxOxygenTestTypes.h"
+#include "World/ParadoxWorldInitializer.h"
 
 namespace UE::Paradox::Oxygen::Tests
 {
@@ -99,6 +101,28 @@ namespace UE::Paradox::Oxygen::Tests
 			TCharacter::StaticClass(),
 			FTransform(Location),
 			Parameters);
+	}
+
+	AParadoxWorldInitializer* SpawnOxygenInitializer(
+		UWorld& World,
+		const EParadoxSharedOxygenConsumptionPolicy Policy =
+			EParadoxSharedOxygenConsumptionPolicy::FixedWorldRate,
+		const float DurationSeconds = 180.0f,
+		const float BaseSpeed = 1.0f)
+	{
+		AParadoxWorldInitializer* Initializer =
+			World.SpawnActor<AParadoxWorldInitializer>();
+		if (Initializer)
+		{
+			Initializer->OxygenConfiguration.Mode =
+				EParadoxOxygenMode::SharedGlobal;
+			Initializer->OxygenConfiguration.SharedDurationSeconds =
+				DurationSeconds;
+			Initializer->OxygenConfiguration.SharedBaseConsumptionSpeed =
+				BaseSpeed;
+			Initializer->OxygenConfiguration.SharedConsumptionPolicy = Policy;
+		}
+		return Initializer;
 	}
 }
 
@@ -378,6 +402,59 @@ bool FParadoxOxygenWidgetExplicitSourceTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxSharedOxygenWidgetInitialSnapshotTest,
+	"Paradox.Oxygen.Widget.SharedConfigurationIsVisibleBeforeFirstTick",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxSharedOxygenWidgetInitialSnapshotTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::Oxygen::Tests;
+	FScopedTestWorld Scope(TEXT("ParadoxSharedOxygenWidgetInitialSnapshotWorld"));
+	if (!TestNotNull(
+		TEXT("18-minute shared initializer spawns"),
+		SpawnOxygenInitializer(
+			*Scope.World,
+			EParadoxSharedOxygenConsumptionPolicy::FixedWorldRate,
+			1080.0f)))
+	{
+		return false;
+	}
+	AParadoxHealthTestCharacter* Character =
+		SpawnCharacter<AParadoxHealthTestCharacter>(*Scope.World);
+	UParadoxOxygenWidget* Widget = CreateWidget<UParadoxOxygenWidget>(
+		Scope.World,
+		UParadoxOxygenWidget::StaticClass());
+	if (!TestNotNull(TEXT("shared Oxygen character exists"), Character)
+		|| !TestNotNull(TEXT("shared Oxygen widget exists"), Widget))
+	{
+		return false;
+	}
+
+	Widget->TakeWidget();
+	Widget->SetObservedOxygenComponent(Character->GetOxygenComponent());
+	TestEqual(
+		TEXT("pre-BeginPlay presentation initially sees the component fallback"),
+		Widget->GetDisplayedWholeSecondsRemaining(),
+		180);
+
+	Scope.StartPlay();
+	TestEqual(
+		TEXT("shared duration is published during BeginPlay without a World tick"),
+		Widget->GetDisplayedDurationSeconds(),
+		1080.0f);
+	TestEqual(
+		TEXT("shared remaining Oxygen is published during BeginPlay"),
+		Widget->GetDisplayedWholeSecondsRemaining(),
+		1080);
+	TestEqual(
+		TEXT("countdown is correct before the first simulation tick"),
+		Widget->GetFormattedCountdownText().ToString(),
+		FString(TEXT("18:00")));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxCloneOxygenDepletionTest,
 	"Paradox.Oxygen.CloneDepletionUsesSharedDeathPath",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -401,6 +478,176 @@ bool FParadoxCloneOxygenDepletionTest::RunTest(const FString& Parameters)
 	TestTrue(
 		TEXT("existing Clone death path stops behavior"),
 		Clone->GetBehaviorCoordinator()->IsStoppedForDeath());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxOxygenWorldConfigurationTest,
+	"Paradox.Oxygen.WorldConfigurationFallbackAndValidation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxOxygenWorldConfigurationTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::Oxygen::Tests;
+	{
+		FScopedTestWorld Scope(TEXT("ParadoxOxygenPerPawnFallbackWorld"));
+		Scope.StartPlay();
+		const UParadoxOxygenWorldSubsystem* OxygenWorld = Scope.World
+			? Scope.World->GetSubsystem<UParadoxOxygenWorldSubsystem>()
+			: nullptr;
+		if (TestNotNull(TEXT("Oxygen World subsystem exists without an initializer"), OxygenWorld))
+		{
+			TestTrue(TEXT("missing initializer is valid legacy configuration"), OxygenWorld->IsConfigurationValid());
+			TestEqual(TEXT("missing initializer preserves Per-Pawn Oxygen"), OxygenWorld->GetOxygenMode(), EParadoxOxygenMode::PerPawn);
+		}
+	}
+
+	{
+		FScopedTestWorld Scope(TEXT("ParadoxOxygenDuplicateInitializerWorld"));
+		TestNotNull(TEXT("first initializer spawns"), SpawnOxygenInitializer(*Scope.World));
+		TestNotNull(TEXT("second initializer spawns"), SpawnOxygenInitializer(*Scope.World));
+		AddExpectedError(
+			TEXT("contains 2 Paradox World Initializers"),
+			EAutomationExpectedErrorFlags::Contains,
+			1);
+		Scope.StartPlay();
+		const UParadoxOxygenWorldSubsystem* OxygenWorld =
+			Scope.World->GetSubsystem<UParadoxOxygenWorldSubsystem>();
+		TestFalse(TEXT("duplicate initializers invalidate World configuration"), OxygenWorld->IsConfigurationValid());
+	}
+
+	{
+		FScopedTestWorld Scope(TEXT("ParadoxOxygenInvalidInitializerWorld"));
+		TestNotNull(
+			TEXT("invalid initializer spawns"),
+			SpawnOxygenInitializer(
+				*Scope.World,
+				EParadoxSharedOxygenConsumptionPolicy::FixedWorldRate,
+				0.0f,
+				1.0f));
+		AddExpectedError(
+			TEXT("has invalid shared Oxygen duration"),
+			EAutomationExpectedErrorFlags::Contains,
+			1);
+		Scope.StartPlay();
+		const UParadoxOxygenWorldSubsystem* OxygenWorld =
+			Scope.World->GetSubsystem<UParadoxOxygenWorldSubsystem>();
+		TestFalse(TEXT("invalid shared values invalidate World configuration"), OxygenWorld->IsConfigurationValid());
+	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxSharedOxygenConsumptionPolicyTest,
+	"Paradox.Oxygen.SharedGlobalConsumptionPolicies",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxSharedOxygenConsumptionPolicyTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::Oxygen::Tests;
+	auto VerifyPolicy = [this](
+		const TCHAR* WorldName,
+		const EParadoxSharedOxygenConsumptionPolicy Policy,
+		const float ExpectedRemaining)
+	{
+		FScopedTestWorld Scope(WorldName);
+		if (!TestNotNull(
+			TEXT("shared initializer spawns"),
+			SpawnOxygenInitializer(*Scope.World, Policy)))
+		{
+			return;
+		}
+		AParadoxHealthTestCharacter* First =
+			SpawnCharacter<AParadoxHealthTestCharacter>(*Scope.World);
+		AParadoxHealthTestCharacter* Second =
+			SpawnCharacter<AParadoxHealthTestCharacter>(
+				*Scope.World,
+				FVector(300.0f, 0.0f, 0.0f));
+		Scope.StartPlay();
+		if (!TestNotNull(TEXT("first shared participant exists"), First)
+			|| !TestNotNull(TEXT("second shared participant exists"), Second))
+		{
+			return;
+		}
+		UParadoxOxygenComponent* FirstOxygen = First->GetOxygenComponent();
+		UParadoxOxygenComponent* SecondOxygen = Second->GetOxygenComponent();
+		UParadoxOxygenWorldSubsystem* OxygenWorld =
+			Scope.World->GetSubsystem<UParadoxOxygenWorldSubsystem>();
+		if (!TestNotNull(TEXT("shared Oxygen subsystem exists"), OxygenWorld)
+			|| !TestNotNull(TEXT("first Oxygen facade exists"), FirstOxygen)
+			|| !TestNotNull(TEXT("second Oxygen facade exists"), SecondOxygen))
+		{
+			return;
+		}
+		TestTrue(TEXT("component reports Shared Global mode"), FirstOxygen->IsUsingSharedGlobalOxygen());
+		FirstOxygen->SetRemainingOxygenSeconds(30.0f);
+		TestEqual(TEXT("second facade observes the same reservoir"), SecondOxygen->GetRemainingOxygenSeconds(), 30.0f);
+		FirstOxygen->SetRunConsumptionActive(true);
+		SecondOxygen->SetRunConsumptionActive(true);
+		TestEqual(TEXT("both avatars count as active participants"), OxygenWorld->GetActiveParticipantCount(), 2);
+		Scope.TickSimulation(1.0f);
+		TestTrue(
+			TEXT("configured policy applies the expected shared rate"),
+			FMath::IsNearlyEqual(
+				OxygenWorld->GetSharedRemainingSeconds(),
+				ExpectedRemaining,
+				0.08f));
+		FirstOxygen->SetRunConsumptionActive(false);
+		SecondOxygen->SetRunConsumptionActive(false);
+	};
+
+	VerifyPolicy(
+		TEXT("ParadoxOxygenFixedWorldRateWorld"),
+		EParadoxSharedOxygenConsumptionPolicy::FixedWorldRate,
+		29.0f);
+	VerifyPolicy(
+		TEXT("ParadoxOxygenPerAvatarWorld"),
+		EParadoxSharedOxygenConsumptionPolicy::PerActiveAvatar,
+		28.0f);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxSharedOxygenCheckpointTest,
+	"Paradox.Oxygen.SharedGlobalCheckpointRollback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxSharedOxygenCheckpointTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::Oxygen::Tests;
+	FScopedTestWorld Scope(TEXT("ParadoxOxygenCheckpointWorld"));
+	TestNotNull(TEXT("shared initializer spawns"), SpawnOxygenInitializer(*Scope.World));
+	AParadoxHealthTestCharacter* Character =
+		SpawnCharacter<AParadoxHealthTestCharacter>(*Scope.World);
+	Scope.StartPlay();
+	UParadoxOxygenWorldSubsystem* OxygenWorld =
+		Scope.World->GetSubsystem<UParadoxOxygenWorldSubsystem>();
+	UParadoxOxygenComponent* Oxygen = Character
+		? Character->GetOxygenComponent()
+		: nullptr;
+	if (!TestNotNull(TEXT("shared checkpoint subsystem exists"), OxygenWorld)
+		|| !TestNotNull(TEXT("shared checkpoint facade exists"), Oxygen))
+	{
+		return false;
+	}
+
+	TestEqual(TEXT("configured duration is the first checkpoint"), OxygenWorld->GetRunCheckpointRemainingSeconds(), 180.0f);
+	Oxygen->SetRemainingOxygenSeconds(120.0f);
+	TestTrue(TEXT("successful Time Travel can promote live Oxygen"), OxygenWorld->CommitCurrentAsRunCheckpoint());
+	TestEqual(TEXT("promoted checkpoint preserves the live value"), OxygenWorld->GetRunCheckpointRemainingSeconds(), 120.0f);
+	const FParadoxOxygenSpeedModifierHandle Modifier =
+		Oxygen->AddConsumptionSpeedModifier(Character, 2.0f);
+	const FParadoxOxygenBlockHandle Block =
+		Oxygen->AddConsumptionBlock(Character);
+	Oxygen->SetRemainingOxygenSeconds(55.0f);
+	TestTrue(TEXT("failed run restores its exact starting checkpoint"), OxygenWorld->RestoreRunCheckpoint());
+	TestEqual(TEXT("rollback restores 120 rather than full capacity"), Oxygen->GetRemainingOxygenSeconds(), 120.0f);
+	TestEqual(TEXT("rollback clears active shared participants"), OxygenWorld->GetActiveParticipantCount(), 0);
+	TestEqual(TEXT("rollback clears transient speed modifiers"), Oxygen->GetEffectiveConsumptionSpeed(), 1.0f);
+	TestFalse(TEXT("rollback clears transient blockers"), Oxygen->IsConsumptionBlocked());
+	TestFalse(TEXT("rollback invalidates old modifier handles"), Oxygen->RemoveConsumptionSpeedModifier(Modifier));
+	TestFalse(TEXT("rollback invalidates old blocker handles"), Oxygen->RemoveConsumptionBlock(Block));
 	return true;
 }
 

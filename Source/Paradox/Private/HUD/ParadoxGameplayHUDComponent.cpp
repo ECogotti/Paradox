@@ -10,6 +10,8 @@
 #include "Oxygen/ParadoxOxygenComponent.h"
 #include "Oxygen/ParadoxOxygenWidget.h"
 #include "Paradox.h"
+#include "Framework/Application/SlateApplication.h"
+#include "Layout/WidgetPath.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
 
 UParadoxGameplayHUDComponent::UParadoxGameplayHUDComponent()
@@ -169,6 +171,27 @@ bool UParadoxGameplayHUDComponent::CanToggleHUDModeFromInput() const
 	return IsValid(GameplayHUDWidget) && bHUDVisible && !bEndingPlay;
 }
 
+bool UParadoxGameplayHUDComponent::IsPointerOverInteractiveHUD() const
+{
+	if (!IsValid(GameplayHUDWidget) || !bHUDVisible || bEndingPlay
+		|| !FSlateApplication::IsInitialized())
+	{
+		return false;
+	}
+
+	const TSharedPtr<SWidget> RootWidget = GameplayHUDWidget->GetCachedWidget();
+	if (!RootWidget.IsValid())
+	{
+		return false;
+	}
+
+	FSlateApplication& SlateApplication = FSlateApplication::Get();
+	const FWidgetPath WidgetPath = SlateApplication.LocateWindowUnderMouse(
+		SlateApplication.GetCursorPos(),
+		SlateApplication.GetInteractiveTopLevelWindows());
+	return WidgetPath.ContainsWidget(RootWidget.Get());
+}
+
 bool UParadoxGameplayHUDComponent::ShouldHUDBeVisible_Implementation() const
 {
 	const AParadoxPlayerController* Controller = Cast<AParadoxPlayerController>(GetOwner());
@@ -185,7 +208,22 @@ bool UParadoxGameplayHUDComponent::ShouldHUDBeVisible_Implementation() const
 	{
 		return true;
 	}
-	return TimeLoop->GetCurrentPhase() == EParadoxTimeLoopPhase::ActiveRun;
+	return IsTimeLoopPhaseVisible(TimeLoop->GetCurrentPhase());
+}
+
+bool UParadoxGameplayHUDComponent::IsTimeLoopPhaseVisible(
+	const EParadoxTimeLoopPhase Phase)
+{
+	switch (Phase)
+	{
+	case EParadoxTimeLoopPhase::ChronoSpawnSelection:
+	case EParadoxTimeLoopPhase::RunPreparation:
+	case EParadoxTimeLoopPhase::AwaitingSynchronizedStart:
+	case EParadoxTimeLoopPhase::ActiveRun:
+		return true;
+	default:
+		return false;
+	}
 }
 
 void UParadoxGameplayHUDComponent::CreateGameplayHUD()
@@ -339,6 +377,9 @@ void UParadoxGameplayHUDComponent::BindTimeLoop()
 		BoundTimeLoop->OnPhaseChanged.AddUniqueDynamic(
 			this,
 			&ThisClass::HandleTimeLoopPhaseChanged);
+		BoundTimeLoop->OnChronoSpawnSelected.AddUniqueDynamic(
+			this,
+			&ThisClass::HandleChronoSpawnSelected);
 	}
 }
 
@@ -349,6 +390,9 @@ void UParadoxGameplayHUDComponent::UnbindTimeLoop()
 		BoundTimeLoop->OnPhaseChanged.RemoveDynamic(
 			this,
 			&ThisClass::HandleTimeLoopPhaseChanged);
+		BoundTimeLoop->OnChronoSpawnSelected.RemoveDynamic(
+			this,
+			&ThisClass::HandleChronoSpawnSelected);
 	}
 	BoundTimeLoop = nullptr;
 }
@@ -392,6 +436,12 @@ void UParadoxGameplayHUDComponent::HandlePossessedPawnChanged(
 void UParadoxGameplayHUDComponent::HandleTimeLoopPhaseChanged(
 	const EParadoxTimeLoopPhase PreviousPhase,
 	const EParadoxTimeLoopPhase NewPhase)
+{
+	RefreshHUDVisibility();
+}
+
+void UParadoxGameplayHUDComponent::HandleChronoSpawnSelected(
+	AParadoxChronoSpawn* ChronoSpawn)
 {
 	RefreshHUDVisibility();
 }

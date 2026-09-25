@@ -86,6 +86,7 @@ UParadoxSelectableComponent::UParadoxSelectableComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
 	PrimaryComponentTick.bStartWithTickEnabled = false;
+	PrimaryComponentTick.bTickEvenWhenPaused = true;
 }
 
 EParadoxSelectionPresentationState UParadoxSelectableComponent::GetSelectionPresentationState() const
@@ -97,6 +98,21 @@ EParadoxSelectionPresentationState UParadoxSelectableComponent::GetSelectionPres
 	return bIsHovered
 		? EParadoxSelectionPresentationState::Hovered
 		: EParadoxSelectionPresentationState::None;
+}
+
+void UParadoxSelectableComponent::SetSelectionAvailability(
+	const bool bInCanBeHovered,
+	const bool bInCanBeSelected)
+{
+	if (bCanBeHovered == bInCanBeHovered
+		&& bCanBeSelected == bInCanBeSelected)
+	{
+		return;
+	}
+
+	bCanBeHovered = bInCanBeHovered;
+	bCanBeSelected = bInCanBeSelected;
+	SelectionAvailabilityChangedNative.Broadcast(this);
 }
 
 #if WITH_EDITOR
@@ -221,6 +237,7 @@ void UParadoxSelectableComponent::EndPlay(const EEndPlayReason::Type EndPlayReas
 	}
 	ResetPresentationState();
 	DestroyInteractionWidget();
+	SelectionAvailabilityChangedNative.Clear();
 	Super::EndPlay(EndPlayReason);
 }
 
@@ -232,6 +249,7 @@ void UParadoxSelectableComponent::OnComponentDestroyed(const bool bDestroyingHie
 	}
 	ResetPresentationState();
 	DestroyInteractionWidget();
+	SelectionAvailabilityChangedNative.Clear();
 	Super::OnComponentDestroyed(bDestroyingHierarchy);
 }
 
@@ -426,6 +444,9 @@ bool UParadoxSelectableComponent::EnsureInteractionWidget(
 		TEXT("ParadoxInteractionWidget"));
 	InteractionWidgetComponent = NewObject<UWidgetComponent>(Owner, ComponentName);
 	Owner->AddInstanceComponent(InteractionWidgetComponent);
+	InteractionWidgetComponent->SetTickableWhenPaused(true);
+	InteractionWidgetComponent->SetTickWhenOffscreen(true);
+	InteractionWidgetComponent->SetTickMode(ETickMode::Disabled);
 	InteractionWidgetComponent->SetupAttachment(Anchor);
 	InteractionWidgetComponent->SetRelativeLocation(WidgetRelativeOffset);
 	InteractionWidgetComponent->SetRelativeRotation(WidgetRelativeRotation);
@@ -480,6 +501,10 @@ void UParadoxSelectableComponent::ShowInteractionWidget(
 		InteractionWidgetComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
 		InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
 		InteractionWidgetComponent->SetVisibility(true, true);
+		// Request while disabled: UE forces the first render-target update even if the
+		// World is paused and this newly created primitive has never rendered before.
+		InteractionWidgetComponent->RequestRenderUpdate();
+		InteractionWidgetComponent->SetTickMode(ETickMode::Enabled);
 		UpdateInteractionWidgetFacing();
 		SetComponentTickEnabled(bFaceOwningPlayerCamera);
 	}
@@ -498,6 +523,7 @@ void UParadoxSelectableComponent::HideInteractionWidget()
 		Widget->ClearSelectionContext();
 	}
 	InteractionWidgetComponent->SetVisibility(false, true);
+	InteractionWidgetComponent->SetTickMode(ETickMode::Disabled);
 	InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 }
 

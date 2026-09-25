@@ -25,6 +25,31 @@ In questa fase i cloni devono utilizzare esclusivamente il playback tramite `Int
 
 Il GOAP non deve ancora essere implementato, simulato o usato come fallback.
 
+## Revisione corrente: Chrono Spawn puzzle e spawn registrabile
+
+Questa revisione sostituisce le descrizioni storiche successive che parlano di input dedicato,
+cloni immediatamente visibili o spawn occupati non selezionabili:
+
+- ogni `AParadoxChronoSpawn` possiede nativamente un Receiver Puzzle in modalità `Automatic`, un
+  `UParadoxSelectableComponent` e un `UParadoxInteractionComponent`;
+- con link in ingresso è attivo soltanto quando il Receiver è attivo; senza emitter collegati è
+  attivo dall'inizio;
+- uno spawn abilitato resta selezionabile anche se inattivo o occupato. La selezione usa l'autorità
+  generica del Selectable e serve sempre a mostrare le connessioni Puzzle;
+- lo spawn espone una UI di interazione dedicata ma non possiede uno Smart Object e non mostra celle
+  di interazione;
+- quando il Time Loop attende un nuovo punto di partenza, il pulsante Spawn è abilitato soltanto
+  per uno spawn attivo e libero e invia la Gameplay Action registrabile di Chrono Spawn. La sola
+  selezione non materializza mai il Character;
+- la Definition di Chrono Spawn usa l'esecuzione non spaziale esplicita: salta slot, claim e
+  movimento verso il target, ma mantiene precondizioni, lock, journaling, replay e cleanup;
+- il reset World State azzera transitoriamente l'attivazione, quindi la ricalcola dal Receiver
+  ripristinato e riapplica separatamente le assegnazioni delle timeline;
+- i cloni ricostruiti restano dormienti fino al timestamp della propria azione registrata. Se in
+  quel momento il Receiver è inattivo, l'azione resta pending e mette in pausa soltanto quel replay;
+  una futura attivazione materializza il clone e riprende la sessione senza far passare intenti
+  successivi con lo stesso timestamp.
+
 ---
 
 # 1. Regole preliminari per Codex
@@ -158,12 +183,14 @@ All'avvio del livello:
 4. viene attivata la camera ortografica libera;
 5. non viene ancora avviata una run;
 6. il player non deve necessariamente esistere;
-7. tutti i Chrono Spawn validi risultano disponibili;
+7. i Chrono Spawn senza link risultano attivi, mentre quelli collegati riflettono il proprio
+   Receiver automatico;
 8. il giocatore può esplorare la mappa;
-9. il giocatore seleziona il primo Chrono Spawn cliccando direttamente l'Actor nel mondo;
-10. viene creato o attivato il player nello spawn selezionato;
-11. al player viene assegnato il primo Temporal Index;
-12. viene avviata la registrazione della prima run.
+9. il giocatore seleziona il primo Chrono Spawn tramite il sistema Selectable generico;
+10. il giocatore preme Spawn nella UI dedicata; il recorder parte e registra la Gameplay Action di
+    Chrono Spawn come primo intento;
+11. l'action crea o attiva il player nello spawn selezionato;
+12. al player viene assegnato il primo Temporal Index.
 
 Il primo Chrono Spawn non è predefinito: deve essere scelto dal giocatore.
 
@@ -206,53 +233,48 @@ Il reset non deve modificare i Replay Track consolidati.
 Dopo ogni reset:
 
 - per ogni timeline consolidata viene creato un clone;
-- ogni clone appare nel Chrono Spawn utilizzato dalla propria run;
+- ogni clone conserva il Chrono Spawn utilizzato dalla propria run come target semantico;
 - ogni clone riceve il Temporal Index corretto;
 - ogni clone riceve il Replay Track corretto;
-- ogni clone è visibile;
-- ogni clone è fermo;
+- ogni clone è dormiente, nascosto, non collidibile e fuori dall'occupancy GridWorld;
 - nessun clone ha ancora iniziato il playback;
 - ogni Chrono Spawn associato a una timeline consolidata appare occupato;
-- gli spawn occupati non sono selezionabili.
+- gli spawn occupati attivi restano selezionabili per ispezionare il circuito, ma non sono
+  assegnabili a una nuova timeline.
 
-Il giocatore deve vedere i cloni già presenti mentre sceglie il nuovo punto di partenza.
+Il clone diventa visibile e gameplay-active soltanto quando il replay raggiunge la propria action
+di Chrono Spawn e il relativo Receiver è attivo.
 
 ## 3.5 Selezione del nuovo Chrono Spawn
 
 Durante questa fase:
 
 - il player può non essere presente;
-- i cloni sono presenti ma immobili;
-- il playback è fermo;
-- la registrazione è ferma;
-- il sistema di paradosso non è autorevole;
+- i cloni ricostruiti sono dormienti fino alle rispettive action di spawn;
+- playback, registrazione e autorità del paradosso possono essere già partiti dopo la barriera
+  tecnica, mentre Tactical Pause mantiene ferma la simulazione;
 - la camera è completamente utilizzabile;
 - il giocatore può esplorare la mappa;
-- gli spawn disponibili reagiscono a hover e click;
-- gli spawn occupati rifiutano la selezione;
-- la nuova run non inizia finché non viene selezionato uno spawn valido.
+- tutti gli spawn abilitati reagiscono tramite il Selectable generico, anche se inattivi o occupati;
+- la selezione mostra le connessioni e la UI senza eseguire lo spawn;
+- soltanto il pulsante di uno spawn attivo e libero è abilitato e può materializzare il player della
+  nuova timeline.
 
-La selezione avviene cliccando direttamente l'Actor Chrono Spawn nel mondo.
+La selezione avviene tramite lo stesso input configurabile usato dagli altri Selectable nel mondo.
 
-La logica di selezione non deve dipendere da un widget che elenca gli spawn.
+La logica di selezione non dipende da un widget che elenca gli spawn; il widget world-space del
+target selezionato contiene invece il comando esplicito Spawn.
 
 Il sistema di input deve restare configurabile. Non hardcodare un tasto o un pulsante concreto nella logica.
 
 ## 3.6 Avvio sincronizzato della nuova run
 
-Dopo la selezione:
-
-1. viene creato o attivato il player nello spawn scelto;
-2. al player viene assegnato il nuovo Temporal Index;
-3. viene preparata la nuova registrazione;
-4. i cloni vengono preparati per il playback;
-5. i sistemi puzzle risultano ripristinati;
-6. il sistema di paradosso viene predisposto ma resta ancora disabilitato;
-7. il core verifica che tutti i partecipanti siano pronti;
-8. player, registrazione, playback e rilevamento vengono attivati nello stesso momento logico;
-9. la nuova run ha inizio.
-
-Non deve essere possibile che un clone inizi il playback mentre il giocatore sta ancora scegliendo il Chrono Spawn.
+Dopo il reset, il core prepara recorder, clone replay e sistema di paradosso contro un unico epoch.
+La barriera tecnica può autorizzarli prima della selezione del nuovo spawn; Tactical Pause mantiene
+ferma la simulazione finché il giocatore non preme Play. La successiva selezione registra ed esegue
+la Gameplay Action di Chrono Spawn senza riavviare gli orologi già autorevoli. Se Play viene premuto
+prima della selezione, i cloni possono avanzare mentre il player resta inattivo e registra un
+prefisso vuoto.
 
 ---
 
@@ -267,6 +289,7 @@ Il numero di Chrono Spawn validi presenti nella mappa determina il numero massim
 Ogni Chrono Spawn deve poter rappresentare almeno gli stati:
 
 - `Available`;
+- `Inactive`;
 - `Hovered`;
 - `Selected`;
 - `Occupied`;
@@ -280,9 +303,9 @@ Uno spawn diventa occupato soltanto quando la run associata viene consolidata co
 
 Dopo il reset:
 
-- il clone della timeline consolidata appare sullo spawn;
+- il clone della timeline consolidata resta dormiente fino alla sua action registrata;
 - lo spawn resta occupato;
-- lo spawn non può essere selezionato;
+- se attivo, lo spawn può essere selezionato per mostrare il circuito ma non riassegnato;
 - il feedback visivo deve poter essere personalizzato in Blueprint.
 
 La presenza visiva del clone non sostituisce lo stato logico di occupazione.
@@ -991,9 +1014,9 @@ Risultato:
 
 - il level designer può piazzare gli spawn;
 - il giocatore sceglie anche il primo spawn;
-- la selezione avviene cliccando l'Actor nel mondo;
+- la selezione avviene cliccando l'Actor nel mondo e il comando Spawn passa dalla UI di interazione;
 - gli stati visivi possono essere personalizzati;
-- gli spawn occupati non sono selezionabili;
+- gli spawn inattivi e occupati restano selezionabili, ma il comando Spawn è disabilitato;
 - il limite della mappa dipende dal numero degli spawn.
 
 ## Milestone 3 — Registrazione e consolidamento
@@ -1042,11 +1065,12 @@ Risultato:
 
 Risultato:
 
-- dopo il reset i cloni restano fermi;
+- dopo il reset i cloni sono ricostruiti dormienti;
 - il giocatore esplora la mappa;
-- sceglie un nuovo spawn;
-- il player viene creato nello spawn;
-- playback, recorder e detection partono insieme.
+- seleziona un nuovo spawn e conferma con il pulsante Spawn;
+- la Gameplay Action registrata materializza il player nello spawn;
+- la barriera assegna un epoch comune a playback, recorder e detection anche quando la selezione
+  del player avviene più tardi.
 
 ## Milestone 8 — Playback
 
@@ -1109,21 +1133,27 @@ L'implementazione è accettabile quando sono verificati almeno i seguenti scenar
 
 1. Il livello si apre senza player attivo.
 2. La camera può esplorare la mappa.
-3. Il giocatore sceglie il primo Chrono Spawn cliccandolo.
-4. Uno spawn disabilitato non viene accettato.
-5. La prima run inizia soltanto dopo una selezione valida.
+3. Il giocatore seleziona il primo Chrono Spawn attraverso il Selectable generico; la selezione da
+   sola non materializza il player.
+4. Uno spawn con Receiver inattivo resta selezionabile per ispezionare il circuito, ma il pulsante
+   Spawn è disabilitato; uno spawn disabilitato non è selezionabile.
+5. Premere Spawn su un target attivo e libero registra la Gameplay Action di Chrono Spawn come prima
+   entry e materializza il player senza movimento verso il target.
 
 ## 17.2 Rewind
 
 6. Il player esegue azioni registrabili.
 7. Il rewind consolida la run.
 8. Il mondo viene resettato.
-9. Il clone appare nel vecchio spawn.
+9. Il clone viene ricostruito dormiente e appare nel vecchio spawn al timestamp della action
+   registrata.
 10. Lo spawn appare occupato.
-11. Il clone resta fermo.
+11. Se il Receiver è inattivo al timestamp previsto, lo spawn resta pending e soltanto quel replay
+    si ferma fino a una futura attivazione.
 12. La camera resta utilizzabile.
-13. Il giocatore sceglie un altro spawn.
-14. Player, recorder e cloni partono insieme.
+13. Il giocatore seleziona un altro spawn e preme il pulsante Spawn abilitato.
+14. Recorder e replay condividono lo stesso epoch; una selezione player tardiva non riavvia i loro
+    clock.
 
 ## 17.3 Camera
 
@@ -1163,7 +1193,7 @@ L'implementazione è accettabile quando sono verificati almeno i seguenti scenar
 42. La registrazione fallita viene scartata.
 43. Lo spawn della run fallita torna disponibile.
 44. I cloni consolidati vengono ricreati.
-45. Il giocatore sceglie un nuovo Chrono Spawn.
+45. Il giocatore seleziona un nuovo Chrono Spawn e conferma dalla UI di interazione.
 46. Il Temporal Index della nuova run segue la regola definita dal sistema.
 
 ## 17.6 Playback fallito

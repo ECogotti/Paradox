@@ -6,6 +6,7 @@
 #include "GameFramework/Controller.h"
 #include "GameFramework/Pawn.h"
 #include "GameplayActionTags.h"
+#include "Interaction/ParadoxInteractionActionDefinition.h"
 #include "Interaction/ParadoxInteractionComponent.h"
 #include "Paradox.h"
 #include "SmartObjectSubsystem.h"
@@ -128,7 +129,8 @@ bool UParadoxInteractionActionBase::CanStartAction_Implementation(
 		return false;
 	}
 
-	if (!HasReachableExecutionCandidate(
+	if (RequiresSmartObjectSlot()
+		&& !HasReachableExecutionCandidate(
 		RequesterActor,
 		Component,
 		SemanticValues.InteractionTag,
@@ -211,6 +213,31 @@ void UParadoxInteractionActionBase::OnActionStarted_Implementation()
 		FailInteraction(
 			PreconditionsFailure.IsValid() ? PreconditionsFailure : ParadoxGameplayTags::Result_Failure_Interaction_InvalidRequest,
 			Diagnostic);
+		return;
+	}
+	if (!RequiresSmartObjectSlot())
+	{
+		EParadoxInteractionRequestStatus RequestStatus =
+			EParadoxInteractionRequestStatus::InvalidRequester;
+		EParadoxInteractionQueryStatus QueryStatus =
+			EParadoxInteractionQueryStatus::NoOptions;
+		if (!ResolveCurrentContext(
+			ResolvedOption,
+			RequestStatus,
+			QueryStatus,
+			Diagnostic))
+		{
+			FailInteraction(
+				UE::Paradox::InteractionAction::Private::MapRequestStatusToFailureTag(
+					RequestStatus),
+				Diagnostic);
+			return;
+		}
+		OnInteractionContextResolved();
+		if (!bCompletionRequested)
+		{
+			ExecuteResolvedInteraction();
+		}
 		return;
 	}
 	if (!BuildExecutionCandidates(Diagnostic) || !TryStartNextCandidate(Diagnostic))
@@ -402,6 +429,13 @@ bool UParadoxInteractionActionBase::ReadSemanticParameters(
 		return false;
 	}
 	return true;
+}
+
+bool UParadoxInteractionActionBase::RequiresSmartObjectSlot() const
+{
+	const UParadoxInteractionActionDefinition* InteractionDefinition =
+		Cast<UParadoxInteractionActionDefinition>(GetDefinition());
+	return !InteractionDefinition || InteractionDefinition->RequiresSmartObjectSlot();
 }
 
 bool UParadoxInteractionActionBase::ResolveCurrentContext(
@@ -761,21 +795,34 @@ void UParadoxInteractionActionBase::ExecuteResolvedInteraction()
 	{
 		return;
 	}
-	AActor* RequesterActor = InteractionRequester.Get();
-	UGridWorldSubsystem* GridWorld = GetWorld() ? GetWorld()->GetSubsystem<UGridWorldSubsystem>() : nullptr;
-	const FGridCellQueryResult CurrentCell = IsValid(RequesterActor) && GridWorld
-		? GridWorld->ProjectPoint(RequesterActor->GetActorLocation())
-		: FGridCellQueryResult();
-	if (CurrentCell.Status != EGridQueryStatus::Success || CurrentCell.CellId != ResolvedOption.GridCellId)
+	if (RequiresSmartObjectSlot())
 	{
-		FailInteraction(ParadoxGameplayTags::Result_Failure_Interaction_InvalidPosition, TEXT("The requester did not reach the claimed interaction cell."));
-		return;
-	}
-	USmartObjectSubsystem* SmartObjects = USmartObjectSubsystem::GetCurrent(GetWorld());
-	if (!SmartObjects || !ClaimHandle.IsValid() || !SmartObjects->IsClaimedSmartObjectValid(ClaimHandle))
-	{
-		FailInteraction(ParadoxGameplayTags::Result_Failure_Interaction_ClaimFailed, TEXT("The Smart Object claim was lost before interaction execution."));
-		return;
+		AActor* RequesterActor = InteractionRequester.Get();
+		UGridWorldSubsystem* GridWorld = GetWorld()
+			? GetWorld()->GetSubsystem<UGridWorldSubsystem>()
+			: nullptr;
+		const FGridCellQueryResult CurrentCell = IsValid(RequesterActor) && GridWorld
+			? GridWorld->ProjectPoint(RequesterActor->GetActorLocation())
+			: FGridCellQueryResult();
+		if (CurrentCell.Status != EGridQueryStatus::Success
+			|| CurrentCell.CellId != ResolvedOption.GridCellId)
+		{
+			FailInteraction(
+				ParadoxGameplayTags::Result_Failure_Interaction_InvalidPosition,
+				TEXT("The requester did not reach the claimed interaction cell."));
+			return;
+		}
+		USmartObjectSubsystem* SmartObjects =
+			USmartObjectSubsystem::GetCurrent(GetWorld());
+		if (!SmartObjects
+			|| !ClaimHandle.IsValid()
+			|| !SmartObjects->IsClaimedSmartObjectValid(ClaimHandle))
+		{
+			FailInteraction(
+				ParadoxGameplayTags::Result_Failure_Interaction_ClaimFailed,
+				TEXT("The Smart Object claim was lost before interaction execution."));
+			return;
+		}
 	}
 	if (IsInteractionOutcomeSatisfied())
 	{

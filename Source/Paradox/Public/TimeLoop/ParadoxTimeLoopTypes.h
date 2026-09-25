@@ -39,7 +39,8 @@ enum class EParadoxRunFailureReason : uint8
 {
 	None,
 	TemporalParadox,
-	PlayerDeath
+	PlayerDeath,
+	GlobalOxygenDepleted
 };
 
 /** Runtime presentation and availability state of one Chrono Spawn. */
@@ -50,7 +51,8 @@ enum class EParadoxChronoSpawnState : uint8
 	Hovered,
 	Selected,
 	Occupied,
-	Disabled
+	Disabled,
+	Inactive
 };
 
 /** Temporal role assigned by the loop authority to one Paradox avatar. */
@@ -73,6 +75,33 @@ enum class EParadoxClonePlaybackState : uint8
 	Completed,
 	Failed,
 	Stopped
+};
+
+/** Gameplay presence of a reconstructed temporal avatar, independent from replay lifecycle. */
+UENUM(BlueprintType)
+enum class EParadoxTemporalSpawnState : uint8
+{
+	Dormant,
+	WaitingForRecordedTime,
+	PendingActivation,
+	Materialized,
+	Failed
+};
+
+/** Result returned to the recorded Chrono Spawn action. */
+enum class EParadoxChronoSpawnExecutionResult : uint8
+{
+	Materialized,
+	PendingActivation,
+	Failed
+};
+
+/** Authoritative outcome applied when a replay clone finishes its recorded Time Travel. */
+UENUM(BlueprintType)
+enum class EParadoxCloneTimeTravelCompletionBehavior : uint8
+{
+	EnterGoap UMETA(DisplayName = "Enter GOAP"),
+	RetireInPlace
 };
 
 /** Machine-readable outcome of one time-loop operation. */
@@ -101,7 +130,8 @@ enum class EParadoxTimeLoopOperationStatus : uint8
 	RestartRequested,
 	InternalFailure,
 	PlayerDeathAccepted,
-	RunFailureRecoveryFailed
+	RunFailureRecoveryFailed,
+	GlobalOxygenDepletionAccepted
 };
 
 /** Why a physical temporal-vision overlap did not become an accepted paradox. */
@@ -360,6 +390,10 @@ struct PARADOX_API FParadoxClonePlaybackSnapshot
 
 	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop|Playback")
 	EParadoxClonePlaybackState State = EParadoxClonePlaybackState::Unprepared;
+
+	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop|Playback")
+	EParadoxTemporalSpawnState TemporalSpawnState =
+		EParadoxTemporalSpawnState::Dormant;
 
 	UPROPERTY(BlueprintReadOnly, Category = "Paradox|Time Loop|Playback")
 	FIntentReplayPlaybackSessionId SessionId;

@@ -1118,7 +1118,11 @@ Do not add a permanently enabled Tick only to wait for the next entry.
 
 Prefer scheduling the next due entry through the appropriate timer or clock mechanism.
 
-When several entries share a timestamp, submit them in deterministic sequence order within one controlled scheduling pass.
+When several entries share a timestamp, submit them in deterministic sequence order within one
+controlled scheduling pass. After every synchronous submission, revalidate both the active
+Playback Session identity and `Playing` state. A reentrant pause, stop, failure, or session
+replacement must terminate the current due batch immediately; remaining equal-timestamp entries
+stay pending until a later valid scheduling pass.
 
 ## 17.3 Playback timing drift
 
@@ -1934,6 +1938,8 @@ Add focused automation tests for architecture and integration.
 54. A journal observer starting a later recording does not corrupt the current event transaction.
 55. An action ending during playback scheduling does not invalidate due-entry iteration.
 56. Duplicate terminal callbacks do not complete playback twice.
+57. A synchronous action that pauses replay prevents every later due entry, including entries with
+    the same timestamp, from submitting until resume.
 
 ---
 

@@ -48,7 +48,6 @@
 #include "Presentation/ParadoxOutcomePresentationComponent.h"
 #include "PuzzleOverlay/ParadoxPuzzleCircuitRendererComponent.h"
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
-#include "TimeLoop/ParadoxChronoSpawn.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
 #include "TimerManager.h"
 #include "UObject/ConstructorHelpers.h"
@@ -374,31 +373,19 @@ void AParadoxPlayerController::PlayerTick(float DeltaTime)
 	{
 		return;
 	}
-	if (IsChronoSpawnSelectionActive())
+	UpdateMousePointerState();
+	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
 	{
-		ClearMousePointerState();
-		UpdateChronoSpawnHover(false);
-		if (GridPathPreviewComponent)
-		{
-			GridPathPreviewComponent->ClearPreview();
-		}
+		DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
 	}
-	else
+	else if (bEnablePointerPathPrediction
+		&& IsMovementInputAllowed())
 	{
-		UpdateMousePointerState();
-		if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
-		{
-			DropTargetingComponent->UpdateTargetFromHit(CachedMouseHit, bHasCachedMouseHit);
-		}
-		else if (bEnablePointerPathPrediction
-			&& IsMovementInputAllowed())
-		{
-			UpdatePointerPrediction(false);
-		}
-		else if (GridPathPreviewComponent)
-		{
-			GridPathPreviewComponent->ClearPreview();
-		}
+		UpdatePointerPrediction(false);
+	}
+	else if (GridPathPreviewComponent)
+	{
+		GridPathPreviewComponent->ClearPreview();
 	}
 }
 
@@ -474,11 +461,12 @@ void AParadoxPlayerController::SetupInputComponent()
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Triggered, this, &AParadoxPlayerController::OnTouchTriggered);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Completed, this, &AParadoxPlayerController::OnTouchReleased);
 			EnhancedInputComponent->BindAction(SetDestinationTouchAction, ETriggerEvent::Canceled, this, &AParadoxPlayerController::OnTouchReleased);
-			InputComponent->BindKey(
+			FInputKeyBinding& SelectionBinding = InputComponent->BindKey(
 				EKeys::RightMouseButton,
 				IE_Pressed,
 				this,
 				&AParadoxPlayerController::OnSelectionTriggered);
+			SelectionBinding.bExecuteWhenPaused = true;
 			if (RewindAction)
 			{
 				EnhancedInputComponent->BindAction(
@@ -558,15 +546,20 @@ void AParadoxPlayerController::SetupInputComponent()
 void AParadoxPlayerController::OnInputStarted()
 {
 	bPrimaryPointerConsumedByWidget = false;
-	if (IsChronoSpawnSelectionActive())
-	{
-		bHasCachedDestination = false;
-		UpdateChronoSpawnHover(bIsTouch);
-		return;
-	}
-
 	if (!bIsTouch)
 	{
+		if (GameplayHUDComponent
+			&& GameplayHUDComponent->IsPointerOverInteractiveHUD())
+		{
+			bPrimaryPointerConsumedByWidget = true;
+			bHasCachedDestination = false;
+			if (GridPathPreviewComponent)
+			{
+				GridPathPreviewComponent->ClearPreview();
+			}
+			return;
+		}
+
 		UpdateMousePointerState();
 		if (WidgetInteractionComponent && WidgetInteractionComponent->IsOverInteractableWidget())
 		{
@@ -603,11 +596,6 @@ void AParadoxPlayerController::OnSetDestinationTriggered()
 	{
 		return;
 	}
-	if (IsChronoSpawnSelectionActive())
-	{
-		UpdateChronoSpawnHover(bIsTouch);
-		return;
-	}
 	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
 	{
 		UpdateMousePointerState();
@@ -628,13 +616,6 @@ void AParadoxPlayerController::OnSetDestinationTriggered()
 
 void AParadoxPlayerController::OnSetDestinationReleased()
 {
-	if (IsChronoSpawnSelectionActive())
-	{
-		TrySelectChronoSpawn(bIsTouch);
-		FollowTime = 0.f;
-		bHasCachedDestination = false;
-		return;
-	}
 	if (bPrimaryPointerConsumedByWidget)
 	{
 		if (WidgetInteractionComponent)
@@ -751,9 +732,19 @@ void AParadoxPlayerController::OnTouchTriggered()
 void AParadoxPlayerController::OnTouchReleased()
 {
 	bIsTouch = false;
-	if (IsChronoSpawnSelectionActive())
+	if (const UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
+		TimeLoop && TimeLoop->IsChronoSpawnSelectionOpen())
 	{
-		TrySelectChronoSpawn(true);
+		FHitResult Hit;
+		const bool bHit = GetHitResultUnderFinger(
+			ETouchIndex::Touch1,
+			ECC_Visibility,
+			true,
+			Hit);
+		if (SelectionComponent)
+		{
+			SelectionComponent->HandleSelectionPointerHit(Hit, bHit);
+		}
 		FollowTime = 0.f;
 		bHasCachedDestination = false;
 		return;
@@ -763,10 +754,6 @@ void AParadoxPlayerController::OnTouchReleased()
 
 void AParadoxPlayerController::OnSelectionTriggered()
 {
-	if (IsChronoSpawnSelectionActive())
-	{
-		return;
-	}
 	if (DropTargetingComponent && DropTargetingComponent->IsDropTargetingActive())
 	{
 		DropTargetingComponent->CancelDropTargeting();
@@ -1025,60 +1012,12 @@ void AParadoxPlayerController::UpdatePointerPrediction(bool bUseTouchInput)
 	GridPathPreviewComponent->UpdatePreviewForController(this, PointerResult.CellId);
 }
 
-void AParadoxPlayerController::UpdateChronoSpawnHover(const bool bUseTouchInput)
-{
-	UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
-	if (!TimeLoop)
-	{
-		return;
-	}
-
-	FHitResult Hit;
-	const bool bHit = bUseTouchInput
-		? GetHitResultUnderFinger(ETouchIndex::Touch1, ECC_Visibility, false, Hit)
-		: GetHitResultUnderCursor(ECC_Visibility, false, Hit);
-	TimeLoop->UpdateHoveredChronoSpawn(
-		bHit ? Cast<AParadoxChronoSpawn>(Hit.GetActor()) : nullptr);
-}
-
-void AParadoxPlayerController::TrySelectChronoSpawn(const bool bUseTouchInput)
-{
-	UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
-	if (!TimeLoop)
-	{
-		return;
-	}
-
-	FHitResult Hit;
-	const bool bHit = bUseTouchInput
-		? GetHitResultUnderFinger(ETouchIndex::Touch1, ECC_Visibility, true, Hit)
-		: GetHitResultUnderCursor(ECC_Visibility, true, Hit);
-	AParadoxChronoSpawn* Spawn =
-		bHit ? Cast<AParadoxChronoSpawn>(Hit.GetActor()) : nullptr;
-	const FParadoxTimeLoopOperationResult Result = TimeLoop->SelectChronoSpawn(Spawn);
-	if (!Result.IsSuccess())
-	{
-		PARADOX_LOG_WARNING(
-			TEXT("Chrono Spawn click was rejected for controller '%s': %s"),
-			*GetNameSafe(this),
-			*Result.DiagnosticMessage);
-	}
-}
-
 UParadoxTimeLoopComponent* AParadoxPlayerController::GetTimeLoopComponent() const
 {
 	const UWorld* World = GetWorld();
 	const AParadoxGameMode* GameMode =
 		World ? Cast<AParadoxGameMode>(World->GetAuthGameMode()) : nullptr;
 	return GameMode ? GameMode->GetTimeLoopComponent() : nullptr;
-}
-
-bool AParadoxPlayerController::IsChronoSpawnSelectionActive() const
-{
-	const UParadoxTimeLoopComponent* TimeLoop = GetTimeLoopComponent();
-	return TimeLoop
-		&& TimeLoop->IsTimeLoopEnabled()
-		&& TimeLoop->GetCurrentPhase() == EParadoxTimeLoopPhase::ChronoSpawnSelection;
 }
 
 bool AParadoxPlayerController::IsMovementInputAllowed() const
@@ -1987,6 +1926,13 @@ FParadoxTimeLoopOperationResult AParadoxPlayerController::RequestTimeRewind()
 		Result.Status = EParadoxTimeLoopOperationStatus::RejectedInvalidPhase;
 		Result.DiagnosticMessage =
 			TEXT("Recorded Time Travel can be submitted only during ActiveRun.");
+		return Result;
+	}
+	if (TimeLoop->IsChronoSpawnSelectionOpen())
+	{
+		Result.Status = EParadoxTimeLoopOperationStatus::RejectedInvalidPhase;
+		Result.DiagnosticMessage =
+			TEXT("Recorded Time Travel requires the player to select a Chrono Spawn first.");
 		return Result;
 	}
 	if (bRecordedTimeTravelPending)

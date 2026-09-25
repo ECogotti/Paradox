@@ -117,6 +117,14 @@ ogni transizione autorevole.
 
 Il replay usa timer one-shot e timestamp assoluti relativi alla sessione, senza Tick permanente. Ogni entry produce una nuova request, una nuova action instance e un nuovo handle locale.
 
+Una singola scadenza può rendere dovute più entry con lo stesso timestamp. Dopo ogni submit
+sincrono, lo scheduler verifica nuovamente che la sessione sia ancora quella attiva e sia ancora in
+stato `Playing`. Se l'action appena avviata chiama in modo rientrante `PauseReplay`, `StopReplay` o causa un
+failure, il batch termina subito: le entry successive, incluse quelle con timestamp uguale,
+rimangono non inviate e vengono ripianificate soltanto da una successiva transizione valida. In
+questo modo un'action che attende una condizione di mondo può congelare il proprio replay senza
+lasciare avanzare intenti semanticamente successivi.
+
 Le request di replay usano:
 
 - origin `GameplayAction.Origin.Replay`;

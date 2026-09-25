@@ -1,19 +1,60 @@
 # Paradox Oxygen System
 
-## Ownership and tuning
+## Modes, ownership, and per-map setup
 
-Every `AParadoxCharacter` owns one `UParadoxOxygenComponent`, so Player and Clones use the same
-resource and depletion path. Access it with `GetOxygenComponent()`.
+Every `AParadoxCharacter` still owns one `UParadoxOxygenComponent`; existing gameplay, canisters,
+widgets, modifiers, and blockers always call that component. The component is either the original
+per-Pawn resource authority or a facade for one World-owned reservoir.
 
-`OxygenDurationSeconds` is the designer-facing capacity and defaults to `180`. It means three
-minutes at the default `BaseConsumptionSpeed` of `1.0`; Oxygen is not expressed in arbitrary
-points. Runtime queries provide remaining seconds, whole seconds, normalized Oxygen, effective
-speed, blocked state, and depletion state.
+Oxygen mode is selected per map with one placeable `AParadoxWorldInitializer`:
 
-The component starts full but inactive. The time loop authorizes consumption only during
-`ActiveRun`. The persistent Player is reset when a new run is activated; reconstructed Clones are
-new instances and also start full. Leaving `ActiveRun`, retiring a Clone, or dying stops its Oxygen
-timers.
+- no initializer: `PerPawn`, preserving existing maps and assets;
+- one initializer with `Mode = PerPawn`: explicit legacy behavior;
+- one initializer with `Mode = SharedGlobal`: the World subsystem owns the shared resource;
+- more than one initializer, or non-finite/non-positive shared duration or base speed: invalid
+  configuration. The diagnostic is logged and Time Loop initialization is rejected.
+
+`AParadoxWorldInitializer` does not Tick and does not participate in World State. It is the common
+per-map configuration root for future World-scoped systems. Its Oxygen configuration defaults to
+180 seconds, base rate 1.0, and `FixedWorldRate`.
+
+`UParadoxOxygenWorldSubsystem` resolves this configuration at World begin play. Blueprint can query
+mode, validity and diagnostic, shared duration/current/normalized/whole-second values, effective
+rate, blocked/depleted state, current run checkpoint, and active participant count. A new World,
+including Restart Level, constructs a new subsystem and starts from the configured duration.
+
+In `PerPawn`, `OxygenDurationSeconds` and `BaseConsumptionSpeed` remain designer-facing component
+defaults. The persistent Player resets on activation and reconstructed Clones start full. Leaving
+`ActiveRun`, retiring a Clone, or dying stops that Pawn's resource.
+
+In `SharedGlobal`, all component value queries and existing mutation APIs transparently target the
+same reservoir. Component-local duration/speed tuning is ignored without being removed from the
+framework, so switching the map back to `PerPawn` restores the original behavior.
+
+## Shared consumption and participants
+
+The time loop marks participants active only while they are live temporal avatars in `ActiveRun`:
+
+- a Player counts only after it has selected a spawn and materialized;
+- replaying Clones count;
+- Clones parked in terminal GOAP count;
+- hidden Players, dead Clones, and `RetireInPlace` Clones do not count.
+
+`FixedWorldRate` consumes `SharedBaseConsumptionSpeed` once while at least one participant is
+active. `PerActiveAvatar` multiplies that rate by the active participant count. Runtime speed
+modifiers multiply the resulting shared rate; any shared blocker suspends regular consumption.
+
+## Run checkpoints
+
+The configured starting value is the first shared checkpoint. Successful Time Travel synchronizes
+the current reservoir and promotes that exact value to the next run's checkpoint. Oxygen therefore
+persists across successful timelines instead of refilling.
+
+Any failed run, including player death, temporal paradox, or `GlobalOxygenDepleted`, restores the
+exact checkpoint captured at the beginning of that run. Consumption and canister refills performed
+inside the failed attempt are both rolled back. Checkpoint promotion and rollback clear active
+participants, speed modifiers, blockers, and their handles without changing the stored checkpoint
+to full capacity.
 
 ## Simulation-time countdown
 
@@ -21,7 +62,7 @@ Oxygen uses `UWorld::GetTimeSeconds()`, which is paused by Unreal gameplay pause
 time dilation. Therefore Tactical Pause stops the countdown without a separate Oxygen pause mode,
 while x1.5, x2, and x3 simulation speeds accelerate it consistently with the rest of gameplay.
 
-The component does not Tick. It keeps a materialized remaining value and the last simulation-time
+Neither authority Ticks. It keeps a materialized remaining value and the last simulation-time
 sample, then uses one-shot timers for the predicted depletion and next whole-second boundary.
 Queries project the current value analytically. Every direct operation, modifier change, blocker
 change, or lifecycle transition synchronizes elapsed time and reschedules those timers.
@@ -35,7 +76,7 @@ All public resource operations use seconds:
 - `RefillOxygen` restores the configured duration;
 - `ResetOxygen` starts a fresh resource lifetime and clears all transient effects.
 
-Values always remain between zero and `OxygenDurationSeconds`. Non-finite and invalid amounts are
+Values always remain between zero and the active duration. Non-finite and invalid amounts are
 rejected or treated as no-ops as appropriate. Once depletion is accepted, consume, restore, set,
 and refill are inert until `ResetOxygen`. Resetting Oxygen does not reset or revive Health.
 
@@ -51,7 +92,8 @@ regular countdown. Removing one of two blockers leaves the other authoritative.
 
 The effect owner must retain and remove its exact handle. Multiple effects from the same source can
 coexist and do not overwrite one another. Handles are transient: `ResetOxygen` clears both maps and
-invalidates all handles from the previous run.
+invalidates all handles from the previous run. In `SharedGlobal`, the same APIs create World-owned
+handles and checkpoint promotion/rollback invalidates them for every facade.
 
 Continuous regeneration is intentionally not part of this milestone. Model immediate recovery
 with `RestoreOxygenSeconds`.
@@ -74,19 +116,19 @@ item remains equipped.
 Successful Use enters the pickupable `Consumed` state instead of destroying the Actor. The Actor
 is hidden and removed from collision, GridWorld, and navigation for the rest of the run. World
 State restores it through the ordinary `Consumed -> RestorePending -> World` path. Intent Replay
-records only the generic Use intent and soft canister reference, so a Clone applies the fixed
-canister tuning to its own live Oxygen value; replay may legitimately diverge when that value is
-already full.
+records only the generic Use intent and soft canister reference. In `PerPawn`, a Clone applies the
+fixed tuning to its own live resource and may diverge when already full. In `SharedGlobal`, Player
+and Clone Use both mutate the same reservoir through the unchanged component API.
 
 No Oxygen or Health widget is created by this feature. The existing Inventory widget discovers
 the canister's authored `/Game/Data/Inventory/DA_ParadoxUsePickupableAction` descriptor and uses
 normal Gameplay Action preflight to enable or disable it.
 
-## Depletion and Health
+## Depletion and run failure
 
 Depletion commits exactly once: remaining time becomes zero, progression stops,
-`OnOxygenChanged`/`OnWholeSecondChanged` publish zero, and `OnOxygenDepleted` fires. The component
-then calls:
+`OnOxygenChanged`/`OnWholeSecondChanged` publish zero, and `OnOxygenDepleted` fires. In `PerPawn`,
+the component then calls:
 
 ```cpp
 HealthComponent->Kill(
@@ -95,13 +137,14 @@ HealthComponent->Kill(
     UParadoxOxygenDepletionDamageType::StaticClass());
 ```
 
-This is the only lethal integration. `UParadoxHealthComponent::Kill` submits the remaining HP
-through Unreal's native damage pipeline. Oxygen never branches on Player versus Clone and never
-calls the time loop, presentation, ragdoll, or behavior systems.
+This remains the `PerPawn` lethal integration. Player depletion produces the existing
+`PlayerDeath` run failure, while Clone depletion reaches the passive temporal-corpse path.
 
-Player depletion consequently produces the existing `PlayerDeath` run failure. Its
-`FParadoxRunFailureContext::DamageTypeClass` identifies Oxygen depletion for presentation. Clone
-depletion reaches the existing passive temporal-corpse path without failing the Player's run.
+Shared depletion is different: the World authority commits zero and broadcasts exactly once. An
+enabled Time Loop accepts one `GlobalOxygenDepleted` run failure immediately, even when no Player
+spawn has been selected, and restores the run checkpoint through normal recovery. It does not call
+`Kill` reentrantly on every facade. Without an enabled Time Loop, each living facade retains the
+safe standalone fallback of killing its own owner through the same depletion damage type.
 
 ## Events and UI
 
@@ -119,6 +162,11 @@ OxygenWidget->ClearObservedOxygenComponent();
 It never searches an owning Player, Pawn, or Controller. Rebinding removes old delegates, binds the
 new weak source once, and refreshes immediately. Destroying the observed owner clears the source.
 This same contract supports the possessed Player and a future selected-Clone panel.
+
+If presentation binds before the observed Character begins play, the component publishes its
+authoritative shared-reservoir snapshot during `BeginPlay`. The widget therefore replaces the
+temporary per-Pawn construction value before the first rendered gameplay tick; no Blueprint delay,
+poll, or spawn selection is required.
 
 The widget exposes countdown, duration, normalized value, blocker, speed, depletion, and formatted
 `MM:SS` data. Presentation-only states are `Normal`, `Low`, `Critical`, and `Depleted`; the default
@@ -140,8 +188,9 @@ After building `ParadoxEditor`, run:
 UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -NoSound -ExecCmds="Automation RunTests Paradox.Oxygen; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
-The suite covers seconds-based operations, time dilation, pause, modifiers, overlapping blockers,
-reset and stale handles, event order, native Health death classification, Clone death, explicit
+The suite covers legacy fallback, initializer validation, both shared policies, participant counts,
+facade sharing, checkpoint promotion/rollback, time dilation, pause, modifiers, overlapping
+blockers, stale handles, event order, native Health death classification, Clone death, explicit
 widget rebinding, source destruction, countdown formatting, and HUD composition.
 
 Run `Paradox.OxygenCanister` for Pickup/Drop/Swap separation, restore/clamp/consumption,

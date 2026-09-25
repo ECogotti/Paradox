@@ -1,12 +1,23 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Actions/GameplayActionInstance.h"
 #include "Policies/IntentReplayTimeSource.h"
 #include "UObject/SoftObjectPath.h"
 #include "IntentReplayTestTypes.generated.h"
 
 class UGameplayActionDefinition;
 class UIntentReplayTrack;
+
+/** Test-only action that pauses its owner's active replay reentrantly from Start. */
+UCLASS()
+class UIntentReplayPauseOnStartTestAction : public UGameplayActionInstance
+{
+	GENERATED_BODY()
+
+protected:
+	virtual void OnActionStarted_Implementation() override;
+};
 
 USTRUCT()
 struct FIntentReplayTestNestedPayload

@@ -13,6 +13,10 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `Lock_Stance` | `GameplayAction.Lock.Stance` |
 | `Action_TimeTravel` | `GameplayAction.Type.Paradox.TimeLoop.TimeTravel` |
 | `Lock_TimeTravel` | `GameplayAction.Lock.Paradox.TimeTravel` |
+| `Action_ChronoSpawn` | `GameplayAction.Type.Paradox.TimeLoop.ChronoSpawn` |
+| `Lock_ChronoSpawn` | `GameplayAction.Lock.Paradox.ChronoSpawn` |
+| `Result_Failure_ChronoSpawn_InvalidTarget` | `GameplayAction.Result.Failure.Paradox.ChronoSpawn.InvalidTarget` |
+| `Result_Failure_ChronoSpawn_Materialization` | `GameplayAction.Result.Failure.Paradox.ChronoSpawn.Materialization` |
 | `Relation_Outcome_FutureObserved` | `Relation.Outcome.Paradox.FutureObserved` |
 | `Relation_Reason_FutureTemporalOrder` | `Relation.Reason.Paradox.FutureTemporalOrder` |
 | `Relation_Reason_SafeTemporalOrder` | `Relation.Reason.Paradox.SafeTemporalOrder` |
@@ -43,6 +47,7 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `Interaction_Inventory_Swap` | `Interaction.Paradox.Inventory.Swap` |
 | `Interaction_ItemSlot_Insert` | `Interaction.Paradox.ItemSlot.Insert` |
 | `Interaction_ItemSlot_Pickup` | `Interaction.Paradox.ItemSlot.Pickup` |
+| `Interaction_ChronoSpawn_Spawn` | `Interaction.Paradox.ChronoSpawn.Spawn` |
 | `Result_Failure_Inventory_UseUnsupported` | `GameplayAction.Result.Failure.Paradox.Inventory.UseUnsupported` |
 | `Result_Failure_Inventory_OwnerNotOperational` | `GameplayAction.Result.Failure.Paradox.Inventory.OwnerNotOperational` |
 | `Result_Failure_Inventory_ItemAlreadyConsumed` | `GameplayAction.Result.Failure.Paradox.Inventory.ItemAlreadyConsumed` |

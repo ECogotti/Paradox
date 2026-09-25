@@ -11,8 +11,10 @@ class AParadoxCharacter;
 class AParadoxPlayerCharacter;
 class AParadoxWorldStateAnchor;
 class UEntityRelationPolicySet;
+class UGameplayActionDefinition;
 class UIntentReplayComponent;
 class UIntentReplayTimelineBundle;
+class UParadoxOxygenWorldSubsystem;
 class UParadoxTemporalVisionComponent;
 class UWorldStateSubsystem;
 
@@ -21,8 +23,11 @@ struct FParadoxClonePlaybackRuntime
 {
 	TWeakObjectPtr<AParadoxCloneCharacter> Clone;
 	TWeakObjectPtr<UIntentReplayComponent> ReplayComponent;
+	TWeakObjectPtr<AParadoxChronoSpawn> ChronoSpawn;
 	int32 TemporalIndex = INDEX_NONE;
 	EParadoxClonePlaybackState State = EParadoxClonePlaybackState::Unprepared;
+	EParadoxTemporalSpawnState TemporalSpawnState =
+		EParadoxTemporalSpawnState::Dormant;
 	FIntentReplayPlaybackSessionId SessionId;
 	TWeakObjectPtr<UIntentReplayTimelineBundle> TimelineBundle;
 	FParadoxClonePlaybackFailure LastFailure;
@@ -77,6 +82,9 @@ public:
 	FParadoxClonePlaybackEvent OnClonePlaybackStopped;
 
 	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
+	FParadoxClonePlaybackEvent OnCloneTemporalSpawnStateChanged;
+
+	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
 	FParadoxClonePlaybackFailureEvent OnClonePlaybackFailed;
 
 	UPROPERTY(BlueprintAssignable, Category = "Paradox|Time Loop|Events")
@@ -116,12 +124,16 @@ public:
 	FParadoxTimeLoopOperationResult InitializeTimeLoop();
 
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
+	FParadoxTimeLoopOperationResult RequestChronoSpawnInteraction(
+		AParadoxChronoSpawn* ChronoSpawn);
+
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop", meta = (DeprecatedFunction, DeprecationMessage = "Use RequestChronoSpawnInteraction. Selection no longer executes Chrono Spawn gameplay."))
 	FParadoxTimeLoopOperationResult SelectChronoSpawn(AParadoxChronoSpawn* ChronoSpawn);
 
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult RequestTimeRewind();
 
-	/** Retires a replay clone in place after its recorded Time Travel VFX completes. */
+	/** Applies the configured GOAP handoff or legacy retirement after recorded Time Travel. */
 	bool CompleteCloneTimeTravelDeparture(
 		AParadoxCloneCharacter& Clone,
 		FString& OutDiagnostic);
@@ -149,8 +161,21 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Time Loop")
 	FParadoxTimeLoopOperationResult RequestRestartLevel();
 
-	/** Updates presentation-only hover state. It never selects a spawn. */
-	void UpdateHoveredChronoSpawn(AParadoxChronoSpawn* ChronoSpawn);
+	/** Execution seam used only by the recorded Chrono Spawn Gameplay Action. */
+	EParadoxChronoSpawnExecutionResult TryExecuteChronoSpawnAction(
+		AParadoxCharacter& TemporalAvatar,
+		AParadoxChronoSpawn& ChronoSpawn,
+		FString& OutDiagnostic);
+
+	/** Origin-aware pure precondition used by UI preview, Player submission, and clone replay. */
+	bool CanStartChronoSpawnAction(
+		const AParadoxCharacter& TemporalAvatar,
+		const AParadoxChronoSpawn& ChronoSpawn,
+		FGameplayTag OriginTag,
+		FString& OutDiagnostic) const;
+
+	/** Symmetric cleanup when a pending Chrono Spawn action is cancelled by reset or teardown. */
+	void CancelPendingChronoSpawnAction(AParadoxCharacter& TemporalAvatar);
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
 	bool IsTimeLoopEnabled() const { return bTimeLoopEnabled; }
@@ -160,6 +185,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
 	bool IsMovementAllowed() const;
+
+	/** True while the Time Loop accepts a new Chrono Spawn interaction request. */
+	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
+	bool IsChronoSpawnSelectionOpen() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Time Loop")
 	int32 GetMaximumTimelineCount() const { return MaximumTimelineCount; }
@@ -247,18 +276,29 @@ private:
 		const FString& DiagnosticMessage,
 		bool bEnterErrorPhase);
 	void SetPhase(EParadoxTimeLoopPhase NewPhase);
+	void RefreshChronoSpawnInteractionAffordances() const;
 	void SetTemporalOxygenConsumptionActive(bool bActive);
 	void DiscoverChronoSpawns();
 	bool PrepareWorldState(FString& OutFailure);
 	bool EnsureWorldStateAnchor(FString& OutFailure);
 	AParadoxPlayerCharacter* ResolvePlayerCharacter() const;
 	bool ActivatePlayerAtSelectedSpawn(FString& OutFailure);
+	FParadoxTimeLoopOperationResult SubmitChronoSpawnAction(
+		AParadoxChronoSpawn& ChronoSpawn);
 	void DeactivatePlayer();
 	void SetTemporalAvatarGridPresence(
 		AParadoxCharacter& Character,
 		bool bEnabled) const;
 	bool PreparePlayerRecorder(FString& OutFailure);
 	bool BeginPlayerRecording(FString& OutFailure);
+	bool BeginPostResetRuntimeStart(FString& OutFailure);
+	bool RequestPostResetTacticalPause(FString& OutFailure);
+	void ReleasePendingPostResetTacticalPause();
+	void SetPlayerMovementEnabled(bool bEnabled) const;
+	bool SetPlayerPerceptionListenerEnabled(
+		bool bEnabled,
+		FString& OutFailure) const;
+	void RefreshTemporalDetectionAfterPlayerActivation();
 	bool ConfigureEntityRelations(FString& OutFailure);
 	bool PrepareTemporalDetection(FString& OutFailure);
 	void EnableTemporalDetection();
@@ -285,6 +325,8 @@ private:
 	void UnbindClonePlaybackDelegates(UIntentReplayComponent& ReplayComponent);
 	FParadoxClonePlaybackRuntime* FindClonePlaybackRuntime(
 		FIntentReplayPlaybackSessionId SessionId);
+	FParadoxClonePlaybackRuntime* FindClonePlaybackRuntime(
+		int32 TemporalIndex);
 	const FParadoxClonePlaybackRuntime* FindClonePlaybackRuntime(
 		int32 TemporalIndex) const;
 	bool IsSynchronizedStartBarrierResolved() const;
@@ -298,13 +340,27 @@ private:
 	void SetClonePlaybackMovementEnabled(
 		AParadoxCloneCharacter& Clone,
 		bool bEnabled) const;
+	bool MaterializeCloneAtChronoSpawn(
+		FParadoxClonePlaybackRuntime& Runtime,
+		AParadoxChronoSpawn& ChronoSpawn,
+		FString& OutFailure);
+	bool SetCloneGameplayPresence(
+		AParadoxCloneCharacter& Clone,
+		bool bEnabled,
+		FString& OutFailure);
+	void SetCloneTemporalSpawnState(
+		FParadoxClonePlaybackRuntime& Runtime,
+		EParadoxTemporalSpawnState NewState);
+	void EnterCloneGoapAfterTimeTravel(
+		TWeakObjectPtr<AParadoxCloneCharacter> WeakClone);
+	void HandleGlobalOxygenDepleted();
 	FParadoxClonePlaybackFailure BuildClonePlaybackFailure(
 		const FParadoxClonePlaybackRuntime& Runtime,
 		const FIntentReplayFailure& Failure,
 		EIntentReplayPlaybackState ExecutorState) const;
 	bool ReconstructConsolidatedClones(FString& OutFailure);
 	void DestroyRuntimeClones();
-	void ReapplyChronoSpawnStates();
+	void ReapplyChronoSpawnStates(bool bNotifyStateInitialized = false);
 	bool IsConfiguredCloneClassUsable() const;
 
 	UFUNCTION()
@@ -336,6 +392,15 @@ private:
 
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Time Loop", meta = (AllowPrivateAccess = "true"))
 	TSubclassOf<AParadoxCloneController> CloneControllerClass;
+
+	/** Replay-stable Definition used to record temporal materialization. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Time Loop", meta = (AllowPrivateAccess = "true"))
+	TObjectPtr<UGameplayActionDefinition> ChronoSpawnActionDefinition;
+
+	/** Outcome used when a replay clone reaches the recorded Time Travel action. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Time Loop", meta = (AllowPrivateAccess = "true"))
+	EParadoxCloneTimeTravelCompletionBehavior CloneTimeTravelCompletionBehavior =
+		EParadoxCloneTimeTravelCompletionBehavior::EnterGoap;
 
 	/** Complete per-world policy set used by time-loop relation queries in this map. */
 	UPROPERTY(
@@ -390,18 +455,18 @@ private:
 	TObjectPtr<AParadoxChronoSpawn> SelectedChronoSpawn = nullptr;
 
 	UPROPERTY(Transient)
-	TObjectPtr<AParadoxChronoSpawn> HoveredChronoSpawn = nullptr;
-
-	UPROPERTY(Transient)
 	TObjectPtr<AParadoxWorldStateAnchor> WorldStateAnchor = nullptr;
 
 	UPROPERTY(Transient)
 	int32 MaximumTimelineCount = 0;
 
 	bool bPlayerCollisionWasEnabled = true;
+	bool bPlayerMaterializedForRun = false;
 	int32 TemporalDetectionSessionId = 0;
 	bool bRunFailureAcceptedForRun = false;
 	bool bEntityRelationsOverrideApplied = false;
+	bool bPostResetTacticalPauseAcquiredForPendingStart = false;
+	TWeakObjectPtr<UParadoxOxygenWorldSubsystem> OxygenWorldSubsystem;
 
 #if WITH_DEV_AUTOMATION_TESTS
 	friend struct FParadoxTimeLoopTestAccessor;

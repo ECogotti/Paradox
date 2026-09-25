@@ -67,9 +67,9 @@ Automatic visibility is:
 
 - visible with a possessed `AParadoxCharacter` during ordinary gameplay;
 - visible during Tactical Pause;
-- visible in the time loop's `ActiveRun` phase;
-- hidden during Chrono Spawn selection, rewind/reset, clone reconstruction/playback and terminal
-  non-interactive phases;
+- visible during `ChronoSpawnSelection`, `RunPreparation`, `AwaitingSynchronizedStart`, and
+  `ActiveRun`, including while initial or runtime Chrono Spawn selection is open;
+- hidden during rewind/reset, clone reconstruction and terminal non-interactive phases;
 - hidden when no valid Paradox Pawn is possessed.
 
 `Automatic`, `ForcedVisible`, and `ForcedHidden` provide an explicit root override. Tactical Pause,
@@ -82,8 +82,13 @@ unhandled input continues to normal gameplay. It does not assign keyboard focus,
 mouse to the viewport, and keeps the cursor visible during capture. Disable
 `bConfigureGameAndUIInputMode` only when another project-level UI router owns this policy.
 
+While Chrono Spawn selection is open, the controller also checks the current Slate hit path before
+arming a World click. A pointer gesture that starts on a hit-testable HUD descendant is owned by UI
+through release, so pressing Play cannot also select a spawn behind the button.
+
 Use `OnHUDVisibilityChanged`, `OnHUDSectionVisibilityChanged`, and `OnHUDModeChanged` for external
-presentation. Possession and time-loop phase bindings are event-driven; the HUD has no Tick.
+presentation. Possession, time-loop phase and `OnChronoSpawnSelected` bindings are event-driven;
+late selection refreshes visibility without requiring a phase transition, and the HUD has no Tick.
 
 ## Equipment section
 
@@ -146,6 +151,12 @@ widgets drive their complete layout from Blueprint events and value queries. See
 unbinds in `NativeDestruct`; it no longer belongs to a Common Activatable stack. Common Buttons and
 their styles remain supported. The Gameplay HUD root owns its one instance; the coordinator does
 not transfer a widget from the Tactical Pause local-player subsystem.
+
+Every successful post-rewind/recovery start with at least one consolidated timeline requests
+Tactical Pause through `UTacticalPauseWorldSubsystem`. The existing subsystem events refresh the
+widget immediately: Pause is disabled while paused, Play and valid speed presets remain available,
+and the selected preset remains selected for the next resume. The first blocking spawn selection
+does not force Tactical Pause.
 
 The Paradox configuration should keep `bCreateDefaultWidgetAutomatically` disabled because the
 Gameplay HUD is the project owner. Standalone projects using the plugin may still enable automatic

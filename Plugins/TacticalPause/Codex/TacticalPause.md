@@ -307,6 +307,12 @@ The implementation must account for:
 - map changes;
 - multiple PIE worlds.
 
+When a project permits camera movement during pause, keep Unreal's authoritative World pause for
+simulation but use a per-World scene view extension to keep renderer temporal histories active.
+The extension may clear `FSceneViewFamily::bWorldIsPaused` only while TacticalPause owns the pause.
+It must not unpause the World, alter time dilation, enumerate gameplay Actors, or affect an
+externally owned pause. This behavior must be configurable, lifecycle-safe, and enabled by default.
+
 Do not use zero global time dilation as a substitute for proper world pause.
 
 Use the actual pause mechanism for pause.

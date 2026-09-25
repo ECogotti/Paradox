@@ -20,6 +20,9 @@ DECLARE_DYNAMIC_MULTICAST_DELEGATE_TwoParams(
 	FParadoxSelectableSelectionChanged,
 	UParadoxSelectableComponent*, Selectable,
 	bool, bIsSelected);
+DECLARE_MULTICAST_DELEGATE_OneParam(
+	FParadoxSelectableAvailabilityChangedNative,
+	UParadoxSelectableComponent*);
 
 /** Adds hover, single-selection presentation, and an optional world-space widget to an Actor. */
 UCLASS(ClassGroup = (Paradox), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
@@ -83,6 +86,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	bool IsSelected() const { return bIsSelected; }
 
+	/** Atomically updates runtime eligibility and immediately notifies active selection owners. */
+	UFUNCTION(BlueprintCallable, Category = "Paradox|Selection")
+	void SetSelectionAvailability(bool bInCanBeHovered, bool bInCanBeSelected);
+
+	FParadoxSelectableAvailabilityChangedNative& OnSelectionAvailabilityChangedNative()
+	{
+		return SelectionAvailabilityChangedNative;
+	}
+
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	EParadoxSelectionPresentationState GetSelectionPresentationState() const;
 
@@ -137,6 +149,7 @@ private:
 	TObjectPtr<UWidgetComponent> InteractionWidgetComponent = nullptr;
 
 	TWeakObjectPtr<UParadoxSelectionComponent> ActiveSelectionComponent;
+	FParadoxSelectableAvailabilityChangedNative SelectionAvailabilityChangedNative;
 
 	friend class UParadoxSelectionComponent;
 };

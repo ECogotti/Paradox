@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Interaction/ParadoxInteractionActionBase.h"
+#include "Interaction/ParadoxInteractionActionDefinition.h"
 #include "NativeGameplayTags.h"
 #include "SmartObjectDefinition.h"
 #include "ParadoxInteractionTestTypes.generated.h"
@@ -16,6 +17,14 @@ namespace ParadoxInteractionTestTags
 UCLASS()
 class UParadoxInteractionTestBehaviorDefinition final
 	: public USmartObjectBehaviorDefinition
+{
+	GENERATED_BODY()
+};
+
+/** Mutable concrete Definition used to exercise spatial-policy variants in automation. */
+UCLASS()
+class UParadoxInteractionTestActionDefinition final
+	: public UParadoxInteractionActionDefinition
 {
 	GENERATED_BODY()
 };

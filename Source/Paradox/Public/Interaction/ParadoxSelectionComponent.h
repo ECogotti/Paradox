@@ -112,6 +112,8 @@ private:
 		bool bRequireSelection) const;
 	void SetHoveredSelectable(UParadoxSelectableComponent* NewHoveredSelectable);
 	void SetSelectedSelectable(UParadoxSelectableComponent* NewSelectedSelectable);
+	void ReconcileSelectableAvailabilityBinding(UParadoxSelectableComponent* Selectable);
+	void HandleSelectableAvailabilityChanged(UParadoxSelectableComponent* Selectable);
 	void HandleSelectableEndingPlay(UParadoxSelectableComponent* Selectable);
 	void BeginInteractionCellPresentation(UParadoxSelectableComponent* SelectedSelectable);
 	void EndInteractionCellPresentation();
@@ -127,6 +129,8 @@ private:
 
 	TWeakObjectPtr<UParadoxSelectableComponent> CurrentHoveredSelectable;
 	TWeakObjectPtr<UParadoxSelectableComponent> CurrentSelectedSelectable;
+	TMap<TWeakObjectPtr<UParadoxSelectableComponent>, FDelegateHandle>
+		SelectableAvailabilityBindings;
 	TWeakObjectPtr<UParadoxInteractionComponent> SelectedInteractionComponent;
 	TWeakObjectPtr<AGridNavigationData> BoundGridNavigationData;
 	TWeakObjectPtr<UGameplayActionComponent> BoundRequesterActionComponent;

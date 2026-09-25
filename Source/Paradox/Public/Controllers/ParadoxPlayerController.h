@@ -171,7 +171,7 @@ protected:
 	/** True when the current pointer gesture produced a valid world destination. */
 	uint32 bHasCachedDestination : 1;
 
-	/** True while the current mouse gesture belongs to an interactive world widget. */
+	/** True while the current pointer gesture belongs to interactive HUD or world-widget UI. */
 	uint32 bPrimaryPointerConsumedByWidget : 1;
 
 	/** Most recent shared mouse cursor hit; selection, widget UI, and GridWorld all consume it. */
@@ -384,10 +384,7 @@ protected:
 	void ClearMousePointerState();
 	void UpdateCachedDestination();
 	void UpdatePointerPrediction(bool bUseTouchInput);
-	void UpdateChronoSpawnHover(bool bUseTouchInput);
-	void TrySelectChronoSpawn(bool bUseTouchInput);
 	UParadoxTimeLoopComponent* GetTimeLoopComponent() const;
-	bool IsChronoSpawnSelectionActive() const;
 	bool IsMovementInputAllowed() const;
 	bool IsTacticalPlanningActive() const;
 	void PresentPlannedMove(const FGridCellId& GoalCell);

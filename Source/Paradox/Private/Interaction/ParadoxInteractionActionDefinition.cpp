@@ -106,10 +106,15 @@ EDataValidationResult UParadoxInteractionActionDefinition::IsDataValid(
 	Require(NavigationFilter, EPropertyBagPropertyType::Class, UNavigationQueryFilter::StaticClass());
 	Require(AcceptanceRadius, EPropertyBagPropertyType::Float, nullptr);
 	Require(AllowStrafe, EPropertyBagPropertyType::Bool, nullptr);
-	if (!ExecutionLocks.HasTagExact(GameplayActionTags::Lock_Movement)
-		|| !ExecutionLocks.HasTagExact(ParadoxGameplayTags::Lock_Interaction))
+	if (!ExecutionLocks.HasTagExact(ParadoxGameplayTags::Lock_Interaction))
 	{
-		Context.AddError(FText::FromString(TEXT("Standard interaction Definitions require both Movement and Interaction execution locks.")));
+		Context.AddError(FText::FromString(TEXT("Standard interaction Definitions require the Interaction execution lock.")));
+		Result = EDataValidationResult::Invalid;
+	}
+	if (RequiresSmartObjectSlot()
+		&& !ExecutionLocks.HasTagExact(GameplayActionTags::Lock_Movement))
+	{
+		Context.AddError(FText::FromString(TEXT("Spatial interaction Definitions require the Movement execution lock.")));
 		Result = EDataValidationResult::Invalid;
 	}
 	if (BlockedPolicy != EGameplayActionBlockedPolicy::Reject)

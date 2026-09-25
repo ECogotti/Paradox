@@ -9,18 +9,28 @@ reflection contract and Player Controller-owned component defaults. `TacticalPau
 `UUserWidget` lifecycle.
 Inventory regressions under `Paradox.Inventory.*` cover empty/equipped state sources, Drop and
 pickupable action requests. PIE acceptance should additionally verify `Tab` during ordinary play and
-Tactical Pause, automatic hiding during Chrono Spawn/reset, and preservation of Collapsed mode after
-a temporary hide.
+Tactical Pause, visibility during initial/runtime Chrono Spawn selection, hiding during reset and
+reconstruction, and preservation of Collapsed mode after a temporary hide. After a rewind, click
+Play without selecting: the HUD must remain visible in `ActiveRun`, and clicking Play must not also
+select a Chrono Spawn behind the button.
+
+Run `Paradox.Selection.WidgetAndWorldStateReset` for the selectable world-widget lifecycle. The test
+pauses the World before the first-ever selection and verifies visibility through a paused update,
+pause/offscreen tick configuration, hiding, reuse, and World State cleanup. In PIE, enter Tactical
+Pause and verify RMB selection shows a never-before-selected Actor's widget immediately, RMB on the
+same selectable hides it, and selecting another new Actor shows its widget without a Play frame or
+World resume.
 
 Run `Paradox.Health.*` to validate native generic/point/radial damage, actual HP-delta return values,
 death/heal/reset/`Kill`, the visual-tree-free widget base, explicit Player-to-Clone widget rebinding,
 source destruction, and the passive temporal-corpse contract. `Paradox.TimeLoop.PlayerDeathUsesRunFailureRecovery` verifies that
 Player death uses the same World State/Clone reconstruction path as a temporal paradox.
 
-Run `Paradox.Oxygen.*` to validate seconds-based resource operations, simulation pause/dilation,
-speed modifiers, independent blockers, depletion event order, native Health classification, Clone
-death, the visual-tree-free widget base, explicit widget rebinding, source destruction, countdown
-formatting, and reset cleanup.
+Run `Paradox.Oxygen.*` to validate legacy fallback, initializer validation, shared fixed/per-avatar
+rates, participant counting, facade sharing, checkpoint promotion/rollback, simulation
+pause/dilation, speed modifiers, independent blockers, depletion event order, native Health
+classification, Clone death, widget rebinding, source destruction, countdown formatting, and reset
+cleanup.
 
 Run `Paradox.OxygenCanister.*` to validate the two authored Use assets, the single soft replay
 parameter, Pickup/Drop/Swap without recovery, 30-second restore and capacity clamp, atomic
@@ -39,7 +49,8 @@ UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
 snapshots, immediate reissue/already-satisfied resolution, default policy priorities,
 equal/lower-priority arbitration, higher-priority single-action retargeting, stale completion
-rejection, native composition, node instancing, fresh exact paths from a different start cell,
+rejection, reentrant replay pause between equal-timestamp entries, native composition, node
+instancing, fresh exact paths from a different start cell,
 instant crouch/uncrouch alongside a running Movement lock, stance replay, and stable temporal
 Perception Entity IDs. `Paradox.Perception.PlayerSightUsesPawnFacing` deliberately separates
 Player Controller `ControlRotation` from Pawn rotation and verifies that both gameplay eyes and the
@@ -202,7 +213,8 @@ children of Pressure Plate and Vertical Barrier. RMB selection must show green P
 at least one option is free and orange Secondary cells otherwise. LMB navigation and its path
 preview must remain active while the Actor outline is visible. Deselect, target destruction, and
 World State restore-start must remove the interaction cells immediately. Chrono Spawn must retain
-selection behavior without Smart Object or Paradox interaction components.
+selection and puzzle-wire behavior while inactive or occupied, own its native interaction
+component, and remain free of a Smart Object component and interaction-cell overlay.
 
 For execution acceptance, give the possessed requester a `UGameplayActionComponent` and choose an
 exact catalog tag from the widget or call `RequestInteraction` directly. Confirm the action chooses
@@ -215,6 +227,11 @@ request must add one semantic intent containing Definition identity, soft `Targe
 `InteractionTag`; replay must create a new action and claim while leaving the source track
 unchanged.
 
+`Paradox.Interaction.NonSpatial.WithoutSmartObject` is the regression guard for explicit
+`ExecuteWithoutSmartObject` definitions. It verifies query, requester-relative availability and
+execution without a Smart Object or GridWorld slot, with no movement or claim. Spatial definitions
+must continue to fail when their required Smart Object configuration is absent.
+
 ## Idle tail and recorded Time Travel
 
 1. In T0 move to a destination, remain still for ten seconds, then trigger Time Travel.
@@ -224,11 +241,83 @@ unchanged.
    while moving: movement must be interrupted, the VFX must play, and reset must occur only after
    `OnSystemFinished`.
 4. Remove the Niagara System and repeat. The player must rewind immediately.
-5. Let T0 replay the recorded Time Travel in T1. Its VFX must play and, at completion, T0 must be
-   hidden, non-collidable, absent from GridWorld occupancy, and unregistered as perception Source.
-6. Run `IntentReplay.Playback.PreservesRecordedIdleTail`,
+5. With the default `EnterGoap`, let T0 replay the recorded Time Travel in T1. Its VFX must play;
+   after completion T0 must remain visible, collidable, GridWorld-occupied, semantically observable,
+   stationary, in terminal GOAP and consuming Oxygen. Listener and Temporal Vision remain disabled.
+6. Repeat with `RetireInPlace`. T0 must be hidden, non-collidable, absent from GridWorld occupancy,
+   and unregistered as perception Source.
+7. Run `IntentReplay.Playback.PreservesRecordedIdleTail`,
    `Paradox.TimeTravel.RecordedActionPreemptsMovementAndSupportsNoVfx`, and
-   `Paradox.TimeLoop.CloneTimeTravelDepartureRetiresInPlace`.
+   `Paradox.TimeLoop.CloneTimeTravelDepartureUsesConfiguredCompletionBehavior`.
+
+## Runtime Chrono Spawn selection after rewind
+
+1. Link one Chrono Spawn Receiver to a Puzzle emitter and leave a second spawn linkless. Verify the
+   linked spawn mirrors the Receiver while the linkless spawn starts active. Both use the generic
+   Selectable path and expose puzzle connections. The linked spawn must remain selectable while
+   inactive; its Spawn button must be disabled. Verify there is no native State Label and that the
+   Selection Mesh remains at relative scale `(1,1,1)` through selection, deselection, activation,
+   inactivity and occupation; authored effects should react through `OnChronoSpawnStateChanged` or
+   `ReceiveVisualStateChanged`.
+2. Select the active free spawn without pressing Spawn. No Character may materialize and no action
+   may be recorded. Press the widget's Spawn button and verify the first timeline leaves
+   `ChronoSpawnSelection`, the HUD is visible, Tactical Pause was not forced, and the first recorded
+   intent is exactly one Chrono Spawn Gameplay Action.
+3. Consolidate T0. Verify the post-reset path immediately requests Tactical Pause and the widget
+   disables Pause while leaving Play and valid speed presets enabled.
+4. Select a spawn while paused. Selection alone must only inspect its circuit. Press Spawn: the
+   Player must materialize immediately through the recorded non-spatial action without walking to
+   the Chrono Spawn, but the World and player action scheduler remain paused until Play; the request
+   must not implicitly resume gameplay or start planned work.
+5. Rewind again and press Play before selecting. As soon as clone readiness resolves, replay,
+   recorder, and `ActiveRun` begin without a delay. The Player stays hidden, non-collidable,
+   outside GridWorld occupancy, and unable to produce observations.
+6. Select late, then press Spawn. Player listener/source, movement, Oxygen, occupancy and Temporal
+   Vision filters must activate immediately without restarting replay or recording clocks.
+7. Before a clone reaches its recorded spawn time, deactivate that spawn's emitter. At the due
+   time the clone must remain dormant, expose `PendingActivation`, and pause only its own replay.
+   Reactivating the emitter later must materialize the clone and resume that replay from the same
+   session; no later equal-time intent may slip through before activation.
+8. Select inactive, active occupied, and active free Chrono Spawns outside assignment flow. All must
+   show their emitter connections, while every Spawn button remains disabled. During assignment,
+   only the active free spawn's button may become enabled.
+9. During a run, move a Chrono Spawn and change `ChronoSpawnEnabled`, then rewind. Its native World
+   State participant must restore the authored transform and enabled flag. Puzzle activation must
+   still follow the restored Receiver, used spawns must remain occupied from consolidated timeline
+   ownership, and `ReceiveStateInitialized` must run once with each final post-reset state even when
+   no ordinary state-change event was needed.
+10. Make one clone preparation asynchronous and press Play first. The World may resume, but the
+   technical barrier must still wait for every clone to become Ready/Failed.
+11. Add an external pause owner or force pause application failure. Start must publish diagnostics
+   and return to safe spawn selection; an idempotent plugin-owned resumable pause remains valid.
+12. Trigger recovery before any consolidated timeline and after T0 exists: only the former returns
+   to initial blocking selection; the latter uses the forced-pause runtime path.
+13. Run `Paradox.Interaction.NonSpatial.WithoutSmartObject`,
+   `Paradox.TimeLoop.DefaultsCapacityAndGating`,
+   `Paradox.TimeLoop.ConsolidationResetAndCloneReconstruction`,
+   `Paradox.TimeLoop.PlayerDeathUsesRunFailureRecovery`, `Paradox.CloneBehavior.*`, and
+   `Paradox.GameplayHUD.*`, `Paradox.Selection.*`,
+   `IntentReplay.Playback.ReentrantPauseStopsDueBatch`, plus `TacticalPause.Runtime.*`.
+
+## Shared Oxygen checkpoints
+
+1. Place exactly one `AParadoxWorldInitializer`, select `SharedGlobal`, set 180 seconds, x1, and
+   `FixedWorldRate`. Materialize Player plus multiple Clones and verify the reservoir loses one
+   second per game second, not once per avatar.
+2. Switch to `PerActiveAvatar`; verify Player, replay Clones, and terminal GOAP Clones each add one
+   rate contribution, while hidden Player, dead Clones, and `RetireInPlace` Clones do not.
+3. Pause through Tactical Pause and resume at x2/x3. Consumption must stop while paused and scale
+   with dilated game time after resume.
+4. Consume Oxygen and use a canister, then complete Time Travel. The exact live value becomes the
+   next run checkpoint and is visible identically through Player and Clone component facades.
+5. During the next run consume/refill and trigger death, paradox, then global depletion in separate
+   attempts. Every recovery must restore the exact starting checkpoint and clear modifiers,
+   blockers, and transient participants.
+6. Restart Level and verify a new World starts from the configured 180 seconds. Remove the
+   initializer and verify the unchanged per-Pawn behavior. Duplicate it or enter invalid shared
+   values and verify Time Loop initialization is rejected with diagnostics.
+7. Run `Paradox.Oxygen.*`, `Paradox.OxygenCanister.*`, `Paradox.TimeLoop.*`, and
+   `Paradox.CloneBehavior.*`.
 
 ## Crouch and perceptual identity
 

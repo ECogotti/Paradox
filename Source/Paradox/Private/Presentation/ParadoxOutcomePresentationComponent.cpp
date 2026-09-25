@@ -250,7 +250,19 @@ UParadoxOutcomePresentationComponent::MakeRunFailurePresentationData(
 {
 	FParadoxOutcomePresentationData Data;
 	Data.RunFailureContext = Context;
-	if (Context.Reason == EParadoxRunFailureReason::PlayerDeath)
+	if (Context.Reason == EParadoxRunFailureReason::GlobalOxygenDepleted)
+	{
+		Data.OutcomeType = EParadoxOutcomeType::GlobalOxygenDepleted;
+		Data.Title = NSLOCTEXT(
+			"Paradox",
+			"GlobalOxygenDepletedTitle",
+			"OXYGEN RESERVE DEPLETED");
+		Data.Message = NSLOCTEXT(
+			"Paradox",
+			"GlobalOxygenDepletedMessage",
+			"The shared reserve reached zero. The current timeline will be restored from its Oxygen checkpoint.");
+	}
+	else if (Context.Reason == EParadoxRunFailureReason::PlayerDeath)
 	{
 		Data.OutcomeType = EParadoxOutcomeType::PlayerDeath;
 		Data.Title = NSLOCTEXT(

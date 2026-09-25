@@ -8,6 +8,7 @@
 
 class UDamageType;
 class UParadoxHealthComponent;
+class UParadoxOxygenWorldSubsystem;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_FourParams(
 	FParadoxOxygenChangedEvent,
@@ -44,10 +45,10 @@ struct FParadoxOxygenBlockEntry
 };
 
 /**
- * Authoritative breathable-time resource for one Paradox Character.
+ * Per-character Oxygen API and optional facade for the World shared reservoir.
  *
  * State advances analytically on Unreal simulation time and is scheduled with one-shot timers.
- * Depletion has no role-specific consequences: it asks the same Character's Health to kill.
+ * Per-Pawn depletion kills this Character; shared depletion is accepted once by the time loop.
  */
 UCLASS(ClassGroup = (Paradox), BlueprintType, meta = (BlueprintSpawnableComponent))
 class PARADOX_API UParadoxOxygenComponent : public UActorComponent
@@ -58,7 +59,7 @@ public:
 	UParadoxOxygenComponent();
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
-	float GetOxygenDurationSeconds() const { return OxygenDurationSeconds; }
+	float GetOxygenDurationSeconds() const;
 
 	/** Projected value at the current simulation-time sample. */
 	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
@@ -71,13 +72,19 @@ public:
 	int32 GetWholeSecondsRemaining() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
-	bool IsOxygenDepleted() const { return bIsDepleted; }
+	bool IsOxygenDepleted() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
-	bool IsConsumptionBlocked() const { return ConsumptionBlocks.Num() > 0; }
+	bool IsConsumptionBlocked() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
-	float GetEffectiveConsumptionSpeed() const { return EffectiveConsumptionSpeed; }
+	float GetEffectiveConsumptionSpeed() const;
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
+	EParadoxOxygenMode GetOxygenMode() const;
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Oxygen")
+	bool IsUsingSharedGlobalOxygen() const;
 
 	/** Returns the number of oxygen seconds actually consumed. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Oxygen")
@@ -159,6 +166,21 @@ private:
 
 	void HandleDepletionTimer();
 	void HandleWholeSecondTimer();
+	void BindSharedOxygen();
+	void UnbindSharedOxygen();
+	void HandleSharedOxygenChanged(
+		float OldRemainingSeconds,
+		float NewRemainingSeconds,
+		float DurationSeconds,
+		float NormalizedOxygen);
+	void HandleSharedWholeSecondChanged(
+		int32 WholeSecondsRemaining,
+		float RemainingSeconds,
+		float NormalizedOxygen);
+	void HandleSharedConsumptionSpeedChanged(float OldSpeed, float NewSpeed);
+	void HandleSharedConsumptionBlockedChanged(bool bIsBlocked);
+	void HandleSharedOxygenDepleted();
+	void HandleSharedOxygenReset();
 
 	UFUNCTION()
 	void HandleHealthDeath(
@@ -184,11 +206,15 @@ private:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<UParadoxHealthComponent> HealthComponent;
 
+	UPROPERTY(Transient)
+	TWeakObjectPtr<UParadoxOxygenWorldSubsystem> SharedOxygenSubsystem;
+
 	TMap<FGuid, FParadoxOxygenSpeedModifierEntry> SpeedModifiers;
 	TMap<FGuid, FParadoxOxygenBlockEntry> ConsumptionBlocks;
+	TSet<FGuid> OwnedSharedSpeedModifierHandles;
+	TSet<FGuid> OwnedSharedBlockHandles;
 	FTimerHandle DepletionTimerHandle;
 	FTimerHandle WholeSecondTimerHandle;
 	double LastSynchronizationTimeSeconds = 0.0;
 	bool bRunConsumptionActive = false;
 };
-

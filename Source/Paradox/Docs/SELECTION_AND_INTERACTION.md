@@ -15,9 +15,11 @@ lifecycle, Intent Replay records accepted semantic requests, and GridWorld owns 
 occupancy, reservations, and runtime cell presentation.
 
 Milestones 3-4 enable the engine `SmartObjects` plugin and add `SmartObjectsModule` as a public
-runtime dependency. Smart Objects remain the authority for slot identity, transforms, conditions,
-enabled state, and claims. Paradox adds a read-only multi-interaction catalog and GridWorld
-presentation around that authority; it does not add a Paradox Smart Object behavior definition.
+runtime dependency. For spatial interactions, Smart Objects remain the authority for slot identity,
+transforms, conditions, enabled state, and claims. Paradox adds a read-only multi-interaction
+catalog and GridWorld presentation around that authority; it does not add a Paradox Smart Object
+behavior definition. A definition may explicitly opt into non-spatial execution when its semantic
+effect must run without a slot, claim, or requester movement.
 
 ## Runtime composition
 
@@ -34,24 +36,35 @@ Vertical Barrier, and Chrono Spawn include it by default, so their Blueprint chi
 capability without adding another component.
 
 Pressure Plate and Vertical Barrier additionally own `USmartObjectComponent` and
-`UParadoxInteractionComponent`. Chrono Spawn deliberately remains selectable-only.
+`UParadoxInteractionComponent`. Chrono Spawn owns a `UParadoxInteractionComponent` with one native
+non-spatial Spawn entry, but deliberately owns no `USmartObjectComponent` and requests no
+interaction-cell presentation. Its concrete interaction widget is designer-authored and assigned
+through the inherited selectable component.
 
-Pressure Plate and Vertical Barrier also enable `bShowPuzzleConnectionsWhenSelected`; Chrono Spawn
-does not. Circuit rendering, stencil ownership, routing, lifecycle, and troubleshooting are
+Pressure Plate, Vertical Barrier, and Chrono Spawn enable
+`bShowPuzzleConnectionsWhenSelected`. Circuit rendering, stencil ownership, routing, lifecycle, and troubleshooting are
 documented in [Puzzle Circuit Overlay](PUZZLE_CIRCUIT_OVERLAY.md).
+
+`UParadoxSelectableComponent::SetSelectionAvailability` is the runtime eligibility boundary for
+dynamic selectables. The selection authority observes that change and immediately clears hover or
+selection when the component becomes ineligible. An enabled Chrono Spawn remains selectable while
+its Puzzle Receiver is inactive or it is occupied, so the player can always inspect how it is
+connected. Puzzle activation and timeline assignment gate only its Spawn interaction.
 
 ## Input behavior
 
 - Hover changes only when the shared cursor hit resolves to a different selectable Actor.
 - RMB selects an unselected Actor, replaces the current selection, or toggles the selected Actor
-  off. RMB without a selectable under the cursor clears the current selection.
+  off. RMB without a selectable under the cursor clears the current selection. The binding executes
+  identically during Tactical Pause.
 - LMB remains the navigation command even while a selectable Actor is hovered. Hover outline and
   GridWorld path preview are therefore presented at the same time.
 - An interactive world-widget control receives LMB before navigation, so activating a widget
   control does not also submit click-to-move.
-- Touch and Chrono Spawn selection retain their existing dedicated input paths. During the
-  `ChronoSpawnSelection` phase the controller clears generic mouse hover and routes the pointer to
-  the time-loop authority.
+- Chrono Spawn uses this same generic selection path. Selection only displays its puzzle circuit
+  and optional interaction widget; it never materializes a Character. The widget's Spawn control
+  submits the action explicitly. Touch release resolves through the same generic selection
+  component.
 - While Drop targeting is active, it has higher input/presentation priority than ordinary selection
   and movement: LMB confirms the current valid GridWorld cell and RMB cancels. Invalid LMB keeps
   targeting active. World widgets and Chrono Spawn selection retain their earlier arbitration.
@@ -94,7 +107,8 @@ without the material still updates Custom Depth/Stencil correctly but displays n
 
 Pressure Plate outlines both `FloorMesh` and `PlateMesh`. Vertical Barrier outlines its direct
 `BarrierMesh`; a separate frame Actor needs its own selectable component. Chrono Spawn outlines its
-`SelectionMesh` when generic selection is active.
+`SelectionMesh`. Enabled inactive and occupied Chrono Spawns remain selectable for circuit
+inspection even though their Spawn interaction is unavailable.
 
 ## Optional world-space widget
 
@@ -103,6 +117,12 @@ Set `SelectionWidgetClass` on the selectable component to a Blueprint derived fr
 
 The component lazily creates one `UWidgetComponent`, reuses it while hidden, and destroys it during
 Actor teardown. It uses World space, default draw size `400 x 160`, and an offset of `Z +100`.
+Selection visibility is independent of simulation pause: the widget appears and disappears with
+selection during Tactical Pause, and its world-space redraw plus camera-facing update are allowed
+to tick while paused. On every show, the component explicitly requests a forced first render-target
+update, so a widget created for the first time during pause does not require a Play frame.
+Offscreen updating is enabled only to remove the pre-first-render deadlock; widget ticking is
+explicitly disabled again while hidden, as is the selectable camera-facing tick.
 `WidgetAnchor` may reference a Scene Component owned directly by the selected Actor; an external,
 invalid, or empty reference falls back to that Actor's root. Do not use a Pressure Plate or another
 gameplay Actor as the anchor for a Door widget. By default, the widget forward vector follows the
@@ -116,8 +136,8 @@ Before showing the widget, the native base receives read-only context for the se
 selectable component, interaction component, selection authority, owning Player Controller, and
 requester Pawn. Deselect, World State restore start, and teardown clear its option cache and context
 before hiding or destroying the widget. Blueprints extend presentation through
-`OnSelectionContextAssigned`, `OnSelectionContextCleared`, and
-`OnInteractionOptionsRefreshed`.
+`OnSelectionContextAssigned`, `OnSelectionContextCleared`, `OnInteractionOptionsRefreshed`, and
+`OnInteractionAvailabilityRefreshed`.
 
 The native widget intentionally contains no authored controls. A concrete Blueprint reads
 `GetInteractionOptions`, may explicitly call `RefreshInteractionOptions`, and submits an exact tag
@@ -126,6 +146,14 @@ the requester, `GameplayAction.Origin.Player` as origin, and the Player Controll
 source. `OnInteractionRequestAccepted` and `OnInteractionRequestRejected` provide presentation
 hooks for the structured result. AI and other C++/Blueprint callers use the same request API on the
 target's interaction component.
+
+Chrono Spawn uses a dedicated submission seam because the Time Loop must select the pending
+timeline target and start the recorder before the semantic action is submitted. Its widget should
+use `CanRequestInteraction(Interaction.Paradox.ChronoSpawn.Spawn)` for button state, but call
+`UParadoxTimeLoopComponent::RequestChronoSpawnInteraction` with the selected Chrono Spawn when the
+button is clicked. Availability refreshes automatically when the Receiver, assignment, or Time Loop
+phase changes. The button is therefore enabled only while the Time Loop needs a spawn and the
+selected spawn is active and free.
 
 ## Smart slots and multiple interactions
 
@@ -136,10 +164,11 @@ mapping. Each `FParadoxInteractionDefinition` contains:
 - a soft reference to the `UGameplayActionDefinition` submitted for that interaction;
 - `SlotActivityRequirements`, evaluated against each current Smart Object slot's Activity Tags.
 
-Every matching definition produces an option for every matching enabled slot. Consequently one
-slot can expose several interactions and one definition can apply to several slots. Empty catalogs
-and a null Smart Object Definition are valid native defaults, allowing Blueprint children to assign
-content later. When assigning a Definition, author an engine-valid Smart Object asset with the
+Every matching spatial definition produces an option for every matching enabled slot. Consequently
+one slot can expose several interactions and one definition can apply to several slots. A
+non-spatial definition produces one free semantic option for the target Actor and must not author
+slot activity requirements. Empty catalogs and a null Smart Object Definition remain valid. When
+assigning a Definition for spatial execution, author an engine-valid Smart Object asset with the
 required slots, Activity Tags, conditions, and transforms. Paradox reads the engine asset but does
 not require or provide `UParadoxInteractionBehaviorDefinition`.
 
@@ -176,19 +205,27 @@ Every non-empty catalog entry must reference a `UGameplayActionDefinition` confi
   `FGameplayTag`, with those exact field names and types;
 - any additional authored parameters needed by the concrete action may remain in the same bag.
 
+`UParadoxInteractionActionDefinition::ExecutionMode` is explicit per action. Keep
+`RequireSmartObjectSlot` for normal world interactions. Use `ExecuteWithoutSmartObject` only when
+the effect is intentionally remote/non-spatial: the target needs an interaction component and
+catalog entry, but no Smart Object component or Definition, GridWorld destination, path, movement,
+or slot claim. Non-spatial actions still run semantic validation, scheduler preflight, execution
+locks, journaling, concrete preconditions, effect validation, completion, and cleanup.
+
 `QueryInteractionOptionsByTag` deliberately accepts a tag subtree for presentation. Execution is
 stricter: `CanRequestInteraction` and `RequestInteraction` require a concrete exact catalog tag and
 never choose a child interaction implicitly. They also require the requester to directly own a
-`UGameplayActionComponent`, the target to have a replay-stable world-authored identity, and at least
-one free matching slot whose exact GridWorld cell is reachable by a complete controller-aware path.
+`UGameplayActionComponent` and the target to have a replay-stable world-authored identity. Spatial
+actions additionally require at least one free matching slot whose exact GridWorld cell is reachable
+by a complete controller-aware path; non-spatial actions skip that spatial requirement.
 In normal runtime Worlds this identity is represented by `RF_WasLoaded`; the Interaction Component
 also preserves authored provenance across its load/PIE-duplication lifecycle. Actors actually
 spawned at runtime remain unrecordable. No interaction rotates or teleports the requester.
 
-The Gameplay Action Definition soft reference is loaded synchronously only during explicit
-availability validation or request submission. Hover and the raw cell-overlay query do not load
-it. `FParadoxInteractionRequestResult` reports request status, query status, scheduler
-submission result, and a diagnostic so rejection is not reduced to a boolean.
+The Gameplay Action Definition soft reference may be loaded synchronously while querying so the
+catalog can distinguish spatial and non-spatial entries. `FParadoxInteractionRequestResult` reports
+request status, query status, scheduler submission result, and a diagnostic so rejection is not
+reduced to a boolean.
 
 ## Interaction action lifecycle and claim ownership
 
@@ -198,12 +235,13 @@ from; it does not replace that spatial identity. The public requester, target, a
 component getters are phase-safe: during `CanStartAction`, which runs before `OnActionInit`, they
 resolve from the already initialized owning Action Component and immutable semantic Property Bag.
 Concrete precondition hooks must therefore use these getters instead of assuming the runtime caches
-have already been populated. `CanStartAction` repeats semantic, effect and
-reachability preflight without claiming. `OnActionStarted` orders free candidates by complete-path
-cost, cell identity and slot identity, then acquires a normal-priority Smart Object claim before
-movement. A candidate lost to a claim or movement contention race is released and the next
-unattempted cell is tried. Arrival requires the exact claimed cell and repeats target, claim and
-effect validation before execution.
+have already been populated. `CanStartAction` repeats semantic and effect preflight; spatial actions
+also repeat reachability preflight without claiming. For spatial execution, `OnActionStarted`
+orders free candidates by complete-path cost, cell identity and slot identity, then acquires a
+normal-priority Smart Object claim before movement. A candidate lost to a claim or movement
+contention race is released and the next unattempted cell is tried. Arrival requires the exact
+claimed cell and repeats target, claim and effect validation before execution. Non-spatial execution
+resolves semantic context and proceeds directly to those effect checks without a slot or movement.
 
 Derive a native or Blueprint action class and implement `ExecuteInteraction`. The protected hooks
 `CanSatisfyInteractionPreconditions`, `CanExecuteInteraction`,
@@ -286,8 +324,9 @@ reservations, or navigation revisions. Hover, direct cell selection, interaction
 state, and navigation state remain independently stored by GridWorld.
 
 The session is replaced when the selected target changes and released on deselect, Actor teardown,
-selection component teardown, and World State restore-start. An empty catalog, null Smart Object
-Definition, no matching slot, or all unresolved slots simply produces no interaction-cell session.
+selection component teardown, and World State restore-start. An empty catalog, a catalog containing
+only non-spatial definitions, null Smart Object Definition, no matching slot, or all unresolved
+slots simply produces no interaction-cell session.
 
 ## Blueprint API and debugging
 

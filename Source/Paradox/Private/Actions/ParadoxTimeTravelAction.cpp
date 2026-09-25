@@ -194,7 +194,7 @@ void UParadoxTimeTravelAction::CompleteTimeTravel()
 		bDepartureCommitted = true;
 		SucceedAction(
 			GameplayActionTags::Result_Success,
-			TEXT("Clone time-travel VFX completed; clone retired from the active run."));
+			DepartureDiagnostic);
 		return;
 	}
 

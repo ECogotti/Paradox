@@ -4,6 +4,14 @@
 #include "CoreMinimal.h"
 #include "ParadoxInteractionActionDefinition.generated.h"
 
+/** Controls whether an interaction resolves and claims a spatial Smart Object slot. */
+UENUM(BlueprintType)
+enum class EParadoxInteractionExecutionMode : uint8
+{
+	RequireSmartObjectSlot,
+	ExecuteWithoutSmartObject
+};
+
 namespace ParadoxInteractionActionParameters
 {
 	PARADOX_API extern const FName Target;
@@ -25,6 +33,22 @@ class PARADOX_API UParadoxInteractionActionDefinition : public UGameplayActionDe
 
 public:
 	UParadoxInteractionActionDefinition();
+
+	/**
+	 * Spatial interactions use the authored Smart Object/GridWorld path. Non-spatial interactions
+	 * execute against the semantic Target without resolving, claiming, or moving to a slot.
+	 */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Paradox|Interaction")
+	EParadoxInteractionExecutionMode ExecutionMode =
+		EParadoxInteractionExecutionMode::RequireSmartObjectSlot;
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
+	bool RequiresSmartObjectSlot() const
+	{
+		return ExecutionMode
+			== EParadoxInteractionExecutionMode::RequireSmartObjectSlot;
+	}
+
 	virtual void PostLoad() override;
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;

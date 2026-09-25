@@ -115,6 +115,18 @@ namespace ParadoxGameplayTags
 		Lock_TimeTravel,
 		"GameplayAction.Lock.Paradox.TimeTravel");
 	UE_DEFINE_GAMEPLAY_TAG(
+		Action_ChronoSpawn,
+		"GameplayAction.Type.Paradox.TimeLoop.ChronoSpawn");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Lock_ChronoSpawn,
+		"GameplayAction.Lock.Paradox.ChronoSpawn");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_ChronoSpawn_InvalidTarget,
+		"GameplayAction.Result.Failure.Paradox.ChronoSpawn.InvalidTarget");
+	UE_DEFINE_GAMEPLAY_TAG(
+		Result_Failure_ChronoSpawn_Materialization,
+		"GameplayAction.Result.Failure.Paradox.ChronoSpawn.Materialization");
+	UE_DEFINE_GAMEPLAY_TAG(
 		Relation_Outcome_FutureObserved,
 		"Relation.Outcome.Paradox.FutureObserved");
 	UE_DEFINE_GAMEPLAY_TAG(
@@ -149,6 +161,7 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Swap, "Interaction.Paradox.Inventory.Swap");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Insert, "Interaction.Paradox.ItemSlot.Insert");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Pickup, "Interaction.Paradox.ItemSlot.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_ChronoSpawn_Spawn, "Interaction.Paradox.ChronoSpawn.Spawn");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_InvalidRequest, "GameplayAction.Result.Failure.Paradox.ItemSlot.InvalidRequest");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Inactive, "GameplayAction.Result.Failure.Paradox.ItemSlot.Inactive");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Occupied, "GameplayAction.Result.Failure.Paradox.ItemSlot.Occupied");

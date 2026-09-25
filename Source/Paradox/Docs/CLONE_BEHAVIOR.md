@@ -23,7 +23,7 @@ unexpected noise from a newly introduced clone enters `Investigating`.
 ```text
 Replay -- accepted comparison --> Investigating
 Investigating -- recovery complete --> Replay
-Replay/Investigating -- explicit future handoff --> Goap (terminal)
+Replay/Investigating -- completed replay Time Travel --> Goap (terminal, default)
 Replay/Investigating/Goap -- Health death --> Stopped (terminal)
 ```
 
@@ -33,10 +33,22 @@ and interrupts those actions with
 `GameplayAction.Result.Interrupted.Paradox.Investigation.Started`. These interruptions remain visible in the
 Intent Replay Execution Journal and are not replay fractures.
 
-`RequestEnterGoapMode` is intentionally not called by Milestone 3 gameplay. If a future authority
-calls it, the coordinator stops replay and investigation, commits terminal `Goap`, safely stops the
-Behavior Tree, and broadcasts the external handoff. The transition cannot be reversed for that
-run.
+When a clone completes its recorded Time Travel, the time loop calls `RequestEnterGoapMode` on the
+next tick by default. Deferral lets the Time Travel Gameplay Action complete before the coordinator
+stops replay, investigation, Behavior Tree, Gameplay Actions and movement and commits terminal
+`Goap`. The transition cannot be reversed for that run. This is currently a stationary GOAP
+placeholder: the clone remains visible, collidable, GridWorld-occupied, semantically observable and
+continues consuming Oxygen, while the Time Travel action has already disabled its perception
+listener and Temporal Vision. A failed handoff leaves the clone stationary and reports playback
+failure.
+
+In `SharedGlobal` Oxygen mode, a terminal GOAP clone remains an active reservoir participant.
+`RetireInPlace` deactivates its facade before hiding it, so it no longer contributes to either the
+fixed World rate's participant gate or the `PerActiveAvatar` multiplier.
+
+Set `UParadoxTimeLoopComponent::CloneTimeTravelCompletionBehavior` to `RetireInPlace` to preserve
+the legacy hidden retirement behavior, including collision disable, GridWorld release and semantic
+Source unregister.
 
 `StopForDeath` is an idempotent terminal stop. It rejects every later replay, investigation, or
 GOAP request; stops Intent Replay, observation comparison, investigation, Behavior Tree, Gameplay

@@ -193,7 +193,7 @@ bool FParadoxPuzzleCircuitRendererActorOptInTest::RunTest(const FString& Paramet
 		&& PressurePlate->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
 	TestTrue(TEXT("Vertical Barrier opts in"), Barrier && Barrier->SelectableComponent
 		&& Barrier->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
-	TestFalse(TEXT("Chrono Spawn remains selection-only"), ChronoSpawn
+	TestTrue(TEXT("Chrono Spawn opts into puzzle connections"), ChronoSpawn
 		&& ChronoSpawn->GetSelectableComponent()
 		&& ChronoSpawn->GetSelectableComponent()->bShowPuzzleConnectionsWhenSelected);
 	return true;
@@ -243,7 +243,7 @@ bool FParadoxPuzzleCircuitRendererBlueprintWireTargetValidationTest::RunTest(
 {
 	UClass* KeyCardSlotClass = LoadClass<AParadoxPuzzleItemSlotActor>(
 		nullptr,
-		TEXT("/Game/Environment/SpaceShip/Blueprints/BP_KeyCardSlot.BP_KeyCardSlot_C"));
+		TEXT("/Game/Environment/SpaceShip/Blueprints/Access/BP_KeyCardSlot.BP_KeyCardSlot_C"));
 	const AParadoxPuzzleItemSlotActor* KeyCardSlot = KeyCardSlotClass
 		? Cast<AParadoxPuzzleItemSlotActor>(KeyCardSlotClass->GetDefaultObject())
 		: nullptr;

@@ -5,3 +5,10 @@ void UParadoxTimeLoopActionEventObserver::HandleActionEvent(
 {
 	ObservedEvents.Add(Event);
 }
+
+void AParadoxChronoSpawnStateInitializationProbe::ReceiveStateInitialized_Implementation(
+	const EParadoxChronoSpawnState InitialState)
+{
+	++InitializationCount;
+	LastInitializedState = InitialState;
+}

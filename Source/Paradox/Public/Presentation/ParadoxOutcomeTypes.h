@@ -10,7 +10,8 @@ enum class EParadoxOutcomeType : uint8
 	TimelineCollapse,
 	GameOver,
 	LevelComplete,
-	PlayerDeath
+	PlayerDeath,
+	GlobalOxygenDepleted
 };
 
 /** Presentation-only value copy; widgets never reconstruct authoritative loop context. */

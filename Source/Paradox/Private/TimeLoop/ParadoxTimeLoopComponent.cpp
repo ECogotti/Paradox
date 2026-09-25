@@ -1,5 +1,6 @@
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
 
+#include "Actions/ParadoxChronoSpawnActionDefinition.h"
 #include "Characters/ParadoxCharacter.h"
 #include "Characters/ParadoxCloneCharacter.h"
 #include "Characters/ParadoxPlayerCharacter.h"
@@ -23,10 +24,14 @@
 #include "GameFramework/GameModeBase.h"
 #include "GameplayActionTags.h"
 #include "Health/ParadoxHealthComponent.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "IntentReplayTags.h"
 #include "Journal/IntentExecutionJournal.h"
 #include "Kismet/GameplayStatics.h"
 #include "Navigation/GridNavigationData.h"
 #include "Oxygen/ParadoxOxygenComponent.h"
+#include "Oxygen/ParadoxOxygenDepletionDamageType.h"
+#include "Oxygen/ParadoxOxygenWorldSubsystem.h"
 #include "Paradox.h"
 #include "Perception/ParadoxTemporalVisionComponent.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
@@ -42,6 +47,7 @@
 #include "TimeLoop/ParadoxWorldStateAnchor.h"
 #include "Types/IntentReplayTypes.h"
 #include "Types/WorldStateTypes.h"
+#include "UObject/ConstructorHelpers.h"
 
 UParadoxTimeLoopComponent::UParadoxTimeLoopComponent()
 {
@@ -51,6 +57,13 @@ UParadoxTimeLoopComponent::UParadoxTimeLoopComponent()
 	TemporalRelationPolicySet = TSoftObjectPtr<UEntityRelationPolicySet>(
 		FSoftObjectPath(
 			TEXT("/Game/Data/EntityRelations/DA_ParadoxTimeLoopRelations.DA_ParadoxTimeLoopRelations")));
+	static ConstructorHelpers::FObjectFinder<UGameplayActionDefinition>
+		ChronoSpawnDefinitionFinder(
+			TEXT("/Game/Data/GameplayActions/DA_ParadoxChronoSpawn.DA_ParadoxChronoSpawn"));
+	if (ChronoSpawnDefinitionFinder.Succeeded())
+	{
+		ChronoSpawnActionDefinition = ChronoSpawnDefinitionFinder.Object;
+	}
 }
 
 FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
@@ -71,6 +84,28 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 				static_cast<int32>(CurrentPhase)),
 			false);
 	}
+
+	OxygenWorldSubsystem = GetWorld()
+		? GetWorld()->GetSubsystem<UParadoxOxygenWorldSubsystem>()
+		: nullptr;
+	if (!OxygenWorldSubsystem.IsValid())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+			TEXT("The Paradox Oxygen World Subsystem is unavailable."),
+			true);
+	}
+	if (!OxygenWorldSubsystem->IsConfigurationValid())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+			OxygenWorldSubsystem->GetConfigurationDiagnostic(),
+			true);
+	}
+	OxygenWorldSubsystem->OnGlobalOxygenDepletedNative().RemoveAll(this);
+	OxygenWorldSubsystem->OnGlobalOxygenDepletedNative().AddUObject(
+		this,
+		&UParadoxTimeLoopComponent::HandleGlobalOxygenDepleted);
 
 	SetPhase(EParadoxTimeLoopPhase::LevelPreparation);
 	DiscoverChronoSpawns();
@@ -103,6 +138,14 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 			TEXT("The time loop requires a Paradox Player Controller to own the free camera."),
 			true);
 	}
+	if (!ChronoSpawnActionDefinition
+		|| !ChronoSpawnActionDefinition->IsA<UParadoxChronoSpawnActionDefinition>())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+			TEXT("The Time Loop requires DA_ParadoxChronoSpawn using UParadoxChronoSpawnActionDefinition."),
+			true);
+	}
 	const FParadoxCameraOperationResult CameraResult =
 		PlayerController->EnsureFreeCameraInitialized(true);
 	if (!CameraResult.IsSuccess())
@@ -124,6 +167,14 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::MissingComponent,
 			TEXT("The player is missing a required Gameplay Actions, Intent Replay, Health, temporal identity, or Perception Knowledge Source component."),
+			true);
+	}
+	FString RecorderPreparationFailure;
+	if (!PreparePlayerRecorder(RecorderPreparationFailure))
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RecordingFailed,
+			RecorderPreparationFailure,
 			true);
 	}
 
@@ -156,17 +207,18 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::InitializeTimeLoop()
 		TEXT("The Paradox time loop is ready for Chrono Spawn selection."));
 }
 
-FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::SelectChronoSpawn(
+FParadoxTimeLoopOperationResult
+UParadoxTimeLoopComponent::RequestChronoSpawnInteraction(
 	AParadoxChronoSpawn* ChronoSpawn)
 {
 	if (!bTimeLoopEnabled)
 	{
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::RejectedDisabled,
-			TEXT("Chrono Spawn selection was rejected because the time loop is disabled."),
+			TEXT("Chrono Spawn interaction was rejected because the time loop is disabled."),
 			false);
 	}
-	if (CurrentPhase != EParadoxTimeLoopPhase::ChronoSpawnSelection)
+	if (!IsChronoSpawnSelectionOpen())
 	{
 		if (IsValid(ChronoSpawn))
 		{
@@ -174,12 +226,12 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::SelectChronoSpawn(
 		}
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
-			TEXT("Chrono Spawn selection is only legal during ChronoSpawnSelection."),
+			TEXT("The Time Loop is not currently accepting a Chrono Spawn interaction."),
 			false);
 	}
 	if (!IsValid(ChronoSpawn)
 		|| !ChronoSpawns.Contains(ChronoSpawn)
-		|| !ChronoSpawn->IsAvailableForSelection())
+		|| !ChronoSpawn->CanAssignToNewTimeline())
 	{
 		if (IsValid(ChronoSpawn))
 		{
@@ -187,75 +239,90 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::SelectChronoSpawn(
 		}
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::InvalidChronoSpawn,
-			TEXT("The requested Chrono Spawn is invalid, disabled, or already occupied."),
+			TEXT("The requested Chrono Spawn is invalid, disabled, inactive, or already occupied."),
 			false);
 	}
 
-	if (HoveredChronoSpawn && HoveredChronoSpawn != ChronoSpawn)
-	{
-		HoveredChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
-	}
-	HoveredChronoSpawn = nullptr;
+	const bool bInitialSelection =
+		CurrentPhase == EParadoxTimeLoopPhase::ChronoSpawnSelection;
 	SelectedChronoSpawn = ChronoSpawn;
-	SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Selected);
-	SetPhase(EParadoxTimeLoopPhase::RunPreparation);
+	bPlayerMaterializedForRun = false;
+	RefreshChronoSpawnInteractionAffordances();
 
 	FString Failure;
-	if (!ActivatePlayerAtSelectedSpawn(Failure))
+	if (bInitialSelection)
 	{
-		SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
-		SelectedChronoSpawn = nullptr;
-		DeactivatePlayer();
-		SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
-		return FailOperation(
-			EParadoxTimeLoopOperationStatus::MissingPlayer,
-			Failure,
-			false);
+		SetPhase(EParadoxTimeLoopPhase::RunPreparation);
+		if (!BeginPlayerRecording(Failure))
+		{
+			SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
+			SelectedChronoSpawn = nullptr;
+			RefreshChronoSpawnInteractionAffordances();
+			return FailOperation(
+				EParadoxTimeLoopOperationStatus::RecordingFailed,
+				Failure,
+				false);
+		}
+		SetPhase(EParadoxTimeLoopPhase::AwaitingSynchronizedStart);
+		const FParadoxTimeLoopOperationResult AwaitingResult = MakeResult(
+			EParadoxTimeLoopOperationStatus::Succeeded,
+			TEXT("Initial run recorder started; Chrono Spawn materialization and synchronized start are pending."));
+		OnSynchronizedStartAwaiting.Broadcast(AwaitingResult);
+		if (!PrepareTemporalDetection(Failure)
+			|| !PrepareClonePlaybacks(Failure))
+		{
+			RecoverFromSynchronizedStartFailure(Failure);
+			return LastOperationResult;
+		}
 	}
-	if (!PreparePlayerRecorder(Failure))
+	else
 	{
-		SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
-		SelectedChronoSpawn = nullptr;
-		DeactivatePlayer();
-		SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
-		return FailOperation(
-			EParadoxTimeLoopOperationStatus::RecordingFailed,
-			Failure,
-			false);
+		UIntentReplayComponent* Replay = IsValid(PlayerCharacter)
+			? PlayerCharacter->GetIntentReplayComponent()
+			: nullptr;
+		if (!Replay
+			|| Replay->GetRecordingState()
+				!= EIntentRecordingState::Recording)
+		{
+			SelectedChronoSpawn = nullptr;
+			RefreshChronoSpawnInteractionAffordances();
+			return FailOperation(
+				EParadoxTimeLoopOperationStatus::RecordingFailed,
+				TEXT("A runtime Chrono Spawn interaction requires the global run recorder to be active."),
+				false);
+		}
 	}
 
-	SetPhase(EParadoxTimeLoopPhase::AwaitingSynchronizedStart);
-	OnChronoSpawnSelected.Broadcast(SelectedChronoSpawn);
-	const FParadoxTimeLoopOperationResult AwaitingResult = MakeResult(
-		EParadoxTimeLoopOperationStatus::Succeeded,
-		FString::Printf(
-			TEXT("Timeline %d selected Chrono Spawn '%s' and is awaiting synchronized start."),
-			ConsolidatedTimelines.Num(),
-			*GetNameSafe(SelectedChronoSpawn)));
-	OnSynchronizedStartAwaiting.Broadcast(AwaitingResult);
-	if (!PrepareTemporalDetection(Failure))
+	const FParadoxTimeLoopOperationResult SubmissionResult =
+		SubmitChronoSpawnAction(*ChronoSpawn);
+	if (!SubmissionResult.IsSuccess())
 	{
-		RecoverFromSynchronizedStartFailure(Failure);
-		return LastOperationResult;
+		SelectedChronoSpawn = nullptr;
+		RefreshChronoSpawnInteractionAffordances();
+		DeactivatePlayer();
+		if (bInitialSelection)
+		{
+			RecoverFromSynchronizedStartFailure(
+				SubmissionResult.DiagnosticMessage);
+			return LastOperationResult;
+		}
+		return SubmissionResult;
 	}
-	if (!PrepareClonePlaybacks(Failure))
-	{
-		RecoverFromSynchronizedStartFailure(Failure);
-		return LastOperationResult;
-	}
+
 	TryReleaseSynchronizedStart();
-	if (CurrentPhase == EParadoxTimeLoopPhase::ChronoSpawnSelection)
-	{
-		return LastOperationResult;
-	}
 	return MakeResult(
 		EParadoxTimeLoopOperationStatus::Succeeded,
-		CurrentPhase == EParadoxTimeLoopPhase::ActiveRun
-			? FString::Printf(
-				TEXT("Timeline %d started synchronously from Chrono Spawn '%s'."),
-				ConsolidatedTimelines.Num(),
-				*GetNameSafe(SelectedChronoSpawn))
-			: AwaitingResult.DiagnosticMessage);
+		FString::Printf(
+			TEXT("Timeline %d recorded Chrono Spawn '%s'; materialization is %s."),
+			ConsolidatedTimelines.Num(),
+			*GetNameSafe(SelectedChronoSpawn),
+			bPlayerMaterializedForRun ? TEXT("complete") : TEXT("pending")));
+}
+
+FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::SelectChronoSpawn(
+	AParadoxChronoSpawn* ChronoSpawn)
+{
+	return RequestChronoSpawnInteraction(ChronoSpawn);
 }
 
 FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
@@ -272,6 +339,13 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 		return FailOperation(
 			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
 			TEXT("Rewind is only legal during ActiveRun."),
+			false);
+	}
+	if (IsChronoSpawnSelectionOpen())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RejectedInvalidPhase,
+			TEXT("Rewind requires the player to select a Chrono Spawn first."),
 			false);
 	}
 	const bool bFinalPlayableRun =
@@ -325,6 +399,26 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 			TEXT("Intent Replay returned no valid immutable track after immediate finalization."),
 			true);
 	}
+	const TArray<FRecordedIntent>& FinalizedEntries =
+		FinalizedTrack->GetEntries();
+	int32 ChronoSpawnIntentCount = 0;
+	for (const FRecordedIntent& Intent : FinalizedEntries)
+	{
+		if (Intent.ActionTag == ParadoxGameplayTags::Action_ChronoSpawn)
+		{
+			++ChronoSpawnIntentCount;
+		}
+	}
+	if (FinalizedEntries.IsEmpty()
+		|| FinalizedEntries[0].ActionTag
+			!= ParadoxGameplayTags::Action_ChronoSpawn
+		|| ChronoSpawnIntentCount != 1)
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::RecordingFailed,
+			TEXT("A consolidated timeline requires exactly one Chrono Spawn action and it must be the first recorded gameplay intent."),
+			true);
+	}
 	UIntentReplayObservationComponent* ObservationReplay =
 		PlayerCharacter->GetObservationReplayComponent();
 	UIntentReplayTimelineBundle* TimelineBundle = ObservationReplay
@@ -364,7 +458,7 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 	Timeline.ReplayTrack = FinalizedTrack;
 	Timeline.TimelineBundle = TimelineBundle;
 	Timeline.AvatarPerceptionEntityId = AvatarPerceptionEntityId;
-	SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Occupied);
+	SelectedChronoSpawn->SetAssignedToTimeline(true);
 
 	const FParadoxTimeLoopOperationResult ConsolidatedResult = MakeResult(
 		EParadoxTimeLoopOperationStatus::Succeeded,
@@ -396,6 +490,15 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 		PARADOX_LOG_INFO(TEXT("%s"), *GameOverResult.DiagnosticMessage);
 		return GameOverResult;
 	}
+	if (OxygenWorldSubsystem.IsValid()
+		&& OxygenWorldSubsystem->IsSharedGlobalEnabled()
+		&& !OxygenWorldSubsystem->CommitCurrentAsRunCheckpoint())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InternalFailure,
+			TEXT("The shared Oxygen reservoir could not commit the next run checkpoint after Time Travel."),
+			true);
+	}
 
 	DeactivatePlayer();
 	DestroyRuntimeClones();
@@ -426,7 +529,7 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 			true);
 	}
 
-	ReapplyChronoSpawnStates();
+	ReapplyChronoSpawnStates(true);
 	SetPhase(EParadoxTimeLoopPhase::TimelineReconstruction);
 	FString ReconstructionFailure;
 	if (!ReconstructConsolidatedClones(ReconstructionFailure))
@@ -439,11 +542,17 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::RequestTimeRewind()
 	}
 
 	SelectedChronoSpawn = nullptr;
-	SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
+	RefreshChronoSpawnInteractionAffordances();
+	FString RuntimeStartFailure;
+	if (!BeginPostResetRuntimeStart(RuntimeStartFailure))
+	{
+		RecoverFromSynchronizedStartFailure(RuntimeStartFailure);
+		return LastOperationResult;
+	}
 	const FParadoxTimeLoopOperationResult ResetResult = MakeResult(
 		EParadoxTimeLoopOperationStatus::Succeeded,
 		FString::Printf(
-			TEXT("World reset completed and %d consolidated clones were reconstructed."),
+			TEXT("World reset completed, %d consolidated clones were reconstructed, and runtime Chrono Spawn selection is open."),
 			RuntimeClones.Num()));
 	OnWorldResetCompleted.Broadcast(ResetResult);
 	PARADOX_LOG_INFO(TEXT("%s"), *ResetResult.DiagnosticMessage);
@@ -469,6 +578,27 @@ bool UParadoxTimeLoopComponent::CompleteCloneTimeTravelDeparture(
 			*GetNameSafe(&Clone));
 		return false;
 	}
+	if (CloneTimeTravelCompletionBehavior
+		== EParadoxCloneTimeTravelCompletionBehavior::EnterGoap)
+	{
+		UWorld* World = GetWorld();
+		if (!World)
+		{
+			OutDiagnostic = TEXT("Clone GOAP handoff cannot be scheduled without a World.");
+			return false;
+		}
+		FTimerDelegate GoapHandoffDelegate = FTimerDelegate::CreateUObject(
+			this,
+			&UParadoxTimeLoopComponent::EnterCloneGoapAfterTimeTravel,
+			TWeakObjectPtr<AParadoxCloneCharacter>(&Clone));
+		World->GetTimerManager().SetTimerForNextTick(GoapHandoffDelegate);
+		OutDiagnostic = FString::Printf(
+			TEXT("Clone '%s' completed recorded Time Travel and scheduled terminal GOAP handoff."),
+			*GetNameSafe(&Clone));
+		PARADOX_LOG_INFO(TEXT("%s"), *OutDiagnostic);
+		return true;
+	}
+
 	if (UParadoxOxygenComponent* Oxygen = Clone.GetOxygenComponent())
 	{
 		Oxygen->SetRunConsumptionActive(false);
@@ -541,6 +671,64 @@ bool UParadoxTimeLoopComponent::CompleteCloneTimeTravelDeparture(
 	return true;
 }
 
+void UParadoxTimeLoopComponent::EnterCloneGoapAfterTimeTravel(
+	const TWeakObjectPtr<AParadoxCloneCharacter> WeakClone)
+{
+	AParadoxCloneCharacter* Clone = WeakClone.Get();
+	if (!IsValid(Clone)
+		|| CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
+		|| !RuntimeClones.Contains(Clone))
+	{
+		return;
+	}
+
+	UParadoxCloneBehaviorCoordinatorComponent* Coordinator =
+		Clone->GetBehaviorCoordinator();
+	const FParadoxCloneBehaviorOperationResult HandoffResult = Coordinator
+		? Coordinator->RequestEnterGoapMode()
+		: FParadoxCloneBehaviorOperationResult();
+	if (Coordinator && HandoffResult.IsSuccess())
+	{
+		SetClonePlaybackMovementEnabled(*Clone, false);
+		if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
+		{
+			// Terminal GOAP is still a live in-world temporal participant.
+			Oxygen->SetRunConsumptionActive(true);
+		}
+		PARADOX_LOG_INFO(
+			TEXT("Clone '%s' entered terminal GOAP placeholder mode after recorded Time Travel."),
+			*GetNameSafe(Clone));
+		return;
+	}
+
+	FParadoxClonePlaybackRuntime* Runtime =
+		ClonePlaybackRuntimes.FindByPredicate(
+			[Clone](const FParadoxClonePlaybackRuntime& Candidate)
+			{
+				return Candidate.Clone.Get() == Clone;
+			});
+	const FString Diagnostic = Coordinator
+		? HandoffResult.DiagnosticMessage
+		: TEXT("The clone has no behavior coordinator for terminal GOAP handoff.");
+	if (Runtime)
+	{
+		FIntentReplayFailure Failure;
+		Failure.DiagnosticMessage = Diagnostic;
+		const EIntentReplayPlaybackState ExecutorState = Runtime->ReplayComponent.IsValid()
+			? Runtime->ReplayComponent->GetPlaybackState()
+			: EIntentReplayPlaybackState::Failed;
+		MarkClonePlaybackFailed(*Runtime, Failure, ExecutorState);
+	}
+	else
+	{
+		SetClonePlaybackMovementEnabled(*Clone, false);
+	}
+	PARADOX_LOG_ERROR(
+		TEXT("Clone '%s' could not enter terminal GOAP placeholder mode: %s"),
+		*GetNameSafe(Clone),
+		*Diagnostic);
+}
+
 FParadoxTimeLoopOperationResult
 UParadoxTimeLoopComponent::ContinueParadoxRecovery(
 	const FGuid ParadoxEventId)
@@ -579,6 +767,12 @@ UParadoxTimeLoopComponent::ContinueRunFailureRecovery(
 	FString Failure;
 	if (!RestoreWorldAndReconstructAfterRunFailure(Failure))
 	{
+		if (CurrentPhase == EParadoxTimeLoopPhase::ChronoSpawnSelection
+			&& LastOperationResult.Status
+				== EParadoxTimeLoopOperationStatus::SynchronizedStartFailed)
+		{
+			return LastOperationResult;
+		}
 		DestroyRuntimeClones();
 		return FailOperation(
 			LastRunFailureContext.Reason
@@ -689,43 +883,24 @@ UParadoxTimeLoopComponent::RequestRestartLevel()
 	return Result;
 }
 
-void UParadoxTimeLoopComponent::UpdateHoveredChronoSpawn(AParadoxChronoSpawn* ChronoSpawn)
-{
-	if (!bTimeLoopEnabled || CurrentPhase != EParadoxTimeLoopPhase::ChronoSpawnSelection)
-	{
-		if (HoveredChronoSpawn && HoveredChronoSpawn->GetChronoSpawnState() == EParadoxChronoSpawnState::Hovered)
-		{
-			HoveredChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
-		}
-		HoveredChronoSpawn = nullptr;
-		return;
-	}
-
-	AParadoxChronoSpawn* NewHovered =
-		IsValid(ChronoSpawn) && ChronoSpawn->IsAvailableForSelection()
-			? ChronoSpawn
-			: nullptr;
-	if (HoveredChronoSpawn == NewHovered)
-	{
-		return;
-	}
-	if (HoveredChronoSpawn
-		&& HoveredChronoSpawn->GetChronoSpawnState() == EParadoxChronoSpawnState::Hovered)
-	{
-		HoveredChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
-	}
-	HoveredChronoSpawn = NewHovered;
-	if (HoveredChronoSpawn)
-	{
-		HoveredChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Hovered);
-	}
-}
-
 bool UParadoxTimeLoopComponent::IsMovementAllowed() const
 {
 	return !bTimeLoopEnabled
 		|| CurrentPhase == EParadoxTimeLoopPhase::Disabled
-		|| CurrentPhase == EParadoxTimeLoopPhase::ActiveRun;
+		|| (CurrentPhase == EParadoxTimeLoopPhase::ActiveRun
+			&& !IsChronoSpawnSelectionOpen());
+}
+
+bool UParadoxTimeLoopComponent::IsChronoSpawnSelectionOpen() const
+{
+	if (!bTimeLoopEnabled || IsValid(SelectedChronoSpawn))
+	{
+		return false;
+	}
+	return CurrentPhase == EParadoxTimeLoopPhase::ChronoSpawnSelection
+		|| (ConsolidatedTimelines.Num() > 0
+			&& (CurrentPhase == EParadoxTimeLoopPhase::AwaitingSynchronizedStart
+				|| CurrentPhase == EParadoxTimeLoopPhase::ActiveRun));
 }
 
 bool UParadoxTimeLoopComponent::IsTemporalDetectionAuthoritative() const
@@ -786,6 +961,11 @@ bool UParadoxTimeLoopComponent::GetTemporalVisionDebugSnapshot(
 void UParadoxTimeLoopComponent::EndPlay(
 	const EEndPlayReason::Type EndPlayReason)
 {
+	if (OxygenWorldSubsystem.IsValid())
+	{
+		OxygenWorldSubsystem->OnGlobalOxygenDepletedNative().RemoveAll(this);
+	}
+	OxygenWorldSubsystem.Reset();
 	DisableTemporalDetection(true);
 	if (bEntityRelationsOverrideApplied)
 	{
@@ -853,11 +1033,28 @@ void UParadoxTimeLoopComponent::SetPhase(const EParadoxTimeLoopPhase NewPhase)
 		SetTemporalOxygenConsumptionActive(true);
 	}
 	OnPhaseChanged.Broadcast(PreviousPhase, CurrentPhase);
+	RefreshChronoSpawnInteractionAffordances();
 	PARADOX_LOG_INFO(
 		TEXT("Time-loop phase changed from %d to %d in world '%s'."),
 		static_cast<int32>(PreviousPhase),
 		static_cast<int32>(CurrentPhase),
 		*GetNameSafe(GetWorld()));
+}
+
+void UParadoxTimeLoopComponent::RefreshChronoSpawnInteractionAffordances() const
+{
+	for (const AParadoxChronoSpawn* Spawn : ChronoSpawns)
+	{
+		if (!IsValid(Spawn))
+		{
+			continue;
+		}
+		if (UParadoxInteractionComponent* Interaction =
+			Spawn->GetInteractionComponent())
+		{
+			Interaction->NotifyInteractionAffordanceChanged();
+		}
+	}
 }
 
 void UParadoxTimeLoopComponent::SetTemporalOxygenConsumptionActive(
@@ -868,7 +1065,10 @@ void UParadoxTimeLoopComponent::SetTemporalOxygenConsumptionActive(
 		if (UParadoxOxygenComponent* Oxygen =
 			PlayerCharacter->GetOxygenComponent())
 		{
-			Oxygen->SetRunConsumptionActive(bActive);
+			Oxygen->SetRunConsumptionActive(
+				bActive
+				&& IsValid(SelectedChronoSpawn)
+				&& !PlayerCharacter->IsHidden());
 		}
 		else
 		{
@@ -886,7 +1086,16 @@ void UParadoxTimeLoopComponent::SetTemporalOxygenConsumptionActive(
 		}
 		if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
 		{
-			Oxygen->SetRunConsumptionActive(bActive);
+			const UParadoxTemporalEntityComponent* Temporal =
+				Clone->GetTemporalEntityComponent();
+			const FParadoxClonePlaybackRuntime* Runtime = Temporal
+				? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+				: nullptr;
+			Oxygen->SetRunConsumptionActive(
+				bActive
+				&& Runtime
+				&& Runtime->TemporalSpawnState
+					== EParadoxTemporalSpawnState::Materialized);
 		}
 		else
 		{
@@ -1060,7 +1269,10 @@ bool UParadoxTimeLoopComponent::ActivatePlayerAtSelectedSpawn(FString& OutFailur
 		return false;
 	}
 	Health->ResetHealth();
-	Oxygen->ResetOxygen();
+	if (!Oxygen->IsUsingSharedGlobalOxygen())
+	{
+		Oxygen->ResetOxygen();
+	}
 
 	UParadoxTemporalEntityComponent* TemporalComponent =
 		PlayerCharacter->GetTemporalEntityComponent();
@@ -1137,7 +1349,82 @@ bool UParadoxTimeLoopComponent::ActivatePlayerAtSelectedSpawn(FString& OutFailur
 			return false;
 		}
 	}
+	FString ListenerFailure;
+	if (!SetPlayerPerceptionListenerEnabled(true, ListenerFailure))
+	{
+		OutFailure = ListenerFailure;
+		return false;
+	}
+	bPlayerMaterializedForRun = true;
 	return true;
+}
+
+FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::SubmitChronoSpawnAction(
+	AParadoxChronoSpawn& ChronoSpawn)
+{
+	UGameplayActionComponent* Actions = IsValid(PlayerCharacter)
+		? PlayerCharacter->GetGameplayActionComponent()
+		: nullptr;
+	UParadoxInteractionComponent* Interaction =
+		ChronoSpawn.GetInteractionComponent();
+	if (!Actions || !Interaction || !ChronoSpawnActionDefinition)
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::MissingComponent,
+			TEXT("Chrono Spawn submission requires player Gameplay Actions, the target Interaction Component, and the configured Definition."),
+			false);
+	}
+
+	// Post-reset Chrono Spawn selection happens while Tactical Pause owns the
+	// player's scheduler pause. This system action must materialize immediately,
+	// without releasing any player-planned work. A fresh temporal avatar has no
+	// other runtime actions; enforce that invariant before opening the scheduler
+	// for this one synchronous submission, then restore the owned pause.
+	const bool bRestoreSchedulerPause = Actions->IsActionsPaused();
+	if (bRestoreSchedulerPause)
+	{
+		if (!Actions->GetActiveActionHandles().IsEmpty()
+			|| !Actions->GetQueuedActionHandles().IsEmpty())
+		{
+			return FailOperation(
+				EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+				TEXT("Chrono Spawn cannot open the paused player scheduler while another action is active or queued."),
+				false);
+		}
+		if (Actions->ResumeActions()
+			!= EGameplayActionOperationResult::Succeeded)
+		{
+			return FailOperation(
+				EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+				TEXT("Chrono Spawn could not temporarily open the paused player scheduler."),
+				false);
+		}
+	}
+	const FParadoxInteractionRequestResult Submission =
+		Interaction->RequestInteraction(
+			PlayerCharacter,
+			ParadoxGameplayTags::Interaction_ChronoSpawn_Spawn,
+			ParadoxGameplayTags::Origin_Player,
+			this);
+	if (bRestoreSchedulerPause
+		&& Actions->PauseActions()
+			!= EGameplayActionOperationResult::Succeeded)
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InvalidConfiguration,
+			TEXT("Chrono Spawn submission completed but the player scheduler pause could not be restored."),
+			true);
+	}
+	if (!Submission.IsAccepted())
+	{
+		return FailOperation(
+			EParadoxTimeLoopOperationStatus::InvalidChronoSpawn,
+			Submission.DiagnosticMessage,
+			false);
+	}
+	return MakeResult(
+		EParadoxTimeLoopOperationStatus::Succeeded,
+		TEXT("Chrono Spawn Gameplay Action was accepted and recorded."));
 }
 
 void UParadoxTimeLoopComponent::DeactivatePlayer()
@@ -1145,6 +1432,12 @@ void UParadoxTimeLoopComponent::DeactivatePlayer()
 	if (!IsValid(PlayerCharacter))
 	{
 		return;
+	}
+	bPlayerMaterializedForRun = false;
+	FString ListenerFailure;
+	if (!SetPlayerPerceptionListenerEnabled(false, ListenerFailure))
+	{
+		PARADOX_LOG_ERROR(TEXT("%s"), *ListenerFailure);
 	}
 
 	if (UGameplayActionComponent* Actions = PlayerCharacter->GetGameplayActionComponent())
@@ -1178,6 +1471,285 @@ void UParadoxTimeLoopComponent::DeactivatePlayer()
 	if (UParadoxTemporalEntityComponent* Temporal = PlayerCharacter->GetTemporalEntityComponent())
 	{
 		Temporal->ClearTemporalAssignment();
+	}
+}
+
+bool UParadoxTimeLoopComponent::CanStartChronoSpawnAction(
+	const AParadoxCharacter& TemporalAvatar,
+	const AParadoxChronoSpawn& ChronoSpawn,
+	const FGameplayTag OriginTag,
+	FString& OutDiagnostic) const
+{
+	OutDiagnostic.Reset();
+	if (!bTimeLoopEnabled
+		|| !ChronoSpawns.Contains(&ChronoSpawn)
+		|| !ChronoSpawn.IsChronoSpawnEnabled())
+	{
+		OutDiagnostic =
+			TEXT("The Chrono Spawn is not an enabled target owned by this Time Loop.");
+		return false;
+	}
+
+	if (OriginTag == IntentReplayTags::Origin_Replay)
+	{
+		const AParadoxCloneCharacter* Clone =
+			Cast<AParadoxCloneCharacter>(&TemporalAvatar);
+		const UParadoxTemporalEntityComponent* Temporal = Clone
+			? Clone->GetTemporalEntityComponent()
+			: nullptr;
+		const FParadoxClonePlaybackRuntime* Runtime = Temporal
+			? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+			: nullptr;
+		if (!Clone || !Runtime || Runtime->ChronoSpawn.Get() != &ChronoSpawn)
+		{
+			OutDiagnostic =
+				TEXT("Replay Chrono Spawn does not match the clone's consolidated timeline assignment.");
+			return false;
+		}
+		return true;
+	}
+
+	if (&TemporalAvatar != PlayerCharacter)
+	{
+		OutDiagnostic =
+			TEXT("Only the authoritative Player or an Intent Replay clone can execute Chrono Spawn.");
+		return false;
+	}
+	if (!ChronoSpawn.CanAssignToNewTimeline())
+	{
+		OutDiagnostic =
+			TEXT("The Chrono Spawn is inactive, disabled, or already occupied.");
+		return false;
+	}
+
+	// Availability preflight intentionally uses no Origin. It previews the button before the
+	// Time Loop begins recording or commits a selected spawn.
+	if (!OriginTag.IsValid())
+	{
+		if (!IsChronoSpawnSelectionOpen())
+		{
+			OutDiagnostic =
+				TEXT("The Time Loop is not waiting for a new Chrono Spawn.");
+			return false;
+		}
+		return true;
+	}
+
+	if (OriginTag != ParadoxGameplayTags::Origin_Player
+		|| SelectedChronoSpawn != &ChronoSpawn
+		|| bPlayerMaterializedForRun)
+	{
+		OutDiagnostic =
+			TEXT("Player Chrono Spawn execution was not prepared by the Time Loop.");
+		return false;
+	}
+	const UIntentReplayComponent* Replay =
+		PlayerCharacter ? PlayerCharacter->GetIntentReplayComponent() : nullptr;
+	if (!Replay
+		|| Replay->GetRecordingState() != EIntentRecordingState::Recording)
+	{
+		OutDiagnostic =
+			TEXT("Player Chrono Spawn execution requires an active recording session.");
+		return false;
+	}
+	return true;
+}
+
+EParadoxChronoSpawnExecutionResult
+UParadoxTimeLoopComponent::TryExecuteChronoSpawnAction(
+	AParadoxCharacter& TemporalAvatar,
+	AParadoxChronoSpawn& ChronoSpawn,
+	FString& OutDiagnostic)
+{
+	OutDiagnostic.Reset();
+	if (!ChronoSpawns.Contains(&ChronoSpawn)
+		|| !ChronoSpawn.IsChronoSpawnEnabled())
+	{
+		OutDiagnostic =
+			TEXT("Chrono Spawn action target is not an enabled spawn owned by this Time Loop.");
+		return EParadoxChronoSpawnExecutionResult::Failed;
+	}
+	if (!ChronoSpawn.IsChronoSpawnActive())
+	{
+		if (AParadoxCloneCharacter* Clone =
+			Cast<AParadoxCloneCharacter>(&TemporalAvatar))
+		{
+			const UParadoxTemporalEntityComponent* Temporal =
+				Clone->GetTemporalEntityComponent();
+			if (FParadoxClonePlaybackRuntime* Runtime = Temporal
+				? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+				: nullptr)
+			{
+				SetCloneTemporalSpawnState(
+					*Runtime,
+					EParadoxTemporalSpawnState::PendingActivation);
+			}
+		}
+		OutDiagnostic = FString::Printf(
+			TEXT("Chrono Spawn '%s' is inactive; temporal materialization remains pending."),
+			*GetNameSafe(&ChronoSpawn));
+		return EParadoxChronoSpawnExecutionResult::PendingActivation;
+	}
+
+	if (&TemporalAvatar == PlayerCharacter)
+	{
+		if (SelectedChronoSpawn != &ChronoSpawn
+			|| !ChronoSpawn.CanAssignToNewTimeline())
+		{
+			OutDiagnostic =
+				TEXT("Player Chrono Spawn action no longer matches the selected free spawn.");
+			return EParadoxChronoSpawnExecutionResult::Failed;
+		}
+		if (!ActivatePlayerAtSelectedSpawn(OutDiagnostic))
+		{
+			return EParadoxChronoSpawnExecutionResult::Failed;
+		}
+		SetPlayerMovementEnabled(CurrentPhase == EParadoxTimeLoopPhase::ActiveRun);
+		if (CurrentPhase == EParadoxTimeLoopPhase::ActiveRun)
+		{
+			SetTemporalOxygenConsumptionActive(true);
+			RefreshTemporalDetectionAfterPlayerActivation();
+		}
+		OnChronoSpawnSelected.Broadcast(&ChronoSpawn);
+		OutDiagnostic = FString::Printf(
+			TEXT("Player materialized at Chrono Spawn '%s'."),
+			*GetNameSafe(&ChronoSpawn));
+		return EParadoxChronoSpawnExecutionResult::Materialized;
+	}
+
+	AParadoxCloneCharacter* Clone =
+		Cast<AParadoxCloneCharacter>(&TemporalAvatar);
+	const UParadoxTemporalEntityComponent* Temporal = Clone
+		? Clone->GetTemporalEntityComponent()
+		: nullptr;
+	FParadoxClonePlaybackRuntime* Runtime = Temporal
+		? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+		: nullptr;
+	if (!Clone || !Runtime || Runtime->ChronoSpawn.Get() != &ChronoSpawn)
+	{
+		OutDiagnostic =
+			TEXT("Clone Chrono Spawn action does not match its consolidated timeline assignment.");
+		return EParadoxChronoSpawnExecutionResult::Failed;
+	}
+	if (!MaterializeCloneAtChronoSpawn(*Runtime, ChronoSpawn, OutDiagnostic))
+	{
+		SetCloneTemporalSpawnState(
+			*Runtime,
+			EParadoxTemporalSpawnState::Failed);
+		return EParadoxChronoSpawnExecutionResult::Failed;
+	}
+	return EParadoxChronoSpawnExecutionResult::Materialized;
+}
+
+void UParadoxTimeLoopComponent::CancelPendingChronoSpawnAction(
+	AParadoxCharacter& TemporalAvatar)
+{
+	const AParadoxCloneCharacter* Clone =
+		Cast<AParadoxCloneCharacter>(&TemporalAvatar);
+	const UParadoxTemporalEntityComponent* Temporal = Clone
+		? Clone->GetTemporalEntityComponent()
+		: nullptr;
+	if (FParadoxClonePlaybackRuntime* Runtime = Temporal
+		? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+		: nullptr)
+	{
+		if (Runtime->TemporalSpawnState
+			== EParadoxTemporalSpawnState::PendingActivation)
+		{
+			SetCloneTemporalSpawnState(
+				*Runtime,
+				EParadoxTemporalSpawnState::Dormant);
+		}
+	}
+}
+
+void UParadoxTimeLoopComponent::SetPlayerMovementEnabled(
+	const bool bEnabled) const
+{
+	if (!IsValid(PlayerCharacter))
+	{
+		return;
+	}
+	if (!bEnabled)
+	{
+		if (UGameplayActionComponent* Actions =
+			PlayerCharacter->GetGameplayActionComponent())
+		{
+			Actions->AbortAllActions(
+				GameplayActionTags::Result_Aborted_SystemReset);
+		}
+	}
+	if (AController* Controller = PlayerCharacter->GetController())
+	{
+		Controller->StopMovement();
+	}
+	if (UCharacterMovementComponent* Movement =
+		PlayerCharacter->GetCharacterMovement())
+	{
+		Movement->StopMovementImmediately();
+		if (bEnabled)
+		{
+			Movement->SetMovementMode(MOVE_Walking);
+		}
+		else
+		{
+			Movement->DisableMovement();
+		}
+	}
+}
+
+bool UParadoxTimeLoopComponent::SetPlayerPerceptionListenerEnabled(
+	const bool bEnabled,
+	FString& OutFailure) const
+{
+	OutFailure.Reset();
+	AParadoxPlayerController* Controller = GetWorld()
+		? Cast<AParadoxPlayerController>(GetWorld()->GetFirstPlayerController())
+		: nullptr;
+	UPerceptionKnowledgeListenerComponent* Listener = Controller
+		? Controller->GetPerceptionKnowledgeListener()
+		: nullptr;
+	if (!Listener)
+	{
+		if (!bEnabled)
+		{
+			// A controller without a listener is already perceptually inactive. This also
+			// keeps terminal/reset cleanup safe for lightweight test and fallback controllers.
+			return true;
+		}
+		OutFailure = TEXT("The player controller has no Perception Knowledge Listener.");
+		return false;
+	}
+	const FPerceptionKnowledgeOperationResult Result =
+		Listener->SetListenerEnabled(bEnabled);
+	if (!Result.IsSuccess())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Player Perception Listener could not be %s: %s"),
+			bEnabled ? TEXT("enabled") : TEXT("disabled"),
+			*Result.Message);
+		return false;
+	}
+	return true;
+}
+
+void UParadoxTimeLoopComponent::RefreshTemporalDetectionAfterPlayerActivation()
+{
+	if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
+	{
+		return;
+	}
+	for (const TWeakObjectPtr<UParadoxTemporalVisionComponent>& WeakVision :
+		TemporalVisionParticipants)
+	{
+		if (UParadoxTemporalVisionComponent* Vision = WeakVision.Get())
+		{
+			Vision->RefreshTemporalCandidateFilter();
+			if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
+			{
+				break;
+			}
+		}
 	}
 }
 
@@ -1320,6 +1892,104 @@ bool UParadoxTimeLoopComponent::BeginPlayerRecording(FString& OutFailure)
 	return true;
 }
 
+bool UParadoxTimeLoopComponent::BeginPostResetRuntimeStart(
+	FString& OutFailure)
+{
+	OutFailure.Reset();
+	if (ConsolidatedTimelines.IsEmpty())
+	{
+		SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
+		return true;
+	}
+	if (!PreparePlayerRecorder(OutFailure))
+	{
+		return false;
+	}
+	if (!BeginPlayerRecording(OutFailure))
+	{
+		return false;
+	}
+
+	SetPhase(EParadoxTimeLoopPhase::AwaitingSynchronizedStart);
+	if (!RequestPostResetTacticalPause(OutFailure))
+	{
+		return false;
+	}
+	const FParadoxTimeLoopOperationResult AwaitingResult = MakeResult(
+		EParadoxTimeLoopOperationStatus::Succeeded,
+		FString::Printf(
+			TEXT("Timeline %d is tactically paused while awaiting clone readiness; Chrono Spawn selection remains open."),
+			ConsolidatedTimelines.Num()));
+	OnSynchronizedStartAwaiting.Broadcast(AwaitingResult);
+
+	if (!PrepareTemporalDetection(OutFailure)
+		|| !PrepareClonePlaybacks(OutFailure))
+	{
+		return false;
+	}
+
+	TryReleaseSynchronizedStart();
+	return true;
+}
+
+bool UParadoxTimeLoopComponent::RequestPostResetTacticalPause(
+	FString& OutFailure)
+{
+	bPostResetTacticalPauseAcquiredForPendingStart = false;
+	UTacticalPauseWorldSubsystem* TacticalPause = GetWorld()
+		? GetWorld()->GetSubsystem<UTacticalPauseWorldSubsystem>()
+		: nullptr;
+	if (!TacticalPause)
+	{
+		OutFailure =
+			TEXT("The Tactical Pause World Subsystem is unavailable for post-reset start.");
+		return false;
+	}
+
+	const ETacticalPauseRequestResult PauseResult =
+		TacticalPause->RequestPause();
+	if (PauseResult == ETacticalPauseRequestResult::Succeeded)
+	{
+		bPostResetTacticalPauseAcquiredForPendingStart = true;
+		return true;
+	}
+	if (PauseResult == ETacticalPauseRequestResult::AlreadyInRequestedState
+		&& TacticalPause->IsPaused()
+		&& TacticalPause->CanPlay())
+	{
+		return true;
+	}
+
+	OutFailure = FString::Printf(
+		TEXT("Tactical Pause could not establish an owned, resumable post-reset pause (result %s)."),
+		*UEnum::GetValueAsString(PauseResult));
+	return false;
+}
+
+void UParadoxTimeLoopComponent::ReleasePendingPostResetTacticalPause()
+{
+	if (!bPostResetTacticalPauseAcquiredForPendingStart)
+	{
+		return;
+	}
+	bPostResetTacticalPauseAcquiredForPendingStart = false;
+	UTacticalPauseWorldSubsystem* TacticalPause = GetWorld()
+		? GetWorld()->GetSubsystem<UTacticalPauseWorldSubsystem>()
+		: nullptr;
+	if (TacticalPause && TacticalPause->IsPaused() && TacticalPause->CanPlay())
+	{
+		const ETacticalPauseRequestResult PlayResult =
+			TacticalPause->RequestPlay();
+		if (PlayResult != ETacticalPauseRequestResult::Succeeded
+			&& PlayResult != ETacticalPauseRequestResult::AlreadyInRequestedState)
+		{
+			PARADOX_LOG_ERROR(
+				TEXT("Failed to release post-reset Tactical Pause after synchronized-start rollback (result %s)."),
+				*UEnum::GetValueAsString(PlayResult));
+		}
+	}
+}
+
 bool UParadoxTimeLoopComponent::ConfigureEntityRelations(FString& OutFailure)
 {
 	OutFailure.Reset();
@@ -1431,6 +2101,21 @@ void UParadoxTimeLoopComponent::EnableTemporalDetection()
 	{
 		if (UParadoxTemporalVisionComponent* Vision = WeakVision.Get())
 		{
+			const AParadoxCloneCharacter* Clone =
+				Cast<AParadoxCloneCharacter>(Vision->GetOwner());
+			const UParadoxTemporalEntityComponent* Temporal = Clone
+				? Clone->GetTemporalEntityComponent()
+				: nullptr;
+			const FParadoxClonePlaybackRuntime* Runtime = Temporal
+				? FindClonePlaybackRuntime(Temporal->GetTemporalIndex())
+				: nullptr;
+			if (!Runtime
+				|| Runtime->TemporalSpawnState
+					!= EParadoxTemporalSpawnState::Materialized)
+			{
+				Vision->DisableTemporalDetection(true);
+				continue;
+			}
 			Vision->EnableTemporalDetection(TemporalDetectionSessionId);
 			if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
 			{
@@ -1640,6 +2325,32 @@ FParadoxTimeLoopOperationResult UParadoxTimeLoopComponent::AcceptPlayerDeath(
 	return LastOperationResult;
 }
 
+void UParadoxTimeLoopComponent::HandleGlobalOxygenDepleted()
+{
+	if (!bTimeLoopEnabled
+		|| CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
+		|| bRunFailureAcceptedForRun
+		|| !OxygenWorldSubsystem.IsValid()
+		|| !OxygenWorldSubsystem->IsSharedGlobalEnabled())
+	{
+		return;
+	}
+
+	FParadoxRunFailureContext Context;
+	Context.EventId = FGuid::NewGuid();
+	Context.Reason = EParadoxRunFailureReason::GlobalOxygenDepleted;
+	Context.Player = PlayerCharacter;
+	Context.DamageTypeClass =
+		UParadoxOxygenDepletionDamageType::StaticClass();
+	Context.DiagnosticMessage = FString::Printf(
+		TEXT("The shared Oxygen reservoir depleted during timeline %d."),
+		ConsolidatedTimelines.Num());
+	EnterRunFailure(
+		Context,
+		EParadoxTimeLoopOperationStatus::GlobalOxygenDepletionAccepted);
+	PresentRunFailureOrRecoverImmediately();
+}
+
 void UParadoxTimeLoopComponent::AcceptParadox(
 	const FParadoxTemporalCandidateSnapshot& Candidate)
 {
@@ -1728,10 +2439,19 @@ bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterRunFailure(
 		return false;
 	}
 	FWorldStateRestoreRequest RestoreRequest;
-	RestoreRequest.Reason = LastRunFailureContext.Reason
-		== EParadoxRunFailureReason::PlayerDeath
-		? TEXT("PlayerDeath")
-		: TEXT("ParadoxFailure");
+	switch (LastRunFailureContext.Reason)
+	{
+	case EParadoxRunFailureReason::PlayerDeath:
+		RestoreRequest.Reason = TEXT("PlayerDeath");
+		break;
+	case EParadoxRunFailureReason::GlobalOxygenDepleted:
+		RestoreRequest.Reason = TEXT("GlobalOxygenDepleted");
+		break;
+	case EParadoxRunFailureReason::TemporalParadox:
+	default:
+		RestoreRequest.Reason = TEXT("ParadoxFailure");
+		break;
+	}
 	const FWorldStateRestoreResult RestoreResult =
 		WorldState->RestoreBaseline(RestoreRequest);
 	if (!RestoreResult.IsSuccess())
@@ -1742,8 +2462,15 @@ bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterRunFailure(
 			static_cast<int32>(RestoreResult.FailureStage));
 		return false;
 	}
+	if (OxygenWorldSubsystem.IsValid()
+		&& !OxygenWorldSubsystem->RestoreRunCheckpoint())
+	{
+		OutFailure =
+			TEXT("The shared Oxygen reservoir could not restore the failed run checkpoint.");
+		return false;
+	}
 
-	ReapplyChronoSpawnStates();
+	ReapplyChronoSpawnStates(true);
 	SetPhase(EParadoxTimeLoopPhase::TimelineReconstruction);
 	if (!ReconstructConsolidatedClones(OutFailure))
 	{
@@ -1751,7 +2478,17 @@ bool UParadoxTimeLoopComponent::RestoreWorldAndReconstructAfterRunFailure(
 	}
 
 	SelectedChronoSpawn = nullptr;
-	SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
+	RefreshChronoSpawnInteractionAffordances();
+	if (ConsolidatedTimelines.IsEmpty())
+	{
+		SetPhase(EParadoxTimeLoopPhase::ChronoSpawnSelection);
+		return true;
+	}
+	if (!BeginPostResetRuntimeStart(OutFailure))
+	{
+		RecoverFromSynchronizedStartFailure(OutFailure);
+		return false;
+	}
 	return true;
 }
 
@@ -1890,6 +2627,11 @@ bool UParadoxTimeLoopComponent::PrepareClonePlaybacks(FString& OutFailure)
 		Runtime.TimelineBundle = SourceTimeline
 			? SourceTimeline->TimelineBundle
 			: nullptr;
+		Runtime.ChronoSpawn = SourceTimeline
+			? SourceTimeline->ChronoSpawn
+			: nullptr;
+		Runtime.TemporalSpawnState =
+			EParadoxTemporalSpawnState::WaitingForRecordedTime;
 
 		if (!Temporal
 			|| !Temporal->HasValidTemporalIndex()
@@ -1990,13 +2732,6 @@ void UParadoxTimeLoopComponent::TryReleaseSynchronizedStart()
 		return;
 	}
 
-	FString RecordingFailure;
-	if (!BeginPlayerRecording(RecordingFailure))
-	{
-		RecoverFromSynchronizedStartFailure(RecordingFailure);
-		return;
-	}
-
 	for (FParadoxClonePlaybackRuntime& Runtime : ClonePlaybackRuntimes)
 	{
 		if (Runtime.State != EParadoxClonePlaybackState::Ready)
@@ -2017,7 +2752,6 @@ void UParadoxTimeLoopComponent::TryReleaseSynchronizedStart()
 			continue;
 		}
 
-		SetClonePlaybackMovementEnabled(*Clone, true);
 		UParadoxCloneBehaviorCoordinatorComponent* Coordinator =
 			Clone->GetBehaviorCoordinator();
 		const FParadoxCloneBehaviorOperationResult Authorization =
@@ -2036,7 +2770,12 @@ void UParadoxTimeLoopComponent::TryReleaseSynchronizedStart()
 		}
 	}
 
+	if (bPlayerMaterializedForRun)
+	{
+		SetPlayerMovementEnabled(true);
+	}
 	SetPhase(EParadoxTimeLoopPhase::ActiveRun);
+	bPostResetTacticalPauseAcquiredForPendingStart = false;
 	EnableTemporalDetection();
 	if (CurrentPhase != EParadoxTimeLoopPhase::ActiveRun)
 	{
@@ -2055,6 +2794,7 @@ void UParadoxTimeLoopComponent::TryReleaseSynchronizedStart()
 void UParadoxTimeLoopComponent::RecoverFromSynchronizedStartFailure(
 	const FString& DiagnosticMessage)
 {
+	ReleasePendingPostResetTacticalPause();
 	DisableTemporalDetection(true);
 	StopAndUnbindClonePlaybacks(false);
 	ClonePlaybackRuntimes.Reset();
@@ -2068,10 +2808,9 @@ void UParadoxTimeLoopComponent::RecoverFromSynchronizedStartFailure(
 		}
 	}
 	if (IsValid(SelectedChronoSpawn)
-		&& SelectedChronoSpawn->GetChronoSpawnState()
-			== EParadoxChronoSpawnState::Selected)
+		&& !SelectedChronoSpawn->IsAssignedToTimeline())
 	{
-		SelectedChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Available);
+		SelectedChronoSpawn->SetAssignedToTimeline(false);
 	}
 	SelectedChronoSpawn = nullptr;
 	DeactivatePlayer();
@@ -2169,6 +2908,17 @@ UParadoxTimeLoopComponent::FindClonePlaybackRuntime(
 		});
 }
 
+FParadoxClonePlaybackRuntime*
+UParadoxTimeLoopComponent::FindClonePlaybackRuntime(
+	const int32 TemporalIndex)
+{
+	return ClonePlaybackRuntimes.FindByPredicate(
+		[TemporalIndex](const FParadoxClonePlaybackRuntime& Runtime)
+		{
+			return Runtime.TemporalIndex == TemporalIndex;
+		});
+}
+
 const FParadoxClonePlaybackRuntime*
 UParadoxTimeLoopComponent::FindClonePlaybackRuntime(
 	const int32 TemporalIndex) const
@@ -2201,6 +2951,7 @@ UParadoxTimeLoopComponent::MakeClonePlaybackSnapshot(
 	Snapshot.Clone = Runtime.Clone.Get();
 	Snapshot.TemporalIndex = Runtime.TemporalIndex;
 	Snapshot.State = Runtime.State;
+	Snapshot.TemporalSpawnState = Runtime.TemporalSpawnState;
 	Snapshot.SessionId = Runtime.SessionId;
 	if (const UIntentReplayComponent* Replay =
 		Runtime.ReplayComponent.Get())
@@ -2250,6 +3001,13 @@ void UParadoxTimeLoopComponent::MarkClonePlaybackFailed(
 	const EIntentReplayPlaybackState ExecutorState)
 {
 	Runtime.State = EParadoxClonePlaybackState::Failed;
+	if (Runtime.TemporalSpawnState
+		!= EParadoxTemporalSpawnState::Materialized)
+	{
+		SetCloneTemporalSpawnState(
+			Runtime,
+			EParadoxTemporalSpawnState::Failed);
+	}
 	Runtime.LastFailure = BuildClonePlaybackFailure(
 		Runtime,
 		Failure,
@@ -2297,6 +3055,136 @@ void UParadoxTimeLoopComponent::SetClonePlaybackMovementEnabled(
 			Movement->DisableMovement();
 		}
 	}
+}
+
+bool UParadoxTimeLoopComponent::SetCloneGameplayPresence(
+	AParadoxCloneCharacter& Clone,
+	const bool bEnabled,
+	FString& OutFailure)
+{
+	OutFailure.Reset();
+	SetClonePlaybackMovementEnabled(Clone, bEnabled);
+	SetTemporalAvatarGridPresence(Clone, bEnabled);
+	Clone.SetActorEnableCollision(bEnabled);
+	Clone.SetActorHiddenInGame(!bEnabled);
+
+	if (UPerceptionKnowledgeSourceComponent* Source =
+		Clone.GetPerceptionKnowledgeSourceComponent())
+	{
+		const FPerceptionKnowledgeOperationResult SourceResult =
+			Source->SetSourceEnabled(bEnabled);
+		if (!SourceResult.IsSuccess())
+		{
+			OutFailure = FString::Printf(
+				TEXT("Clone '%s' could not %s its Perception Source: %s"),
+				*GetNameSafe(&Clone),
+				bEnabled ? TEXT("enable") : TEXT("disable"),
+				*SourceResult.Message);
+			return false;
+		}
+	}
+	else
+	{
+		OutFailure = FString::Printf(
+			TEXT("Clone '%s' has no Perception Source."),
+			*GetNameSafe(&Clone));
+		return false;
+	}
+
+	AParadoxCloneController* Controller =
+		Cast<AParadoxCloneController>(Clone.GetController());
+	UPerceptionKnowledgeListenerComponent* Listener = Controller
+		? Controller->GetPerceptionKnowledgeListener()
+		: nullptr;
+	if (!Listener)
+	{
+		OutFailure = FString::Printf(
+			TEXT("Clone '%s' has no controller-owned Perception Listener."),
+			*GetNameSafe(&Clone));
+		return false;
+	}
+	const FPerceptionKnowledgeOperationResult ListenerResult =
+		Listener->SetListenerEnabled(bEnabled);
+	if (!ListenerResult.IsSuccess())
+	{
+		OutFailure = FString::Printf(
+			TEXT("Clone '%s' could not %s its Perception Listener: %s"),
+			*GetNameSafe(&Clone),
+			bEnabled ? TEXT("enable") : TEXT("disable"),
+			*ListenerResult.Message);
+		return false;
+	}
+
+	if (UParadoxOxygenComponent* Oxygen = Clone.GetOxygenComponent())
+	{
+		Oxygen->SetRunConsumptionActive(
+			bEnabled && CurrentPhase == EParadoxTimeLoopPhase::ActiveRun);
+	}
+	if (UParadoxTemporalVisionComponent* Vision =
+		Clone.GetTemporalVisionComponent())
+	{
+		if (bEnabled && CurrentPhase == EParadoxTimeLoopPhase::ActiveRun)
+		{
+			Vision->EnableTemporalDetection(TemporalDetectionSessionId);
+		}
+		else
+		{
+			Vision->DisableTemporalDetection(true);
+		}
+	}
+	return true;
+}
+
+bool UParadoxTimeLoopComponent::MaterializeCloneAtChronoSpawn(
+	FParadoxClonePlaybackRuntime& Runtime,
+	AParadoxChronoSpawn& ChronoSpawn,
+	FString& OutFailure)
+{
+	AParadoxCloneCharacter* Clone = Runtime.Clone.Get();
+	if (!IsValid(Clone))
+	{
+		OutFailure = TEXT("The pending temporal clone no longer exists.");
+		return false;
+	}
+	if (Runtime.TemporalSpawnState == EParadoxTemporalSpawnState::Materialized)
+	{
+		OutFailure = FString::Printf(
+			TEXT("Clone T%d was already materialized."),
+			Runtime.TemporalIndex);
+		return true;
+	}
+
+	Clone->SetActorTransform(
+		ChronoSpawn.GetActorTransform(),
+		false,
+		nullptr,
+		ETeleportType::TeleportPhysics);
+	if (!SetCloneGameplayPresence(*Clone, true, OutFailure))
+	{
+		return false;
+	}
+	SetCloneTemporalSpawnState(
+		Runtime,
+		EParadoxTemporalSpawnState::Materialized);
+	RefreshTemporalDetectionAfterPlayerActivation();
+	OutFailure = FString::Printf(
+		TEXT("Clone T%d materialized at Chrono Spawn '%s'."),
+		Runtime.TemporalIndex,
+		*GetNameSafe(&ChronoSpawn));
+	return true;
+}
+
+void UParadoxTimeLoopComponent::SetCloneTemporalSpawnState(
+	FParadoxClonePlaybackRuntime& Runtime,
+	const EParadoxTemporalSpawnState NewState)
+{
+	if (Runtime.TemporalSpawnState == NewState)
+	{
+		return;
+	}
+	Runtime.TemporalSpawnState = NewState;
+	OnCloneTemporalSpawnStateChanged.Broadcast(
+		MakeClonePlaybackSnapshot(Runtime));
 }
 
 FParadoxClonePlaybackFailure
@@ -2613,21 +3501,15 @@ bool UParadoxTimeLoopComponent::ReconstructConsolidatedClones(FString& OutFailur
 					? ClonePerceptionSource->AssignEntityId(
 						Timeline.AvatarPerceptionEntityId)
 					: DisableSourceResult;
-			const FPerceptionKnowledgeOperationResult EnableSourceResult =
-				IdentityResult.IsSuccess()
-					? ClonePerceptionSource->SetSourceEnabled(true)
-					: IdentityResult;
 			if (!DisableSourceResult.IsSuccess()
-				|| !IdentityResult.IsSuccess()
-				|| !EnableSourceResult.IsSuccess())
+				|| !IdentityResult.IsSuccess())
 			{
 				OutFailure = FString::Printf(
-					TEXT("Clone %d could not inherit Perception Entity ID %s before spawning: disable='%s', assign='%s', enable='%s'."),
+					TEXT("Clone %d could not inherit Perception Entity ID %s before spawning: disable='%s', assign='%s'."),
 					Timeline.TemporalIndex,
 					*Timeline.AvatarPerceptionEntityId.ToString(),
 					*DisableSourceResult.Message,
-					*IdentityResult.Message,
-					*EnableSourceResult.Message);
+					*IdentityResult.Message);
 				Clone->Destroy();
 				return false;
 			}
@@ -2659,12 +3541,12 @@ bool UParadoxTimeLoopComponent::ReconstructConsolidatedClones(FString& OutFailur
 			return false;
 		}
 		if (Timeline.AvatarPerceptionEntityId.IsValid()
-			&& (!ClonePerceptionSource->IsSemanticallyRegistered()
+			&& (ClonePerceptionSource->IsSemanticallyRegistered()
 				|| ClonePerceptionSource->GetEntityId()
 					!= Timeline.AvatarPerceptionEntityId))
 		{
 			OutFailure = FString::Printf(
-				TEXT("Clone %d finished spawning without registering inherited Perception Entity ID %s (current %s, registered=%s)."),
+				TEXT("Dormant clone %d did not retain its disabled inherited Perception Entity ID %s (current %s, registered=%s)."),
 				Timeline.TemporalIndex,
 				*Timeline.AvatarPerceptionEntityId.ToString(),
 				*ClonePerceptionSource->GetEntityId().ToString(),
@@ -2687,11 +3569,10 @@ bool UParadoxTimeLoopComponent::ReconstructConsolidatedClones(FString& OutFailur
 				*GetNameSafe(CloneControllerClass));
 			return false;
 		}
-		Clone->SetActorHiddenInGame(false);
-		if (UCharacterMovementComponent* Movement = Clone->GetCharacterMovement())
+		if (!SetCloneGameplayPresence(*Clone, false, OutFailure))
 		{
-			Movement->StopMovementImmediately();
-			Movement->DisableMovement();
+			Clone->Destroy();
+			return false;
 		}
 
 		UParadoxTemporalEntityComponent* Temporal =
@@ -2726,26 +3607,34 @@ void UParadoxTimeLoopComponent::DestroyRuntimeClones()
 	ClonePlaybackRuntimes.Reset();
 }
 
-void UParadoxTimeLoopComponent::ReapplyChronoSpawnStates()
+void UParadoxTimeLoopComponent::ReapplyChronoSpawnStates(
+	const bool bNotifyStateInitialized)
 {
 	for (AParadoxChronoSpawn* Spawn : ChronoSpawns)
 	{
 		if (IsValid(Spawn))
 		{
-			Spawn->SetRuntimeState(
-				Spawn->IsChronoSpawnEnabled()
-					? EParadoxChronoSpawnState::Available
-					: EParadoxChronoSpawnState::Disabled);
+			Spawn->SetAssignedToTimeline(false);
+			Spawn->RefreshActivationState();
 		}
 	}
 	for (const FParadoxConsolidatedTimeline& Timeline : ConsolidatedTimelines)
 	{
 		if (IsValid(Timeline.ChronoSpawn))
 		{
-			Timeline.ChronoSpawn->SetRuntimeState(EParadoxChronoSpawnState::Occupied);
+			Timeline.ChronoSpawn->SetAssignedToTimeline(true);
 		}
 	}
-	HoveredChronoSpawn = nullptr;
+	if (bNotifyStateInitialized)
+	{
+		for (AParadoxChronoSpawn* Spawn : ChronoSpawns)
+		{
+			if (IsValid(Spawn))
+			{
+				Spawn->NotifyStateInitialized();
+			}
+		}
+	}
 }
 
 bool UParadoxTimeLoopComponent::IsConfiguredCloneClassUsable() const

@@ -5,6 +5,7 @@
 #include "TacticalPauseWorldSubsystem.generated.h"
 
 class ITacticalPauseTemporalDriver;
+class FTacticalPauseSceneViewExtension;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTacticalPauseStateChangedEvent, const FTacticalPauseStateChange&, Change);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FTacticalPauseSpeedChangedEvent, const FTacticalPauseSpeedChange&, Change);
@@ -88,6 +89,10 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Tactical Pause|State")
 	float GetAppliedPlaybackSpeed() const;
 
+	/** True while this subsystem is keeping renderer temporal histories active during its owned pause. */
+	UFUNCTION(BlueprintPure, Category = "Tactical Pause|State")
+	bool IsTemporalRenderingOverrideActive() const;
+
 	/** Matching validated preset ID, or None for a custom selected multiplier. */
 	UFUNCTION(BlueprintPure, Category = "Tactical Pause|State")
 	FName GetSelectedPresetId() const;
@@ -141,6 +146,8 @@ private:
 	bool ApplyGlobalDilation(float InMultiplier);
 	/** Idempotently restores only pause and dilation still owned by this subsystem. */
 	void RestoreTemporalState();
+	/** Enables the renderer-only pause override without changing World simulation state. */
+	void SetTemporalRenderingOverrideActive(bool bActive);
 	/** FCanUnpause callback that allows only an explicit plugin release window. */
 	bool CanReleaseOwnedPause();
 
@@ -152,6 +159,8 @@ private:
 
 	/** Non-UObject implementation boundary, created and deleted with subsystem lifetime. */
 	ITacticalPauseTemporalDriver* TemporalDriver = nullptr;
+	/** Per-World renderer bridge; globally registered only while this subsystem retains it. */
+	TSharedPtr<FTacticalPauseSceneViewExtension, ESPMode::ThreadSafe> SceneViewExtension;
 	TArray<FTacticalPlaybackSpeedPreset> AvailablePresets;
 	TMap<FName, int32> PresetLookup;
 

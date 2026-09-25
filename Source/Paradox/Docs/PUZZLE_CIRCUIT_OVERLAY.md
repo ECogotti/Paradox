@@ -8,8 +8,11 @@ selection authority or changes puzzle state.
 ## Opt-in and graph semantics
 
 Enable `bShowPuzzleConnectionsWhenSelected` on an Actor's `UParadoxSelectableComponent`. It is
-enabled natively on Pressure Plate and Vertical Barrier and disabled by default, including on
-Chrono Spawn.
+enabled natively on Pressure Plate, Vertical Barrier, and Chrono Spawn, and disabled by default on
+other selectable Actors. An enabled Chrono Spawn remains selectable while its Automatic Puzzle
+Receiver is inactive or it is occupied; selecting it always shows incoming emitter connections,
+independently from whether its Spawn action can currently execute. A linkless Chrono Spawn is active
+by default and simply renders no wires.
 
 The renderer queries only `UPuzzleGraphSubsystem::QueryActorGraph`:
 

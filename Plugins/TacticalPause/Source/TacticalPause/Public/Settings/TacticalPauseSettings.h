@@ -32,6 +32,13 @@ public:
 	UPROPERTY(Config, EditAnywhere, Category = "Playback")
 	bool bAllowSpeedSelectionWhilePaused = true;
 
+	/**
+	 * Keeps renderer temporal histories advancing while Tactical Pause owns the World pause.
+	 * Enable this when a camera may move during pause; gameplay simulation remains paused.
+	 */
+	UPROPERTY(Config, EditAnywhere, Category = "Rendering", meta = (DisplayName = "Keep Temporal Rendering Active While Paused"))
+	bool bKeepTemporalRenderingActiveWhilePaused = true;
+
 	/** Opts into local-player-owned automatic controls. Disabled by default in favor of explicit project UI ownership. */
 	UPROPERTY(Config, EditAnywhere, Category = "Widget")
 	bool bCreateDefaultWidgetAutomatically = false;

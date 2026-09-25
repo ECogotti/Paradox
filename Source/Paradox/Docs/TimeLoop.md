@@ -25,7 +25,8 @@ LevelPreparation
   -> RewindPreparation
   -> WorldReset
   -> TimelineReconstruction
-  -> ChronoSpawnSelection
+  -> AwaitingSynchronizedStart (runtime spawn selection remains open)
+  -> ActiveRun
 ```
 
 At startup the component:
@@ -43,44 +44,93 @@ rejects an empty baseline.
 Invalid requests return `FParadoxTimeLoopOperationResult` without changing phase. Failures after
 irreversible recording or reset mutations enter `Error` and retain diagnostics.
 
-An accepted temporal paradox or Player death branches from `ActiveRun` to `ParadoxFailure`, then
-returns to `ChronoSpawnSelection` after presentation-authorized recovery. Both use the generic
-`FParadoxRunFailureContext`; its reason distinguishes `TemporalParadox` from `PlayerDeath`, and the
-latter retains damage type, instigator, and causer. Consolidating the final playable timeline
-enters `GameOver`. An external puzzle authority can branch from `ActiveRun` to `LevelComplete`.
+An accepted temporal paradox, Player death, or shared-global Oxygen depletion branches from
+`ActiveRun` to `ParadoxFailure`. Before the first timeline has been consolidated,
+presentation-authorized recovery returns to the initial blocking `ChronoSpawnSelection`. Once a
+consolidated timeline exists, recovery uses the same forced-Tactical-Pause/runtime-selection start
+path as a normal rewind. All use `FParadoxRunFailureContext`; its reason distinguishes
+`TemporalParadox`, `PlayerDeath`, and `GlobalOxygenDepleted`, while Player death retains damage type,
+instigator, and causer. Consolidating the final playable timeline enters `GameOver`. An external
+puzzle authority can branch from `ActiveRun` to `LevelComplete`.
 
 ## Chrono Spawns and recording
 
-Place enabled `AParadoxChronoSpawn` actors on distinct reachable GridWorld cells. Each one
-contributes one playable timeline and exposes presentation states `Available`, `Hovered`,
-`Selected`, `Occupied`, and `Disabled`.
+Place enabled `AParadoxChronoSpawn` actors on distinct reachable GridWorld cells. Each native Actor
+owns an Automatic `UPuzzleReceiverComponent`, a `UParadoxSelectableComponent`, a
+`UParadoxInteractionComponent` containing the non-spatial Spawn interaction, and a native
+`UWorldStateParticipantComponent`. It deliberately owns no Smart Object component or Definition.
+The participant restores the placed Actor transform and `bChronoSpawnEnabled`, but does not capture
+existence, puzzle activation, timeline assignment, or presentation state. A spawn with one or more incoming Puzzle links is active
+only while its Receiver is active; a spawn with no incoming links is active by default. World State
+restoration temporarily makes every spawn inactive, then activation is recomputed from the restored
+Receiver state and current graph topology. The Actor exposes presentation states `Available`,
+`Inactive`, `Hovered`, `Selected`, `Occupied`, and `Disabled`.
 
-`ReceiveVisualStateChanged` is a Blueprint Native Event. Its native implementation provides the
-fallback mesh scale, visibility, label, and color for every state. A Blueprint override can call
-the parent to extend that presentation, or omit `Call to Parent` to replace all native Chrono Spawn
-visual effects completely. The event is presentation-only; `NewState` has already been committed
-by the authoritative loop.
+Chrono Spawn has no native state label and applies no native state-dependent material, visibility,
+collision, or scale effect. `SelectionMesh` is initialized once at relative scale `(1,1,1)` and its
+scale is never changed by Chrono Spawn state transitions. Author presentation manually in the
+Chrono Spawn Blueprint through either `ReceiveVisualStateChanged`, whose native implementation is
+intentionally empty, or the Blueprint-assignable `OnChronoSpawnStateChanged` delegate. The delegate
+provides the Chrono Spawn plus previous and new state; the authoritative state is already committed
+before either hook executes. `ReceiveStateInitialized` is a separate Blueprint Native Event called
+after initial `BeginPlay` reconciliation and after every successful Time Loop world reset. Use it to
+apply or rebuild effects even when the reconciled state value did not change, in which case the
+ordinary change event correctly remains silent. `GetChronoSpawnState()` supplies the current state.
 
-The selection mesh is Visibility query-only and never blocks movement. Click/touch selects only
-during `ChronoSpawnSelection`; the same pointer commits movement only during `ActiveRun`.
+The selection mesh is Visibility query-only and never blocks movement. Chrono Spawns use the same
+generic hover/selection authority as every other selectable Actor: RMB selects on mouse and touch
+release uses the same `UParadoxSelectionComponent` path. Selection never spawns a Character; it
+only shows Puzzle connections and the optional interaction widget. Enabled inactive and occupied
+spawns remain selectable so the player can inspect the circuit, while
+`CanAssignToNewTimeline()` remains false for both states.
 
-Every native Chrono Spawn also owns `UParadoxSelectableComponent` for the project-level Milestone
-1-2 outline and optional world widget. During `ChronoSpawnSelection`, the dedicated time-loop hover
-and selection state remains authoritative and generic selection input is bypassed. Outside that
-phase the direct `SelectionMesh` can participate in generic selection. Do not add a duplicate
-selectable component to a Chrono Spawn Blueprint. See
+Chrono Spawn's Spawn action uses
+`EParadoxInteractionExecutionMode::ExecuteWithoutSmartObject`, so request execution skips slot
+resolution, claim, GridWorld pathing, and requester movement while retaining normal semantic
+validation, action locks, journaling, replay, effect checks, and cleanup. Its selectable opts into
+Puzzle connection rendering and opts out of interaction-cell presentation. Do not add duplicate
+Selectable, Receiver, Interaction, or World State participant components to a Chrono Spawn
+Blueprint. See
 [Selection and world-space interaction UI](SELECTION_AND_INTERACTION.md).
 
-Selection immediately:
+The interaction widget's Spawn button calls
+`UParadoxTimeLoopComponent::RequestChronoSpawnInteraction` with the selected Actor. The code hook
+`CanRequestInteraction(Interaction.Paradox.ChronoSpawn.Spawn)` is refreshed when activation,
+assignment, or the Time Loop phase changes; it is true only when a new spawn is needed and the
+target is active and free. A valid button request:
 
-- moves and enables the player at the chosen spawn;
+- starts the player recorder before submitting the spawn request;
+- submits `DA_ParadoxChronoSpawn` as the first semantic Gameplay Action in the run;
+- materializes and enables the player at the chosen active spawn;
 - assigns role `Player` and the next numeric Temporal Index;
 - marks the spawn `Selected`;
-- initializes the player recorder without starting it;
 - enters `AwaitingSynchronizedStart`.
 
+The Time Loop and native Chrono Spawn catalog resolve
+`/Game/Data/GameplayActions/DA_ParadoxChronoSpawn` by default. The asset must use
+`UParadoxChronoSpawnActionDefinition`, the standard replay-safe `Target` and `InteractionTag`
+parameters, Required journaling, and non-spatial execution mode.
+
 `OnChronoSpawnSelected` is immediate. `OnRunStarted` is delayed until the synchronized barrier
-actually releases.
+actually releases. After a rewind, `OnRunStarted` may precede `OnChronoSpawnSelected` when the
+technical clone-readiness barrier releases before the player chooses a spawn.
+
+After at least one timeline has been consolidated, reset reconstructs all clones in dormant
+gameplay state, prepares their replays, initializes the hidden Player recorder, opens runtime spawn selection, enters
+`AwaitingSynchronizedStart`, and calls only `UTacticalPauseWorldSubsystem::RequestPause`. There is
+no post-rewind delay or Time Loop timer. An already-paused World is accepted only when the Tactical
+Pause subsystem owns a pause that `RequestPlay` can later release; external pause conflicts or
+application failures roll back to safe spawn selection with diagnostics.
+
+The Spawn interaction during forced pause records and executes only the Chrono Spawn system action, then
+restores the player Gameplay Action scheduler pause. It materializes the Player, enables its
+perception listener, source, collision and GridWorld occupancy, and refreshes active Temporal
+Vision filters without releasing Tactical Pause or starting queued planned work. If clone
+readiness releases first, clones, recorder and `ActiveRun` become authoritative while the World
+remains paused. The Player can stay hidden, non-collidable, unoccupied and perceptually disabled
+while its empty prefix is recorded from the global run epoch; Play may resume clones before
+selection, and a later selection activates the Player without restarting either clock. The
+Gameplay HUD remains visible throughout selection and pause.
 
 The default rewind input is `IA_Rewind`, currently mapped to Enter in `IMC_Default`. The player
 controller's `RequestTimeRewind` submits `/Game/Data/GameplayActions/DA_ParadoxTimeTravel`; it no
@@ -95,15 +145,26 @@ player Time Travel action preempts movement, blocks new movement/stance input, a
 component, and schedules the authoritative rewind on the next tick after `OnSystemFinished`. With
 no Niagara System it rewinds immediately through the same recorded path.
 
-The replay clone executes the same action and VFX. At completion the time loop retires the clone in
-place: listener, semantic Source and temporal detection are disabled; movement and GridWorld
-occupancy are released; collision is disabled; and the Actor is hidden. Retaining the Actor until
-the next reconstruction keeps playback delegate and runtime-array ownership stable. With no
-Niagara System the clone is retired immediately.
+The replay clone executes the same action and VFX. `CloneTimeTravelCompletionBehavior`, editable on
+the GameMode's time-loop component, controls completion:
+
+- `EnterGoap` (default) finishes the recorded action, then performs the GOAP handoff on the next
+  tick. Replay, investigation, Behavior Tree, Gameplay Actions and movement stop, while the clone
+  remains visible, collidable, GridWorld-occupied, semantically observable and consuming Oxygen.
+  Its perception listener and Temporal Vision stay disabled by Time Travel. A failed handoff keeps
+  it stationary and is reported through playback diagnostics.
+- `RetireInPlace` preserves the legacy behavior: listener, semantic Source and temporal detection
+  are disabled; movement and GridWorld occupancy are released; collision is disabled; and the
+  Actor is hidden until the next reconstruction.
+
+With no Niagara System the action still completes immediately; the default GOAP handoff remains
+deferred to the next tick to avoid reentrant interruption of the completing action.
 
 ## Synchronized start barrier
 
-Every run, including the first run without clones, passes through the same barrier.
+Every run, including the first run without clones, passes through the same technical barrier. The
+first run reaches it only after the blocking spawn selection. Post-reset runs enter it immediately
+after acquiring Tactical Pause. The first run does not force Tactical Pause.
 
 For each reconstructed clone the loop calls `PrepareReplay` using:
 
@@ -111,16 +172,21 @@ For each reconstructed clone the loop calls `PrepareReplay` using:
 - `StopPlayback` on submission rejection;
 - `StopPlayback` on terminal Gameplay Action failure.
 
-The barrier waits until every clone is either `Ready` or has entered stationary `Failed` fallback.
-Preparation callbacks are correlated with both clone and playback Session ID; stale callbacks from
-an earlier run are ignored.
+The barrier waits until every clone is either `Ready` or has entered stationary `Failed` fallback;
+there is no gameplay delay gate. Preparation callbacks are correlated with both clone and playback
+Session ID; stale callbacks from an earlier run are ignored. Play can be pressed before readiness:
+the World resumes, but recorder/replay authorization still waits for this technical barrier.
 
 At barrier release, in one logical frame, the loop:
 
-1. starts the player recorder;
+1. starts the player recorder, whether or not a runtime spawn has already been selected;
 2. authorizes every ready clone coordinator;
 3. enters `ActiveRun`;
 4. broadcasts `OnRunStarted`.
+
+After a reset these steps are allowed while the World is paused. The existing Tactical Pause
+events update its widget; the Time Loop does not mutate button state directly and does not
+implicitly resume after a spawn selection.
 
 The Replay Behavior Tree task is the only caller that starts the already prepared clone replay;
 observation comparison is armed before authorization. No recorder or replay starts before the
@@ -149,6 +215,13 @@ A legal rewind:
 10. reapplies occupied Chrono Spawn states;
 11. reconstructs every consolidated timeline in Temporal Index order.
 
+At restore start each Chrono Spawn drops its transient activation and generic selection
+availability through its participant lifecycle. World State restores the authored transform and
+enabled flag. After a successful restore the spawn derives activation again from the restored
+Automatic Receiver, while the Time Loop reapplies timeline assignment independently and then calls
+the state-initialization hook with the final reconciled state. A failed restore leaves the spawn
+unavailable and reports the failure.
+
 Smart Object interaction claims follow the same Gameplay Action lifecycle as movement and stance.
 Step 3 is therefore the authority that aborts a running `UParadoxInteractionActionBase` and releases
 its claim before WorldState mutation begins. The selection component's restore-start callback is
@@ -172,8 +245,9 @@ Explicit legacy action-only timelines still replay with a warning and no percept
 `FParadoxConsolidatedTimeline::AvatarPerceptionEntityId` is the stable perceptual identity of the
 avatar that originally produced that run. A reconstructed clone receives this ID while its
 `UPerceptionKnowledgeSourceComponent` is disabled and unregistered, before deferred spawning
-finishes. Registration and exact ID equality are validated before the clone can join the
-synchronized start.
+finishes. The clone may join the synchronized replay barrier while still dormant; Source
+registration and exact ID equality are validated only when its recorded Chrono Spawn action
+materializes it.
 
 The player Source is disabled at the end of a run. Selecting the next Chrono Spawn assigns a fresh,
 collision-checked ID before re-enabling it, so T0, T1, and the current player are distinct live
@@ -215,6 +289,21 @@ Any prepared/active state ----------> Stopped
 
 Movement is enabled only for the clone whose replay starts. Completion, failure, and explicit stop
 freeze that clone's controller, Character Movement, and Gameplay Actions.
+
+Clone reconstruction and clone materialization are intentionally separate. A reconstructed clone
+starts hidden, non-collidable, outside GridWorld occupancy, without active perception or Oxygen,
+and exposes `WaitingForRecordedTime` in its temporal spawn snapshot. When replay reaches the
+recorded `GameplayAction.Type.Paradox.TimeLoop.ChronoSpawn` entry:
+
+- an active target spawn materializes the clone and changes the state to `Materialized`;
+- an inactive target spawn changes the state to `PendingActivation`, leaves the spawn action
+  running, and pauses only that clone's Intent Replay session;
+- a later Receiver activation materializes the clone, completes the action, and resumes that same
+  replay session from its preserved clock offset.
+
+There is no timeout or fabricated fallback position for pending materialization. Other clones and
+the current player continue independently. Invalid/destroyed targets or failed materialization use
+the structured Gameplay Action failure path and mark the temporal spawn state `Failed`.
 
 Replay remains `Playing` through the track's full `RecordedDuration`, even when the last Gameplay
 Action ended earlier. This preserves a recorded idle tail: perception comparison and the Behavior
@@ -330,12 +419,21 @@ stale callbacks. Consolidated tracks remain unchanged.
 
 At full black, the controller-owned outcome presenter acknowledges the run-failure event. The loop
 then destroys only runtime clones, restores the World State baseline, reapplies occupied spawn
-states, reconstructs consolidated timelines, releases the failed run's selected spawn, and returns
-to `ChronoSpawnSelection`. A paradox or death on the last selectable spawn is still retryable
-because the failed partial run was never consolidated. The persistent Player is reactivated with
-`ResetHealth` and `ResetOxygen`; reconstructed Clones are newly spawned at full Health and Oxygen.
-Oxygen consumption is authorized only during `ActiveRun` and is suspended on every phase exit.
-Tactical Pause and simulation speed work through Unreal's paused, dilated game-time clock.
+states, reconstructs consolidated timelines, and releases the failed run's selected spawn. With
+consolidated timelines, recovery opens runtime selection and forces the same resumable Tactical
+Pause as a normal rewind; without one, it returns to the initial blocking
+`ChronoSpawnSelection`. A failure on the last selectable spawn remains retryable because the
+partial run was never consolidated.
+
+In `PerPawn`, the persistent Player is reactivated with `ResetHealth` and `ResetOxygen`, while
+reconstructed Clones are newly spawned at full Health and Oxygen. In `SharedGlobal`, successful
+Time Travel promotes the current World reservoir to the next checkpoint and never refills it;
+run-failure recovery restores the exact failed-run checkpoint and clears all transient Oxygen
+participants/effects. Shared depletion is accepted once as `GlobalOxygenDepleted`, without killing
+each Pawn reentrantly. Player consumption is active only after spawn selection; replay and terminal
+GOAP Clones count, while hidden/dead/retired avatars do not. Tactical Pause and simulation speed
+work through Unreal's paused, dilated game-time clock in both modes. See
+[Paradox Oxygen System](OXYGEN_SYSTEM.md).
 
 The native presentation fallback uses real time and never changes input mode, mouse capture, or UI
 focus:
@@ -343,6 +441,7 @@ focus:
 - paradox: `TIMELINE COLLAPSE` and
   `T{Observer} witnessed T{Target}. The past saw the future.`;
 - Player death: `LIFE SIGNS LOST` and a distinct recoverable-run message;
+- shared depletion: `OXYGEN RESERVE DEPLETED` and a distinct checkpoint-recovery message;
 - Game Over: `NO TIMELINES REMAIN` and `The loop has no future left`;
 - completion: `LEVEL COMPLETE`.
 
@@ -436,6 +535,10 @@ second World State participant in `BP_CloneCharacter`.
   exactly one valid enabled volume. An incompatible logical-center override also prevents both
   free-camera creation and entry into `ChronoSpawnSelection`.
 - `InvalidConfiguration`: confirm enabled Chrono Spawns and configured native clone classes.
+- `InvalidConfiguration` mentioning Chrono Spawn Definition: confirm
+  `/Game/Data/GameplayActions/DA_ParadoxChronoSpawn` exists, uses
+  `UParadoxChronoSpawnActionDefinition`, exposes `Target` plus `InteractionTag`, uses Required
+  journaling, and executes without a Smart Object slot.
 - `MissingPlayer`: the first controller must possess `AParadoxPlayerCharacter`.
 - `RecordingFailed`: verify Gameplay Actions and Intent Replay components and initialization.
 - `SynchronizedStartFailed`: the player recorder could not start; clone sessions were cancelled

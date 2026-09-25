@@ -734,6 +734,109 @@ bool FParadoxInteractionMultiSlotCatalogTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxInteractionNonSpatialExecutionTest,
+	"Paradox.Interaction.NonSpatial.WithoutSmartObject",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxInteractionNonSpatialExecutionTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace UE::Paradox::Interaction::Tests;
+	FScopedInteractionWorld Scope;
+	if (!TestNotNull(TEXT("Non-spatial interaction test world"), Scope.World))
+	{
+		return false;
+	}
+
+	AActor* Target = Scope.World->SpawnActor<AActor>();
+	APawn* Requester = Scope.World->SpawnActor<APawn>();
+	if (!TestNotNull(TEXT("Non-spatial target"), Target)
+		|| !TestNotNull(TEXT("Non-spatial requester"), Requester))
+	{
+		return false;
+	}
+	Target->SetFlags(RF_WasLoaded);
+
+	UGameplayActionComponent* Actions =
+		NewObject<UGameplayActionComponent>(Requester, TEXT("NonSpatialActions"));
+	Requester->AddInstanceComponent(Actions);
+	Actions->RegisterComponent();
+
+	UParadoxInteractionTestActionDefinition* ActionDefinition =
+		NewObject<UParadoxInteractionTestActionDefinition>(
+			Target,
+			TEXT("NonSpatialDefinition"));
+	ActionDefinition->InstanceClass =
+		UParadoxInteractionTestSuccessAction::StaticClass();
+	ActionDefinition->ActionTag =
+		ParadoxGameplayTags::Action_InvestigationInspect;
+	ActionDefinition->ExecutionMode =
+		EParadoxInteractionExecutionMode::ExecuteWithoutSmartObject;
+	ActionDefinition->ExecutionLocks.RemoveTag(GameplayActionTags::Lock_Movement);
+
+	UParadoxInteractionComponent* Interaction =
+		NewObject<UParadoxInteractionComponent>(
+			Target,
+			TEXT("NonSpatialInteraction"));
+	Target->AddInstanceComponent(Interaction);
+	FParadoxInteractionDefinition& CatalogEntry =
+		Interaction->InteractionDefinitions.AddDefaulted_GetRef();
+	CatalogEntry.InteractionTag = ParadoxInteractionTestTags::Primary;
+	CatalogEntry.GameplayActionDefinition = ActionDefinition;
+	Interaction->RegisterComponent();
+	Scope.StartPlay();
+
+	TestNull(
+		TEXT("Non-spatial target owns no Smart Object Component"),
+		Target->FindComponentByClass<USmartObjectComponent>());
+	const FParadoxInteractionQueryResult Query =
+		Interaction->QueryInteractionOptionsByTag(
+			Requester,
+			ParadoxInteractionTestTags::Primary);
+	TestEqual(
+		TEXT("Non-spatial query succeeds without Smart Object or GridWorld"),
+		Query.Status,
+		EParadoxInteractionQueryStatus::Success);
+	TestEqual(TEXT("Non-spatial catalog produces one option"), Query.Options.Num(), 1);
+	if (Query.Options.Num() == 1)
+	{
+		TestFalse(
+			TEXT("Non-spatial option has no Smart Object slot"),
+			Query.Options[0].SlotHandle.IsValid());
+		TestFalse(
+			TEXT("Non-spatial option has no GridWorld cell"),
+			Query.Options[0].GridCellId.IsValid());
+	}
+
+	const FParadoxInteractionAvailabilityResult Availability =
+		Interaction->EvaluateInteractionAvailability(
+			Requester,
+			ParadoxInteractionTestTags::Primary);
+	TestEqual(
+		TEXT("Non-spatial interaction is available in place"),
+		Availability.Status,
+		EParadoxInteractionAvailabilityStatus::AvailableInPlace);
+
+	UParadoxInteractionTestSuccessAction::ResetObservations();
+	const FParadoxInteractionRequestResult Result =
+		Interaction->RequestInteraction(
+			Requester,
+			ParadoxInteractionTestTags::Primary,
+			ParadoxGameplayTags::Origin_Player,
+			Requester);
+	TestTrue(TEXT("Non-spatial request is accepted"), Result.IsAccepted());
+	TestEqual(
+		TEXT("Non-spatial action executes exactly once"),
+		UParadoxInteractionTestSuccessAction::ExecutionCount,
+		1);
+	TestEqual(
+		TEXT("Non-spatial action never acquires a Smart Object claim"),
+		UParadoxInteractionTestSuccessAction::ClaimedExecutionCount,
+		0);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxInteractionActionSubmissionTest,
 	"Paradox.Interaction.Action.SubmissionCurrentPositionAndSuccessCleanup",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)

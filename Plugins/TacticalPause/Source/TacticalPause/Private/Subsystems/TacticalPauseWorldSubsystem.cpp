@@ -2,6 +2,8 @@
 
 #include "Algo/StableSort.h"
 #include "Engine/World.h"
+#include "Rendering/TacticalPauseSceneViewExtension.h"
+#include "SceneViewExtension.h"
 #include "Settings/TacticalPauseSettings.h"
 #include "Subsystems/TacticalPauseTemporalDriver.h"
 #include "TacticalPause.h"
@@ -31,6 +33,8 @@ namespace
 UTacticalPauseWorldSubsystem::UTacticalPauseWorldSubsystem() = default;
 UTacticalPauseWorldSubsystem::~UTacticalPauseWorldSubsystem()
 {
+	SetTemporalRenderingOverrideActive(false);
+	SceneViewExtension.Reset();
 	delete TemporalDriver;
 	TemporalDriver = nullptr;
 }
@@ -45,6 +49,11 @@ void UTacticalPauseWorldSubsystem::Initialize(FSubsystemCollectionBase& Collecti
 	if (UWorld* World = GetWorld())
 	{
 		TemporalDriver = CreateTacticalPauseTemporalDriver(*World).Release();
+		const UTacticalPauseSettings* Settings = GetDefault<UTacticalPauseSettings>();
+		if (Settings && Settings->bKeepTemporalRenderingActiveWhilePaused)
+		{
+			SceneViewExtension = FSceneViewExtensions::NewExtension<FTacticalPauseSceneViewExtension>(World);
+		}
 	}
 	BuildValidatedPresets();
 
@@ -75,6 +84,7 @@ void UTacticalPauseWorldSubsystem::Deinitialize()
 {
 	bShuttingDown = true;
 	RestoreTemporalState();
+	SceneViewExtension.Reset();
 	delete TemporalDriver;
 	TemporalDriver = nullptr;
 	AvailablePresets.Reset();
@@ -138,6 +148,7 @@ ETacticalPauseRequestResult UTacticalPauseWorldSubsystem::RequestPauseInternal(E
 	}
 
 	bPauseOwnedByPlugin = true;
+	SetTemporalRenderingOverrideActive(true);
 	AppliedPlaybackMultiplier = 0.0f;
 	BroadcastSpeedChanges(PreviousSelected, PreviousApplied, NAME_None, false);
 	const FTacticalPauseStateChange FinalChange{PlaybackState, ETacticalPlaybackState::Paused};
@@ -197,6 +208,7 @@ ETacticalPauseRequestResult UTacticalPauseWorldSubsystem::RequestPlayInternal(ET
 	{
 		bPauseOwnedByPlugin = false;
 	}
+	SetTemporalRenderingOverrideActive(bPauseOwnedByPlugin);
 
 	if (!bReleaseReportedSuccess || TemporalDriver->IsPaused())
 	{
@@ -335,6 +347,12 @@ float UTacticalPauseWorldSubsystem::GetAppliedPlaybackSpeed() const
 		return TemporalDriver->IsPaused() ? 0.0f : TemporalDriver->GetGlobalTimeDilation();
 	}
 	return AppliedPlaybackMultiplier;
+}
+
+bool UTacticalPauseWorldSubsystem::IsTemporalRenderingOverrideActive() const
+{
+	return SceneViewExtension.IsValid()
+		&& SceneViewExtension->IsTemporalRenderingOverrideActive();
 }
 
 FName UTacticalPauseWorldSubsystem::GetSelectedPresetId() const
@@ -561,6 +579,9 @@ bool UTacticalPauseWorldSubsystem::ApplyGlobalDilation(float InMultiplier)
 
 void UTacticalPauseWorldSubsystem::RestoreTemporalState()
 {
+	// Rendering must stop observing the plugin override even if the temporal driver
+	// is already unavailable during World teardown.
+	SetTemporalRenderingOverrideActive(false);
 	if (bTemporalStateRestored)
 	{
 		return;
@@ -619,6 +640,14 @@ void UTacticalPauseWorldSubsystem::RestoreTemporalState()
 		{
 			TACTICALPAUSE_LOG_INFO("Released Tactical Pause ownership for World %s during teardown.", *GetNameSafe(GetWorld()));
 		}
+	}
+}
+
+void UTacticalPauseWorldSubsystem::SetTemporalRenderingOverrideActive(const bool bActive)
+{
+	if (SceneViewExtension.IsValid())
+	{
+		SceneViewExtension->SetTemporalRenderingOverrideActive(bActive && bPauseOwnedByPlugin);
 	}
 }
 

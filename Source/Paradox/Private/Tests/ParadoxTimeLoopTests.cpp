@@ -3,7 +3,9 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Actions/GridMoveToCellActionDefinition.h"
+#include "Behavior/ParadoxCloneBehaviorCoordinatorComponent.h"
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
+#include "Camera/ParadoxCameraBoundsVolume.h"
 #include "Characters/ParadoxCloneCharacter.h"
 #include "Characters/ParadoxPlayerCharacter.h"
 #include "Components/CapsuleComponent.h"
@@ -13,18 +15,27 @@
 #include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Components/EntityIdentityComponent.h"
+#include "Conditions/PuzzleInputStateCondition.h"
+#include "Controllers/PuzzleController.h"
 #include "Controllers/ParadoxCloneController.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Data/EntityRelationPolicySet.h"
 #include "Engine/Engine.h"
 #include "Engine/EngineBaseTypes.h"
+#include "Engine/GameInstance.h"
 #include "Engine/World.h"
+#include "Emitters/PuzzleEmitterComponent.h"
 #include "EntityRelationTags.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "GameFramework/Controller.h"
 #include "GameFramework/DamageType.h"
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/WorldSettings.h"
 #include "GameModes/ParadoxGameMode.h"
+#include "Health/ParadoxHealthComponent.h"
+#include "Interaction/ParadoxInteractionComponent.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "Inventory/ParadoxDropAction.h"
 #include "Navigation/GridNavigationData.h"
 #include "Navigation/GridNavigationQueryFilter.h"
@@ -35,14 +46,19 @@
 #include "Perception/ParadoxTemporalVisionComponent.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
 #include "Recording/IntentReplayTrack.h"
+#include "Receivers/PuzzleReceiverComponent.h"
 #include "Relations/ParadoxTemporalOrderingPolicy.h"
+#include "SmartObjectComponent.h"
 #include "Subsystems/GridWorldSubsystem.h"
+#include "Subsystems/TacticalPauseWorldSubsystem.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "Tests/ParadoxTimeLoopTestTypes.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
 #include "TimeLoop/ParadoxTemporalEntityComponent.h"
 #include "TimeLoop/ParadoxTimeLoopComponent.h"
+#include "TimerManager.h"
 #include "UObject/GarbageCollection.h"
+#include "UObject/UnrealType.h"
 
 /** Narrow friend accessor for deterministic coordinator setup in transient test worlds. */
 struct FParadoxTimeLoopTestAccessor
@@ -145,8 +161,36 @@ struct FParadoxTimeLoopTestAccessor
 		AParadoxCloneCharacter& Clone)
 	{
 		TimeLoop.bTimeLoopEnabled = true;
-		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::ActiveRun;
 		TimeLoop.RuntimeClones.Add(&Clone);
+		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::RunPreparation;
+		TimeLoop.SetPhase(EParadoxTimeLoopPhase::ActiveRun);
+	}
+
+	static EParadoxCloneTimeTravelCompletionBehavior
+	GetCloneTimeTravelCompletionBehavior(
+		const UParadoxTimeLoopComponent& TimeLoop)
+	{
+		return TimeLoop.CloneTimeTravelCompletionBehavior;
+	}
+
+	static void SetCloneTimeTravelCompletionBehavior(
+		UParadoxTimeLoopComponent& TimeLoop,
+		const EParadoxCloneTimeTravelCompletionBehavior Behavior)
+	{
+		TimeLoop.CloneTimeTravelCompletionBehavior = Behavior;
+	}
+
+	static bool IsBarrierHeldByCloneReadiness(
+		UParadoxTimeLoopComponent& TimeLoop)
+	{
+		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::AwaitingSynchronizedStart;
+		TimeLoop.ClonePlaybackRuntimes.Reset();
+		FParadoxClonePlaybackRuntime& Runtime =
+			TimeLoop.ClonePlaybackRuntimes.AddDefaulted_GetRef();
+		Runtime.State = EParadoxClonePlaybackState::Preparing;
+		TimeLoop.TryReleaseSynchronizedStart();
+		return TimeLoop.CurrentPhase
+			== EParadoxTimeLoopPhase::AwaitingSynchronizedStart;
 	}
 };
 
@@ -167,6 +211,9 @@ namespace UE::Paradox::TimeLoop::Tests
 			if (Context)
 			{
 				Context->SetCurrentWorld(World);
+				GameInstance = NewObject<UGameInstance>(GEngine);
+				Context->OwningGameInstance = GameInstance;
+				World->SetGameInstance(GameInstance);
 			}
 			if (World)
 			{
@@ -190,20 +237,46 @@ namespace UE::Paradox::TimeLoop::Tests
 			World->RemoveFromRoot();
 		}
 
-		void StartPlay() const
+		void StartPlay(
+			const TSubclassOf<AGameModeBase> GameModeClass = nullptr) const
 		{
+			if (GameModeClass && World && World->GetWorldSettings())
+			{
+				World->GetWorldSettings()->DefaultGameMode = GameModeClass;
+			}
+			World->SetGameMode(FURL());
 			World->InitializeActorsForPlay(FURL());
 			World->BeginPlay();
 		}
 
+		void Advance(const float DeltaSeconds) const
+		{
+			if (World)
+			{
+				++GFrameCounter;
+				World->GetTimerManager().Tick(DeltaSeconds);
+			}
+		}
+
+		void AdvanceWorld(const float DeltaSeconds) const
+		{
+			if (World)
+			{
+				++GFrameCounter;
+				World->Tick(LEVELTICK_All, DeltaSeconds);
+			}
+		}
+
 		FWorldContext* Context = nullptr;
 		UWorld* World = nullptr;
+		UGameInstance* GameInstance = nullptr;
 	};
 
 	AParadoxChronoSpawn* SpawnChronoSpawn(
 		UWorld& World,
 		const FVector& Location,
-		const FName Name)
+		const FName Name,
+		UClass* SpawnClass = AParadoxChronoSpawn::StaticClass())
 	{
 		FActorSpawnParameters Parameters;
 		Parameters.Name = Name;
@@ -211,10 +284,19 @@ namespace UE::Paradox::TimeLoop::Tests
 			FActorSpawnParameters::ESpawnActorNameMode::Required_ErrorAndReturnNull;
 		Parameters.SpawnCollisionHandlingOverride =
 			ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		return World.SpawnActor<AParadoxChronoSpawn>(
-			AParadoxChronoSpawn::StaticClass(),
+		AParadoxChronoSpawn* ChronoSpawn =
+			World.SpawnActor<AParadoxChronoSpawn>(
+				SpawnClass,
 			FTransform(Location),
 			Parameters);
+		if (ChronoSpawn)
+		{
+			// Time-loop scenarios model level-authored spawn points inside a transient World.
+			// The standard interaction request intentionally rejects genuinely runtime-created
+			// targets, so preserve the authored provenance represented by this fixture.
+			ChronoSpawn->SetFlags(RF_WasLoaded);
+		}
+		return ChronoSpawn;
 	}
 
 	TSharedRef<FGridWorldSnapshot, ESPMode::ThreadSafe> MakeLinearSnapshot(
@@ -260,13 +342,36 @@ bool FParadoxTimeLoopDefaultsAndCapacityTest::RunTest(const FString& Parameters)
 	if (Defaults)
 	{
 		TestFalse(TEXT("Time loop is opt-in"), Defaults->IsTimeLoopEnabled());
+		TestEqual(
+			TEXT("Replay clone Time Travel enters GOAP by default"),
+			FParadoxTimeLoopTestAccessor::GetCloneTimeTravelCompletionBehavior(
+				*Defaults),
+			EParadoxCloneTimeTravelCompletionBehavior::EnterGoap);
 		TestFalse(
 			TEXT("Time-loop component has no per-frame tick"),
 			Defaults->PrimaryComponentTick.bCanEverTick);
 		TestTrue(
 			TEXT("Disabled time loop preserves existing movement"),
 			Defaults->IsMovementAllowed());
+		TestNull(
+			TEXT("post-rewind delay configuration was removed"),
+			FindFProperty<FProperty>(
+				UParadoxTimeLoopComponent::StaticClass(),
+				TEXT("PostRewindReplayStartDelaySeconds")));
 	}
+
+	UParadoxTimeLoopComponent* InitialSelectionProbe =
+		NewObject<UParadoxTimeLoopComponent>();
+	FParadoxTimeLoopTestAccessor::ConfigureCapacityState(
+		*InitialSelectionProbe,
+		3,
+		EParadoxTimeLoopPhase::ChronoSpawnSelection);
+	TestTrue(
+		TEXT("first Chrono Spawn selection remains open and mandatory"),
+		InitialSelectionProbe->IsChronoSpawnSelectionOpen());
+	TestFalse(
+		TEXT("first Chrono Spawn selection still gates movement"),
+		InitialSelectionProbe->IsMovementAllowed());
 
 	UParadoxTimeLoopComponent* TimeLoop =
 		NewObject<UParadoxTimeLoopComponent>();
@@ -301,6 +406,13 @@ bool FParadoxTimeLoopDefaultsAndCapacityTest::RunTest(const FString& Parameters)
 		TEXT("Duplicate rewind is rejected by phase"),
 		PhaseResult.Status,
 		EParadoxTimeLoopOperationStatus::RejectedInvalidPhase);
+
+	UParadoxTimeLoopComponent* BarrierProbe =
+		NewObject<UParadoxTimeLoopComponent>();
+	TestTrue(
+		TEXT("Synchronized barrier waits while a clone is still preparing"),
+		FParadoxTimeLoopTestAccessor::IsBarrierHeldByCloneReadiness(
+			*BarrierProbe));
 	return true;
 }
 
@@ -329,6 +441,9 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	UClass* PlayerControllerClass = LoadObject<UClass>(
 		nullptr,
 		TEXT("/Game/Characters/Astronaut/Blueprints/BP_PlayerController.BP_PlayerController_C"));
+	UClass* GameModeClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/Game/Logic/BP_TimeLoopGameMode.BP_TimeLoopGameMode_C"));
 	if (!TestNotNull(
 		TEXT("Project player controller Blueprint loads"),
 		PlayerControllerClass)
@@ -336,7 +451,12 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 			TEXT("Project player controller uses AParadoxPlayerController"),
 			PlayerControllerClass
 				&& PlayerControllerClass->IsChildOf(
-					AParadoxPlayerController::StaticClass())))
+					AParadoxPlayerController::StaticClass()))
+		|| !TestNotNull(TEXT("Project Game Mode Blueprint loads"), GameModeClass)
+		|| !TestTrue(
+			TEXT("Project Game Mode uses AParadoxGameMode"),
+			GameModeClass
+				&& GameModeClass->IsChildOf(AParadoxGameMode::StaticClass())))
 	{
 		return false;
 	}
@@ -376,11 +496,14 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 			PlayerControllerClass,
 			FTransform::Identity,
 			PlayerControllerParameters);
+	AParadoxCameraBoundsVolume* CameraBounds =
+		TestWorld.World->SpawnActor<AParadoxCameraBoundsVolume>();
 	AActor* Coordinator = TestWorld.World->SpawnActor<AActor>();
 	AParadoxChronoSpawn* Spawn0 = SpawnChronoSpawn(
 		*TestWorld.World,
 		FVector(0.0, 0.0, 0.0),
-		TEXT("ChronoSpawn_0"));
+		TEXT("ChronoSpawn_0"),
+		AParadoxChronoSpawnStateInitializationProbe::StaticClass());
 	AParadoxChronoSpawn* Spawn1 = SpawnChronoSpawn(
 		*TestWorld.World,
 		FVector(200.0, 0.0, 0.0),
@@ -389,31 +512,79 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 		*TestWorld.World,
 		FVector(400.0, 0.0, 0.0),
 		TEXT("ChronoSpawn_2"));
+	AActor* SpawnEmitterActor = TestWorld.World->SpawnActor<AActor>();
+	UPuzzleEmitterComponent* SpawnEmitter = SpawnEmitterActor
+		? NewObject<UPuzzleEmitterComponent>(
+			SpawnEmitterActor,
+			TEXT("ChronoSpawnEmitter"))
+		: nullptr;
+	if (SpawnEmitterActor && SpawnEmitter)
+	{
+		SpawnEmitterActor->AddInstanceComponent(SpawnEmitter);
+		SpawnEmitter->RegisterComponent();
+		SpawnEmitter->SetSignalState(
+			ParadoxGameplayTags::Puzzle_Signal_Pressed,
+			true,
+			nullptr);
+	}
+	APuzzleController* SpawnPuzzleController =
+		TestWorld.World->SpawnActor<APuzzleController>();
+	if (SpawnPuzzleController && SpawnEmitterActor && Spawn0)
+	{
+		FPuzzleInputBinding& Input =
+			SpawnPuzzleController->InputBindings.AddDefaulted_GetRef();
+		Input.InputId = TEXT("SpawnEnabled");
+		Input.EmitterActor = SpawnEmitterActor;
+		Input.SignalTag = ParadoxGameplayTags::Puzzle_Signal_Pressed;
+		FPuzzleReceiverBinding& Receiver =
+			SpawnPuzzleController->ReceiverBindings.AddDefaulted_GetRef();
+		Receiver.ReceiverActor = Spawn0;
+		UPuzzleInputStateCondition* Condition =
+			NewObject<UPuzzleInputStateCondition>(SpawnPuzzleController);
+		Condition->InputId = Input.InputId;
+		SpawnPuzzleController->RootCondition = Condition;
+	}
 	if (!TestNotNull(TEXT("Player spawned"), Player)
 		|| !TestNotNull(
 			TEXT("Player Controller with perception Listener spawned"),
 			PlayerController)
+		|| !TestNotNull(TEXT("Camera Bounds spawned"), CameraBounds)
 		|| !TestNotNull(TEXT("Coordinator spawned"), Coordinator)
 		|| !TestNotNull(TEXT("Chrono Spawn 0 spawned"), Spawn0)
 		|| !TestNotNull(TEXT("Chrono Spawn 1 spawned"), Spawn1)
-		|| !TestNotNull(TEXT("Chrono Spawn 2 spawned"), Spawn2))
+		|| !TestNotNull(TEXT("Chrono Spawn 2 spawned"), Spawn2)
+		|| !TestNotNull(TEXT("Chrono Spawn Emitter spawned"), SpawnEmitter)
+		|| !TestNotNull(
+			TEXT("Chrono Spawn Puzzle Controller spawned"),
+			SpawnPuzzleController))
+	{
+		return false;
+	}
+	AParadoxChronoSpawnStateInitializationProbe* Spawn0InitializationProbe =
+		Cast<AParadoxChronoSpawnStateInitializationProbe>(Spawn0);
+	if (!TestNotNull(
+		TEXT("Chrono Spawn initialization probe exists"),
+		Spawn0InitializationProbe))
 	{
 		return false;
 	}
 	PlayerController->Possess(Player);
 
-	UParadoxTimeLoopComponent* TimeLoop =
-		NewObject<UParadoxTimeLoopComponent>(
-			Coordinator,
-			TEXT("TimeLoopTestComponent"),
-			RF_Transient);
-	Coordinator->AddInstanceComponent(TimeLoop);
-	TimeLoop->RegisterComponent();
+	TestWorld.StartPlay(GameModeClass);
+	AParadoxGameMode* GameMode =
+		TestWorld.World->GetAuthGameMode<AParadoxGameMode>();
+	UParadoxTimeLoopComponent* TimeLoop = GameMode
+		? GameMode->GetTimeLoopComponent()
+		: nullptr;
+	if (!TestNotNull(TEXT("Paradox Game Mode exists"), GameMode)
+		|| !TestNotNull(TEXT("Authoritative Time Loop exists"), TimeLoop))
+	{
+		return false;
+	}
 	FParadoxTimeLoopTestAccessor::ConfigureCloneClasses(
 		*TimeLoop,
 		CloneClass,
 		CloneControllerClass);
-	TestWorld.StartPlay();
 
 	TestNotNull(
 		TEXT("Character owns generic Entity Relations identity"),
@@ -466,6 +637,14 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	{
 		AddInfo(WorldStateFailure);
 	}
+	TestEqual(
+		TEXT("Chrono Spawn initialization hook runs once after initial state reconciliation"),
+		Spawn0InitializationProbe->GetInitializationCount(),
+		1);
+	TestEqual(
+		TEXT("Initial Chrono Spawn hook receives the active free state"),
+		Spawn0InitializationProbe->GetLastInitializedState(),
+		EParadoxChronoSpawnState::Available);
 
 	AActor* AdoptingCoordinator = TestWorld.World->SpawnActor<AActor>();
 	UParadoxTimeLoopComponent* AdoptingTimeLoop =
@@ -485,24 +664,39 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	{
 		AddInfo(AdoptFailure);
 	}
-
-	const TArray<AParadoxChronoSpawn*> Spawns = { Spawn0, Spawn1, Spawn2 };
-	FParadoxTimeLoopTestAccessor::ConfigureActiveRun(
-		*TimeLoop,
-		*Player,
-		Spawns,
-		*Spawn0);
 	TestTrue(
-		TEXT("Player temporal identity accepts timeline zero"),
-		Player->GetTemporalEntityComponent()->AssignPlayer(0));
-
-	FIntentRecordingOptions RecordingOptions;
-	RecordingOptions.SourceLabel = TEXT("ParadoxAutomationTimeline_0");
+		TEXT("Emitter-linked Chrono Spawn starts active from its Receiver"),
+		Spawn0->GetPuzzleReceiverComponent()
+			&& Spawn0->GetPuzzleReceiverComponent()->IsReceiverActive()
+			&& Spawn0->IsChronoSpawnActive());
 	TestTrue(
-		TEXT("Empty but valid player recording starts"),
-		Player->GetIntentReplayComponent()
-			->StartRecording(RecordingOptions)
-			.Succeeded());
+		TEXT("Chrono Spawn without incoming Emitters starts active"),
+		Spawn1->IsChronoSpawnActive());
+	TestNotNull(
+		TEXT("Chrono Spawn owns the non-spatial Interaction Component"),
+		Spawn0->GetInteractionComponent());
+	TestNull(
+		TEXT("Chrono Spawn requires no Smart Object Component"),
+		Spawn0->FindComponentByClass<USmartObjectComponent>());
+	if (UParadoxInteractionComponent* SpawnInteraction =
+		Spawn0->GetInteractionComponent())
+	{
+		const FParadoxInteractionAvailabilityResult Availability =
+			SpawnInteraction->EvaluateInteractionAvailability(
+				Player,
+				ParadoxGameplayTags::Interaction_ChronoSpawn_Spawn);
+		TestEqual(
+			TEXT("Active free Chrono Spawn exposes an in-place Spawn button"),
+			Availability.Status,
+			EParadoxInteractionAvailabilityStatus::AvailableInPlace);
+	}
+
+	TestTrue(
+		TEXT("Initial Chrono Spawn selection starts timeline zero"),
+		TimeLoop->RequestChronoSpawnInteraction(Spawn0).IsSuccess());
+	const FTransform Spawn0BaselineTransform = Spawn0->GetActorTransform();
+	Spawn0->SetActorLocation(FVector(900.0, 300.0, 100.0));
+	Spawn0->SetChronoSpawnEnabled(false);
 	const FPerceptionKnowledgeEntityId TimelineZeroPerceptionId =
 		Player->GetPerceptionKnowledgeSourceComponent()->GetEntityId();
 	TestTrue(
@@ -512,10 +706,25 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	const FParadoxTimeLoopOperationResult RewindResult =
 		TimeLoop->RequestTimeRewind();
 	TestTrue(TEXT("Rewind succeeds"), RewindResult.IsSuccess());
+	UTacticalPauseWorldSubsystem* TacticalPause =
+		TestWorld.World->GetSubsystem<UTacticalPauseWorldSubsystem>();
+	TestNotNull(TEXT("Tactical Pause subsystem exists"), TacticalPause);
 	TestEqual(
-		TEXT("Coordinator returns to Chrono Spawn selection"),
+		TEXT("Ready clones release the technical barrier without a delay"),
 		TimeLoop->GetCurrentPhase(),
-		EParadoxTimeLoopPhase::ChronoSpawnSelection);
+		EParadoxTimeLoopPhase::ActiveRun);
+	TestTrue(
+		TEXT("Post-rewind flow forces Tactical Pause"),
+		TacticalPause && TacticalPause->IsPaused());
+	TestTrue(
+		TEXT("Forced Tactical Pause remains resumable through Play"),
+		TacticalPause && TacticalPause->CanPlay());
+	TestTrue(
+		TEXT("Runtime Chrono Spawn selection opens during forced pause"),
+		TimeLoop->IsChronoSpawnSelectionOpen());
+	TestFalse(
+		TEXT("Player movement remains gated while runtime selection is open"),
+		TimeLoop->IsMovementAllowed());
 	TestEqual(
 		TEXT("One immutable timeline is consolidated"),
 		TimeLoop->GetConsolidatedTimelineCount(),
@@ -523,6 +732,20 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	TestEqual(
 		TEXT("Selected Chrono Spawn becomes occupied"),
 		Spawn0->GetChronoSpawnState(),
+		EParadoxChronoSpawnState::Occupied);
+	TestTrue(
+		TEXT("Chrono Spawn World State restores the enabled baseline"),
+		Spawn0->IsChronoSpawnEnabled());
+	TestTrue(
+		TEXT("Chrono Spawn World State restores the authored transform"),
+		Spawn0->GetActorTransform().Equals(Spawn0BaselineTransform, 0.01f));
+	TestEqual(
+		TEXT("Chrono Spawn initialization hook runs again after world reset"),
+		Spawn0InitializationProbe->GetInitializationCount(),
+		2);
+	TestEqual(
+		TEXT("Post-reset initialization observes final timeline occupation"),
+		Spawn0InitializationProbe->GetLastInitializedState(),
 		EParadoxChronoSpawnState::Occupied);
 	TestEqual(
 		TEXT("Unused Chrono Spawn remains available"),
@@ -548,9 +771,9 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 			Timelines[0].AvatarPerceptionEntityId,
 			TimelineZeroPerceptionId);
 		TestEqual(
-			TEXT("Empty finalized recordings remain valid"),
+			TEXT("Finalized recording contains the Chrono Spawn intent"),
 			Timelines[0].ReplayTrack->GetEntryCount(),
-			0);
+			1);
 		ConsolidatedTrack = Timelines[0].ReplayTrack;
 	}
 	CollectGarbage(RF_NoFlags);
@@ -589,8 +812,8 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 				TEXT("Reconstructed clone inherits the original player Perception identity"),
 				CloneSource->GetEntityId(),
 				TimelineZeroPerceptionId);
-			TestTrue(
-				TEXT("Reconstructed clone registers the inherited Perception identity"),
+			TestFalse(
+				TEXT("Reconstructed clone keeps its inherited Perception identity dormant until the recorded spawn action"),
 				CloneSource->IsSemanticallyRegistered());
 		}
 		if (Clone->GetController())
@@ -654,40 +877,40 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 				Timelines.Num() == 1
 					&& Temporal->GetAssignedReplayTrack() == Timelines[0].ReplayTrack);
 		}
-		TestNull(
-			TEXT("Milestone 4 does not prepare a replay session"),
+		TestNotNull(
+			TEXT("Post-rewind flow prepares replay before player spawn selection"),
 			Clone->GetIntentReplayComponent()->GetActivePlaybackSession());
 		TestEqual(
 			TEXT("Reconstructed Blueprint clone uses the path-adapting replay strategy"),
 			Clone->GetIntentReplayComponent()->ExecutionStrategyClass.Get(),
 			UParadoxCloneReplayExecutionStrategy::StaticClass());
 		TestEqual(
-			TEXT("Clone remains stationary before synchronized playback"),
-			Clone->GetCharacterMovement()->MovementMode,
-			MOVE_None);
+			TEXT("Clone playback is authorized while the World remains paused"),
+			TimeLoop->GetCurrentPhase(),
+			EParadoxTimeLoopPhase::ActiveRun);
 		TestFalse(
 			TEXT("Clone is not controlled by the player"),
 			Clone->IsPlayerControlled());
+		FParadoxClonePlaybackSnapshot DormantSnapshot;
+		if (TestTrue(
+			TEXT("Dormant clone playback snapshot is available"),
+			TimeLoop->GetClonePlaybackSnapshot(0, DormantSnapshot)))
+		{
+			TestEqual(
+				TEXT("Clone awaits its recorded Chrono Spawn time"),
+				DormantSnapshot.TemporalSpawnState,
+				EParadoxTemporalSpawnState::WaitingForRecordedTime);
+		}
 	}
 
-	TimeLoop->UpdateHoveredChronoSpawn(Spawn1);
-	TestEqual(
-		TEXT("Available Chrono Spawn enters Hovered presentation state"),
-		Spawn1->GetChronoSpawnState(),
-		EParadoxChronoSpawnState::Hovered);
-	TimeLoop->UpdateHoveredChronoSpawn(Spawn2);
-	TestEqual(
-		TEXT("Previous hover returns to Available"),
-		Spawn1->GetChronoSpawnState(),
-		EParadoxChronoSpawnState::Available);
-	TestEqual(
-		TEXT("New hover is applied"),
-		Spawn2->GetChronoSpawnState(),
-		EParadoxChronoSpawnState::Hovered);
-	TimeLoop->UpdateHoveredChronoSpawn(nullptr);
+	TestTrue(
+		TEXT("Available Chrono Spawn uses the generic selectable path"),
+		Spawn1->GetSelectableComponent()
+			&& Spawn1->GetSelectableComponent()->bCanBeHovered
+			&& Spawn1->GetSelectableComponent()->bCanBeSelected);
 
 	const FParadoxTimeLoopOperationResult OccupiedSelection =
-		TimeLoop->SelectChronoSpawn(Spawn0);
+		TimeLoop->RequestChronoSpawnInteraction(Spawn0);
 	TestEqual(
 		TEXT("Occupied Chrono Spawn selection is rejected"),
 		OccupiedSelection.Status,
@@ -695,15 +918,30 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 	TestEqual(
 		TEXT("Rejected selection preserves selection phase"),
 		TimeLoop->GetCurrentPhase(),
-		EParadoxTimeLoopPhase::ChronoSpawnSelection);
+		EParadoxTimeLoopPhase::ActiveRun);
+	if (UParadoxInteractionComponent* OccupiedInteraction =
+		Spawn0->GetInteractionComponent())
+	{
+		TestFalse(
+			TEXT("Occupied Chrono Spawn disables its Spawn interaction"),
+			OccupiedInteraction->CanRequestInteraction(
+				Player,
+				ParadoxGameplayTags::Interaction_ChronoSpawn_Spawn));
+	}
 
 	const FParadoxTimeLoopOperationResult SecondRun =
-		TimeLoop->SelectChronoSpawn(Spawn1);
-	TestTrue(TEXT("Second run starts from an available spawn"), SecondRun.IsSuccess());
+		TimeLoop->RequestChronoSpawnInteraction(Spawn1);
+	TestTrue(TEXT("Second run selects an available spawn during Tactical Pause"), SecondRun.IsSuccess());
 	TestEqual(
-		TEXT("Synchronous empty-track barrier reaches Active Run"),
+		TEXT("Selecting during Tactical Pause keeps the run active"),
 		TimeLoop->GetCurrentPhase(),
 		EParadoxTimeLoopPhase::ActiveRun);
+	TestTrue(
+		TEXT("Selected player is gameplay-ready but held by World pause"),
+		TimeLoop->IsMovementAllowed());
+	TestTrue(
+		TEXT("Selecting a spawn does not implicitly resume Tactical Pause"),
+		TacticalPause && TacticalPause->IsPaused());
 	TestEqual(
 		TEXT("Second player run receives temporal index one"),
 		Player->GetTemporalEntityComponent()->GetTemporalIndex(),
@@ -727,6 +965,30 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 			TEXT("Selected player re-enters GridWorld occupancy at the new spawn"),
 			PlayerOccupancy->IsActive());
 	}
+	TestTrue(
+		TEXT("Emitter can make the occupied timeline-zero Chrono Spawn inactive"),
+		SpawnEmitter->SetSignalState(
+			ParadoxGameplayTags::Puzzle_Signal_Pressed,
+			false,
+			nullptr));
+	TestFalse(
+		TEXT("Inactive Receiver prevents Chrono Spawn assignment"),
+		Spawn0->IsChronoSpawnActive());
+	TestTrue(
+		TEXT("Inactive Chrono Spawn remains selectable for connection inspection"),
+		Spawn0->GetSelectableComponent()->bCanBeSelected);
+	TestEqual(
+		TEXT("Play resumes the selected run"),
+		TacticalPause ? TacticalPause->RequestPlay()
+			: ETacticalPauseRequestResult::InvalidWorld,
+		ETacticalPauseRequestResult::Succeeded);
+	TestFalse(
+		TEXT("World is no longer paused after Play"),
+		TacticalPause && TacticalPause->IsPaused());
+	for (int32 TickIndex = 0; TickIndex < 5; ++TickIndex)
+	{
+		TestWorld.AdvanceWorld(0.02f);
+	}
 	TestEqual(
 		TEXT("One consolidated clone participates in synchronized start"),
 		TimeLoop->GetClonePlaybackParticipantCount(),
@@ -744,14 +1006,75 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 				|| PlaybackSnapshot.State
 					== EParadoxClonePlaybackState::Completed);
 		TestEqual(
-			TEXT("Empty replay retains zero source entries"),
+			TEXT("Replay retains its Chrono Spawn source entry"),
 			PlaybackSnapshot.TotalEntryCount,
-			0);
+			1);
+		TestEqual(
+			TEXT("Inactive Chrono Spawn keeps the recorded materialization pending"),
+			PlaybackSnapshot.TemporalSpawnState,
+			EParadoxTemporalSpawnState::PendingActivation);
+		if (!Clones.IsEmpty() && Clones[0])
+		{
+			const UPerceptionKnowledgeSourceComponent* CloneSource =
+				Clones[0]->GetPerceptionKnowledgeSourceComponent();
+			TestFalse(
+				TEXT("Pending clone remains absent from Perception"),
+				CloneSource && CloneSource->IsSemanticallyRegistered());
+			TestEqual(
+				TEXT("Only the pending clone replay pauses at the missed spawn time"),
+				Clones[0]->GetIntentReplayComponent()->GetPlaybackState(),
+				EIntentReplayPlaybackState::Paused);
+		}
+	}
+	TestTrue(
+		TEXT("A later Emitter activation satisfies the pending spawn"),
+		SpawnEmitter->SetSignalState(
+			ParadoxGameplayTags::Puzzle_Signal_Pressed,
+			true,
+			nullptr));
+	TestTrue(
+		TEXT("Receiver activation re-enables the Chrono Spawn"),
+		Spawn0->IsChronoSpawnActive());
+	TestTrue(
+		TEXT("An active occupied Chrono Spawn remains selectable for connection inspection"),
+		Spawn0->IsAssignedToTimeline()
+			&& !Spawn0->CanAssignToNewTimeline()
+			&& Spawn0->GetSelectableComponent()->bCanBeSelected);
+	if (TestTrue(
+		TEXT("Clone playback remains queryable after pending activation"),
+		TimeLoop->GetClonePlaybackSnapshot(0, PlaybackSnapshot)))
+	{
+		TestEqual(
+			TEXT("Pending clone materializes when its Chrono Spawn becomes active"),
+			PlaybackSnapshot.TemporalSpawnState,
+			EParadoxTemporalSpawnState::Materialized);
+		if (!Clones.IsEmpty() && Clones[0])
+		{
+			const UPerceptionKnowledgeSourceComponent* CloneSource =
+				Clones[0]->GetPerceptionKnowledgeSourceComponent();
+			TestTrue(
+				TEXT("Materialized clone republishes its inherited Perception identity"),
+				CloneSource && CloneSource->IsSemanticallyRegistered());
+			TestTrue(
+				TEXT("Activating the Chrono Spawn resumes its clone replay"),
+				Clones[0]->GetIntentReplayComponent()->GetPlaybackState()
+					!= EIntentReplayPlaybackState::Paused);
+		}
 	}
 
 	const FParadoxTimeLoopOperationResult SecondRewind =
 		TimeLoop->RequestTimeRewind();
 	TestTrue(TEXT("Second rewind succeeds"), SecondRewind.IsSuccess());
+	TestEqual(
+		TEXT("Second reset releases immediately once clones are ready"),
+		TimeLoop->GetCurrentPhase(),
+		EParadoxTimeLoopPhase::ActiveRun);
+	TestTrue(
+		TEXT("Every post-rewind run starts in Tactical Pause"),
+		TacticalPause && TacticalPause->IsPaused());
+	TestTrue(
+		TEXT("Third timeline can select a spawn while clones are waiting"),
+		TimeLoop->IsChronoSpawnSelectionOpen());
 	TestEqual(
 		TEXT("Two timelines are consolidated"),
 		TimeLoop->GetConsolidatedTimelineCount(),
@@ -805,8 +1128,8 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 						TwoTimelines[Index].AvatarPerceptionEntityId);
 				}
 			}
-			TestNull(
-				*FString::Printf(TEXT("Clone %d has no premature playback"), Index),
+			TestNotNull(
+				*FString::Printf(TEXT("Clone %d is prepared before technical barrier release"), Index),
 				Clone
 					? Clone->GetIntentReplayComponent()->GetActivePlaybackSession()
 					: nullptr);
@@ -816,6 +1139,72 @@ bool FParadoxTimeLoopConsolidationResetTest::RunTest(const FString& Parameters)
 			TwoTimelines[0].AvatarPerceptionEntityId,
 			TwoTimelines[1].AvatarPerceptionEntityId);
 	}
+
+	TestEqual(
+		TEXT("Clones start without requiring a selected player spawn"),
+		TimeLoop->GetCurrentPhase(),
+		EParadoxTimeLoopPhase::ActiveRun);
+	TestTrue(
+		TEXT("Runtime spawn selection remains open after clone replay starts"),
+		TimeLoop->IsChronoSpawnSelectionOpen());
+	TestFalse(
+		TEXT("Hidden player movement remains gated during late selection"),
+		TimeLoop->IsMovementAllowed());
+	TestEqual(
+		TEXT("Global player recording clock starts with clone replay"),
+		Player->GetIntentReplayComponent()->GetRecordingState(),
+		EIntentRecordingState::Recording);
+	TestTrue(TEXT("Player remains hidden until late spawn selection"), Player->IsHidden());
+	UPerceptionKnowledgeSourceComponent* HiddenPlayerSource =
+		Player->GetPerceptionKnowledgeSourceComponent();
+	TestTrue(
+		TEXT("Hidden player cannot publish semantic observations"),
+		HiddenPlayerSource
+			&& !HiddenPlayerSource->IsSourceEnabled()
+			&& !HiddenPlayerSource->IsSemanticallyRegistered());
+	if (PlayerOccupancy)
+	{
+		TestFalse(
+			TEXT("Hidden player does not occupy GridWorld during autonomous replay"),
+			PlayerOccupancy->IsActive());
+	}
+	TestEqual(
+		TEXT("Play may resume clones before the player selects a spawn"),
+		TacticalPause ? TacticalPause->RequestPlay()
+			: ETacticalPauseRequestResult::InvalidWorld,
+		ETacticalPauseRequestResult::Succeeded);
+	TestFalse(
+		TEXT("Play removes the forced Tactical Pause"),
+		TacticalPause && TacticalPause->IsPaused());
+	TestTrue(
+		TEXT("Play does not close late Chrono Spawn selection"),
+		TimeLoop->IsChronoSpawnSelectionOpen());
+
+	const FParadoxTimeLoopOperationResult LateSelection =
+		TimeLoop->RequestChronoSpawnInteraction(Spawn2);
+	TestTrue(TEXT("Player may select a spawn after replay already started"), LateSelection.IsSuccess());
+	TestFalse(
+		TEXT("Late selection closes runtime spawn selection"),
+		TimeLoop->IsChronoSpawnSelectionOpen());
+	TestTrue(
+		TEXT("Late selection enables player movement immediately"),
+		TimeLoop->IsMovementAllowed());
+	TestFalse(TEXT("Late-selected player becomes visible"), Player->IsHidden());
+	TestTrue(
+		TEXT("Late-selected player republishes its semantic Source"),
+		HiddenPlayerSource
+			&& HiddenPlayerSource->IsSourceEnabled()
+			&& HiddenPlayerSource->IsSemanticallyRegistered());
+	if (PlayerOccupancy)
+	{
+		TestTrue(
+			TEXT("Late-selected player immediately re-enters GridWorld occupancy"),
+			PlayerOccupancy->IsActive());
+	}
+	TestEqual(
+		TEXT("Late-selected player receives the next temporal index"),
+		Player->GetTemporalEntityComponent()->GetTemporalIndex(),
+		2);
 
 	return true;
 }
@@ -1792,48 +2181,55 @@ bool FParadoxFinalTimelineGameOverTest::RunTest(const FString& Parameters)
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride =
 		ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	UClass* PlayerControllerClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/Game/Characters/Astronaut/Blueprints/BP_PlayerController.BP_PlayerController_C"));
+	UClass* GameModeClass = LoadObject<UClass>(
+		nullptr,
+		TEXT("/Game/Logic/BP_TimeLoopGameMode.BP_TimeLoopGameMode_C"));
+	if (!TestNotNull(TEXT("Project Player Controller Blueprint loads"), PlayerControllerClass)
+		|| !TestNotNull(TEXT("Project Game Mode Blueprint loads"), GameModeClass))
+	{
+		return false;
+	}
 	AParadoxPlayerCharacter* Player =
 		TestWorld.World->SpawnActor<AParadoxPlayerCharacter>(
 			AParadoxPlayerCharacter::StaticClass(),
 			FTransform::Identity,
 			SpawnParameters);
-	AActor* Coordinator = TestWorld.World->SpawnActor<AActor>();
+	AParadoxPlayerController* PlayerController =
+		TestWorld.World->SpawnActor<AParadoxPlayerController>(
+			PlayerControllerClass,
+			FTransform::Identity,
+			SpawnParameters);
+	AParadoxCameraBoundsVolume* CameraBounds =
+		TestWorld.World->SpawnActor<AParadoxCameraBoundsVolume>();
 	AParadoxChronoSpawn* Spawn = SpawnChronoSpawn(
 		*TestWorld.World,
 		FVector::ZeroVector,
 		TEXT("FinalChronoSpawn"));
 	if (!TestNotNull(TEXT("Player exists"), Player)
-		|| !TestNotNull(TEXT("Coordinator exists"), Coordinator)
+		|| !TestNotNull(TEXT("Player Controller exists"), PlayerController)
+		|| !TestNotNull(TEXT("Camera Bounds exists"), CameraBounds)
 		|| !TestNotNull(TEXT("Final Chrono Spawn exists"), Spawn))
 	{
 		return false;
 	}
-
-	UParadoxTimeLoopComponent* TimeLoop =
-		NewObject<UParadoxTimeLoopComponent>(
-			Coordinator,
-			TEXT("FinalTimelineTimeLoop"),
-			RF_Transient);
-	Coordinator->AddInstanceComponent(TimeLoop);
-	TimeLoop->RegisterComponent();
-	TestWorld.StartPlay();
-
-	const TArray<AParadoxChronoSpawn*> Spawns = { Spawn };
-	FParadoxTimeLoopTestAccessor::ConfigureActiveRun(
-		*TimeLoop,
-		*Player,
-		Spawns,
-		*Spawn);
+	PlayerController->Possess(Player);
+	TestWorld.StartPlay(GameModeClass);
+	AParadoxGameMode* GameMode =
+		TestWorld.World->GetAuthGameMode<AParadoxGameMode>();
+	UParadoxTimeLoopComponent* TimeLoop = GameMode
+		? GameMode->GetTimeLoopComponent()
+		: nullptr;
+	if (!TestNotNull(TEXT("Paradox Game Mode exists"), GameMode)
+		|| !TestNotNull(TEXT("Authoritative Time Loop exists"), TimeLoop))
+	{
+		return false;
+	}
 	TestTrue(
-		TEXT("Player receives final temporal index"),
-		Player->GetTemporalEntityComponent()->AssignPlayer(0));
-	FIntentRecordingOptions RecordingOptions;
-	RecordingOptions.SourceLabel = TEXT("ParadoxAutomationFinalTimeline");
-	TestTrue(
-		TEXT("Final run recording starts"),
-		Player->GetIntentReplayComponent()
-			->StartRecording(RecordingOptions)
-			.Succeeded());
+		TEXT("Final run selects and records its Chrono Spawn"),
+		TimeLoop->RequestChronoSpawnInteraction(Spawn).IsSuccess());
 
 	const FParadoxTimeLoopOperationResult Result =
 		TimeLoop->RequestTimeRewind();
@@ -2033,7 +2429,7 @@ bool FParadoxPlayerDeathRunFailureTest::RunTest(
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxCloneTimeTravelDepartureTest,
-	"Paradox.TimeLoop.CloneTimeTravelDepartureRetiresInPlace",
+	"Paradox.TimeLoop.CloneTimeTravelDepartureUsesConfiguredCompletionBehavior",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 
 bool FParadoxCloneTimeTravelDepartureTest::RunTest(
@@ -2045,6 +2441,15 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 	{
 		return false;
 	}
+	UGameInstance* TestGameInstance = NewObject<UGameInstance>(GEngine);
+	if (!TestNotNull(TEXT("Clone-departure GameInstance exists"), TestGameInstance))
+	{
+		return false;
+	}
+	TestWorld.Context->OwningGameInstance = TestGameInstance;
+	TestWorld.World->SetGameInstance(TestGameInstance);
+	TestWorld.World->SetGameMode(FURL());
+	TestWorld.StartPlay();
 
 	FActorSpawnParameters SpawnParameters;
 	SpawnParameters.SpawnCollisionHandlingOverride =
@@ -2054,8 +2459,14 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 			AParadoxCloneCharacter::StaticClass(),
 			FTransform::Identity,
 			SpawnParameters);
+	AParadoxCloneCharacter* LegacyClone =
+		TestWorld.World->SpawnActor<AParadoxCloneCharacter>(
+			AParadoxCloneCharacter::StaticClass(),
+			FTransform(FVector(200.0, 0.0, 0.0)),
+			SpawnParameters);
 	AActor* Authority = TestWorld.World->SpawnActor<AActor>();
 	if (!TestNotNull(TEXT("Clone exists"), Clone)
+		|| !TestNotNull(TEXT("Legacy clone exists"), LegacyClone)
 		|| !TestNotNull(TEXT("Time-loop authority Actor exists"), Authority))
 	{
 		return false;
@@ -2067,36 +2478,106 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 			RF_Transient);
 	Authority->AddInstanceComponent(TimeLoop);
 	TimeLoop->RegisterComponent();
-	TestWorld.StartPlay();
+	UGridNavigationOccupancyComponent* GoapOccupancy =
+		UGridNavigationOccupancyComponent::FindOrAddAgentOccupancy(
+			*Clone,
+			42.0f,
+			192.0f,
+			true);
+	TestTrue(
+		TEXT("GOAP test clone begins with active GridWorld occupancy"),
+		GoapOccupancy && GoapOccupancy->IsActive());
 	FParadoxTimeLoopTestAccessor::ConfigureCloneDeparture(*TimeLoop, *Clone);
+	TestTrue(
+		TEXT("Clone Health is alive before GOAP handoff"),
+		Clone->GetHealthComponent()
+			&& Clone->GetHealthComponent()->IsAlive());
+	if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
+	{
+		TestTrue(
+			TEXT("Clone Oxygen component has begun play"),
+			Oxygen->HasBegunPlay());
+		Oxygen->SetRunConsumptionActive(true);
+		TestTrue(
+			TEXT("Clone oxygen consumption is active before GOAP handoff"),
+			Oxygen->IsRunConsumptionActive());
+	}
 
 	FString Diagnostic;
 	TestTrue(
-		TEXT("Authoritative clone departure succeeds"),
+		TEXT("Default clone departure schedules GOAP handoff"),
 		TimeLoop->CompleteCloneTimeTravelDeparture(*Clone, Diagnostic));
-	TestTrue(TEXT("Departed clone is hidden"), Clone->IsHidden());
-	TestFalse(
-		TEXT("Departed clone has no collision"),
-		Clone->GetActorEnableCollision());
 	TestEqual(
-		TEXT("Departed clone movement is disabled"),
+		TEXT("GOAP handoff is deferred until the action can finish"),
+		Clone->GetBehaviorCoordinator()->GetCurrentMode(),
+		EParadoxCloneBehaviorMode::Replay);
+	TestFalse(TEXT("GOAP clone remains visible before handoff"), Clone->IsHidden());
+	TestTrue(TEXT("GOAP clone retains collision before handoff"), Clone->GetActorEnableCollision());
+	TestWorld.Advance(0.001f);
+	TestEqual(
+		TEXT("Deferred handoff enters terminal GOAP mode"),
+		Clone->GetBehaviorCoordinator()->GetCurrentMode(),
+		EParadoxCloneBehaviorMode::Goap);
+	TestFalse(TEXT("GOAP placeholder clone remains visible"), Clone->IsHidden());
+	TestTrue(TEXT("GOAP placeholder clone retains collision"), Clone->GetActorEnableCollision());
+	TestEqual(
+		TEXT("GOAP placeholder clone movement is disabled"),
 		Clone->GetCharacterMovement()->MovementMode,
 		MOVE_None);
-	UPerceptionKnowledgeSourceComponent* Source =
+	TestTrue(
+		TEXT("GOAP placeholder clone keeps run oxygen consumption active"),
+		Clone->GetOxygenComponent()
+			&& Clone->GetOxygenComponent()->IsRunConsumptionActive());
+	UPerceptionKnowledgeSourceComponent* GoapSource =
 		Clone->GetPerceptionKnowledgeSourceComponent();
 	TestTrue(
-		TEXT("Departed clone semantic source is disabled"),
+		TEXT("GOAP placeholder clone remains a semantic source"),
+		GoapSource
+			&& GoapSource->IsSourceEnabled()
+			&& GoapSource->IsSemanticallyRegistered());
+	TestTrue(
+		TEXT("GOAP placeholder clone retains GridWorld occupancy"),
+		GoapOccupancy && GoapOccupancy->IsActive());
+
+	FParadoxTimeLoopTestAccessor::SetCloneTimeTravelCompletionBehavior(
+		*TimeLoop,
+		EParadoxCloneTimeTravelCompletionBehavior::RetireInPlace);
+	UGridNavigationOccupancyComponent* LegacyOccupancy =
+		UGridNavigationOccupancyComponent::FindOrAddAgentOccupancy(
+			*LegacyClone,
+			42.0f,
+			192.0f,
+			true);
+	FParadoxTimeLoopTestAccessor::ConfigureCloneDeparture(*TimeLoop, *LegacyClone);
+	TestTrue(
+		TEXT("Legacy clone retirement remains selectable"),
+		TimeLoop->CompleteCloneTimeTravelDeparture(*LegacyClone, Diagnostic));
+	TestTrue(TEXT("Legacy retired clone is hidden"), LegacyClone->IsHidden());
+	TestFalse(
+		TEXT("Legacy retired clone has no collision"),
+		LegacyClone->GetActorEnableCollision());
+	TestEqual(
+		TEXT("Legacy retired clone movement is disabled"),
+		LegacyClone->GetCharacterMovement()->MovementMode,
+		MOVE_None);
+	TestTrue(
+		TEXT("Legacy retired clone releases GridWorld occupancy"),
+		LegacyOccupancy && !LegacyOccupancy->IsActive());
+	UPerceptionKnowledgeSourceComponent* Source =
+		LegacyClone->GetPerceptionKnowledgeSourceComponent();
+	TestTrue(
+		TEXT("Legacy retired clone semantic source is disabled"),
 		Source && !Source->IsSourceEnabled());
 	TestTrue(
-		TEXT("Departed clone source is unregistered"),
+		TEXT("Legacy retired clone source is unregistered"),
 		Source
 			&& !Source->IsSemanticallyRegistered()
 			&& !Source->IsNativeStimuliSourceRegistered());
 	UParadoxTemporalVisionComponent* TemporalVision =
-		Clone->GetTemporalVisionComponent();
-	TestNotNull(TEXT("Departed clone still owns temporal sight"), TemporalVision);
+		LegacyClone->GetTemporalVisionComponent();
+	TestNotNull(TEXT("Legacy retired clone still owns temporal sight"), TemporalVision);
 	TestFalse(
-		TEXT("Departed clone temporal sight has no authority"),
+		TEXT("Legacy retired clone temporal sight has no authority"),
 		TemporalVision && TemporalVision->IsTemporalDetectionAuthoritative());
 	return true;
 }

@@ -21,13 +21,14 @@ namespace
 			TACTICALPAUSE_LOG_WARNING("TacticalPause.Status could not find a subsystem for World %s.", *GetNameSafe(World));
 			return;
 		}
-		TACTICALPAUSE_LOG_INFO("Status World=%s State=%d Selected=%.3f Applied=%.3f SelectedPreset=%s Presets=%d.",
+		TACTICALPAUSE_LOG_INFO("Status World=%s State=%d Selected=%.3f Applied=%.3f SelectedPreset=%s Presets=%d TemporalRenderingOverride=%s.",
 			*GetNameSafe(World),
 			static_cast<int32>(Subsystem->GetPlaybackState()),
 			Subsystem->GetSelectedPlaybackSpeed(),
 			Subsystem->GetAppliedPlaybackSpeed(),
 			*Subsystem->GetSelectedPresetId().ToString(),
-			Subsystem->GetAvailablePresets().Num());
+			Subsystem->GetAvailablePresets().Num(),
+			Subsystem->IsTemporalRenderingOverrideActive() ? TEXT("Active") : TEXT("Inactive"));
 	}
 
 	void Pause(UWorld* World)

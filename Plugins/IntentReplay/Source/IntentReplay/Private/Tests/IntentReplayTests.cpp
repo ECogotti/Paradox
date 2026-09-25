@@ -107,6 +107,23 @@ namespace IntentReplayTests
 		return Definition;
 	}
 
+	UGameplayActionDefinition* MakePauseReplayOnStartDefinition()
+	{
+		UGameplayActionDefinition* Definition =
+			NewObject<UGameplayActionDefinition>(
+				GetTransientPackage(),
+				NAME_None,
+				RF_Transient);
+		Definition->InstanceClass =
+			UIntentReplayPauseOnStartTestAction::StaticClass();
+		Definition->ActionTag = TAG_IntentReplay_Test_ActionChanged;
+		Definition->JournalRequirement =
+			EGameplayActionJournalRequirement::Required;
+		Definition->DefaultParameters.InitializeFromBagStruct(
+			UPropertyBag::GetOrCreateFromDescs({}));
+		return Definition;
+	}
+
 	FGameplayActionRequest MakeRequest(
 		UGameplayActionDefinition& Definition,
 		const int32 Priority = 0,
@@ -396,6 +413,94 @@ bool FIntentReplayAuthoritativeTimelineTest::RunTest(const FString& Parameters)
 		LegacyTrack->ValidateTrack().bValid);
 
 	Source.Actor->Destroy();
+	DestroyWorld(World);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FIntentReplayReentrantPauseSchedulingTest,
+	"IntentReplay.Playback.ReentrantPauseStopsDueBatch",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FIntentReplayReentrantPauseSchedulingTest::RunTest(
+	const FString& Parameters)
+{
+	using namespace IntentReplayTests;
+	UWorld* World = MakeWorld(TEXT("IntentReplayReentrantPauseWorld"));
+	if (!TestNotNull(TEXT("Test world exists"), World))
+	{
+		return false;
+	}
+
+	const FEntity Entity = MakeEntity(*World);
+	UGameplayActionDefinition* PauseDefinition =
+		MakePauseReplayOnStartDefinition();
+	UGameplayActionDefinition* FollowingDefinition =
+		MakeWaitDefinition(0.0);
+	TestTrue(
+		TEXT("Same-time recording starts"),
+		Entity.Replay->StartRecording(FIntentRecordingOptions()).Succeeded());
+	TestTrue(
+		TEXT("Pause-on-start source action is accepted"),
+		Entity.Actions->SubmitAction(
+			MakeRequest(*PauseDefinition)).IsAccepted());
+	TestTrue(
+		TEXT("Following source action is accepted at the same timestamp"),
+		Entity.Actions->SubmitAction(
+			MakeRequest(*FollowingDefinition)).IsAccepted());
+	TestTrue(
+		TEXT("Same-time recording finalizes"),
+		Entity.Replay->RequestStopRecording(
+			EIntentRecordingFinalizeMode::Immediate).Succeeded());
+
+	UIntentReplayTrack* Track = Entity.Replay->GetLastFinalizedTrack();
+	if (!TestNotNull(TEXT("Two-entry track exists"), Track)
+		|| !TestEqual(TEXT("Track contains two due entries"),
+			Track ? Track->GetEntryCount() : 0,
+			2))
+	{
+		Entity.Actor->Destroy();
+		DestroyWorld(World);
+		return false;
+	}
+	const TArray<FRecordedIntent>& Entries = Track->GetEntries();
+	TestTrue(
+		TEXT("Recorded entries share the same due time"),
+		FMath::IsNearlyEqual(
+			Entries[0].RelativeAcceptedTimeSeconds,
+			Entries[1].RelativeAcceptedTimeSeconds,
+			UE_SMALL_NUMBER));
+
+	const FIntentReplayPrepareResult Prepare =
+		Entity.Replay->PrepareReplay(
+			Track,
+			FIntentReplayPlaybackOptions());
+	TestTrue(TEXT("Replay prepares"), Prepare.WasAccepted());
+	TestTrue(TEXT("Replay starts"), Entity.Replay->StartReplay().Succeeded());
+	TestEqual(
+		TEXT("First due action pauses replay reentrantly"),
+		Entity.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Paused);
+	UIntentReplayPlaybackSession* Session =
+		Entity.Replay->GetActivePlaybackSession();
+	TestEqual(
+		TEXT("Reentrant pause prevents the second due action from submitting"),
+		Session ? Session->GetNextEntryIndex() : INDEX_NONE,
+		1);
+
+	TestTrue(
+		TEXT("Paused batch resumes"),
+		Entity.Replay->ResumeReplay().Succeeded());
+	TestEqual(
+		TEXT("Resume submits the remaining due action and completes"),
+		Entity.Replay->GetPlaybackState(),
+		EIntentReplayPlaybackState::Completed);
+	TestEqual(
+		TEXT("Both due entries are processed exactly once"),
+		Session ? Session->GetNextEntryIndex() : INDEX_NONE,
+		2);
+
+	Entity.Actor->Destroy();
 	DestroyWorld(World);
 	return true;
 }

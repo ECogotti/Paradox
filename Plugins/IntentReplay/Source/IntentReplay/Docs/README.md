@@ -11,6 +11,7 @@ Modulo runtime responsabile di:
 - validazione ricorsiva dei parametri;
 - preparazione asincrona e compatibilità;
 - scheduling one-shot del replay;
+- interruzione reentrancy-safe dei batch di entry dovute dopo ogni transizione fuori da `Playing`;
 - barriera di completamento sulla durata totale registrata, inclusa l'eventuale coda inattiva;
 - isolamento di sessioni, handle e journal.
 

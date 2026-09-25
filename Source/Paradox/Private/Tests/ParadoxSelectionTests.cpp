@@ -2,12 +2,17 @@
 
 #if WITH_DEV_AUTOMATION_TESTS && WITH_EDITOR
 
+#include "Components/StaticMeshComponent.h"
+#include "Components/TextRenderComponent.h"
 #include "Components/WidgetComponent.h"
+#include "Components/WorldStateParticipantComponent.h"
 #include "Controllers/ParadoxPlayerController.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerState.h"
+#include "GameFramework/WorldSettings.h"
 #include "Interaction/ParadoxSelectionTypes.h"
 #include "Interaction/ParadoxInteractionComponent.h"
 #include "Navigation/GridNavigationData.h"
@@ -19,6 +24,8 @@
 #include "Puzzles/ParadoxVerticalBarrier.h"
 #include "Puzzles/PressurePlate.h"
 #include "PuzzleOverlay/ParadoxPuzzleCircuitRendererComponent.h"
+#include "Receivers/PuzzleReceiverComponent.h"
+#include "Receivers/PuzzleReceiverTypes.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "TimeLoop/ParadoxChronoSpawn.h"
 #include "SmartObjectComponent.h"
@@ -226,15 +233,21 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 		*TestWorld.World,
 		TEXT("ExternalWidgetAnchor"),
 		FVector(100.0f, 0.0f, 0.0f));
+	APlayerState* PauserState = Spawn<APlayerState>(
+		*TestWorld.World,
+		TEXT("WidgetTestPauser"));
 	if (!TestNotNull(TEXT("Widget controller exists"), Controller)
 		|| !TestNotNull(TEXT("Widget selectable exists"), Actor)
-		|| !TestNotNull(TEXT("External widget anchor Actor exists"), ExternalAnchorActor))
+		|| !TestNotNull(TEXT("External widget anchor Actor exists"), ExternalAnchorActor)
+		|| !TestNotNull(TEXT("Widget test pauser exists"), PauserState))
 	{
 		return false;
 	}
 	Actor->Selectable->SelectionWidgetClass = UParadoxSelectionTestWidget::StaticClass();
 	Actor->Selectable->WidgetAnchor.OtherActor = ExternalAnchorActor;
 	TestWorld.StartPlay();
+	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(PauserState);
+	TestTrue(TEXT("Widget test World is paused before first selection"), TestWorld.World->IsPaused());
 
 	const FHitResult Hit = MakeHit(*Actor);
 	AddExpectedError(TEXT("ignored widget anchor"), EAutomationExpectedErrorFlags::Contains, 1);
@@ -252,8 +265,30 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 	TestFalse(TEXT("Selected widget cannot affect navigation"), WidgetComponent->CanEverAffectNavigation());
 	TestEqual(TEXT("Widget uses World space"), WidgetComponent->GetWidgetSpace(), EWidgetSpace::World);
 	TestTrue(TEXT("Widget is rendered from both sides"), WidgetComponent->GetTwoSided());
+	TestTrue(
+		TEXT("World widget can redraw while Tactical Pause stops the World"),
+		WidgetComponent->PrimaryComponentTick.bTickEvenWhenPaused);
+	TestTrue(
+		TEXT("Selected widget can update before its first scene render"),
+		WidgetComponent->GetTickWhenOffscreen());
+	TestTrue(
+		TEXT("Selected widget tick is explicitly enabled"),
+		WidgetComponent->IsComponentTickEnabled());
+	TestWorld.World->Tick(LEVELTICK_All, 1.0f / 60.0f);
+	TestTrue(
+		TEXT("World remains paused through the widget's first update frame"),
+		TestWorld.World->IsPaused());
+	TestTrue(
+		TEXT("First paused update keeps the newly selected widget visible"),
+		WidgetComponent->IsVisible());
+	TestTrue(
+		TEXT("First paused update keeps widget redraw ticking without Play"),
+		WidgetComponent->IsComponentTickEnabled());
 	TestEqual(TEXT("External widget anchors fall back to the selected Actor root"), WidgetComponent->GetAttachParent(), Actor->Root.Get());
 	TestTrue(TEXT("Camera-facing updates tick only while the widget is visible"), Actor->Selectable->IsComponentTickEnabled());
+	TestTrue(
+		TEXT("Camera-facing updates can run while Tactical Pause stops the World"),
+		Actor->Selectable->PrimaryComponentTick.bTickEvenWhenPaused);
 	FVector CameraLocation = FVector::ZeroVector;
 	FRotator CameraRotation = FRotator::ZeroRotator;
 	Controller->GetPlayerViewPoint(CameraLocation, CameraRotation);
@@ -273,6 +308,7 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 	TestFalse(TEXT("Empty-world RMB has no selectable widget hit"), Controller->Selection->HandleSelectionPointerHit(FHitResult(), false));
 	TestNull(TEXT("Empty-world RMB clears widget selection"), Controller->Selection->GetSelectedActor());
 	TestFalse(TEXT("Empty-world RMB hides widget"), WidgetComponent->IsVisible());
+	TestFalse(TEXT("Hidden widget stops its own redraw tick"), WidgetComponent->IsComponentTickEnabled());
 	TestEqual(TEXT("Empty-world RMB disables widget collision"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 	TestFalse(TEXT("Hidden widget stops camera-facing updates"), Actor->Selectable->IsComponentTickEnabled());
 	TestNull(TEXT("Empty-world RMB clears widget Actor context"), Widget->GetSelectedActor());
@@ -293,6 +329,7 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Hidden widget no longer intercepts cursor queries"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 	TestNull(TEXT("Restore Started clears widget Actor context"), Widget->GetSelectedActor());
 	Controller->Selection->ResetSelectionState();
+	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(nullptr);
 	return true;
 }
 
@@ -454,23 +491,78 @@ bool FParadoxSelectionNativeCompositionTest::RunTest(const FString& Parameters)
 	TestNotNull(TEXT("Pressure Plate owns native Selectable Component"), PressurePlate ? PressurePlate->SelectableComponent.Get() : nullptr);
 	TestNotNull(TEXT("Vertical Barrier owns native Selectable Component"), VerticalBarrier ? VerticalBarrier->SelectableComponent.Get() : nullptr);
 	TestNotNull(TEXT("Chrono Spawn owns native Selectable Component"), ChronoSpawn ? ChronoSpawn->GetSelectableComponent() : nullptr);
+	const UStaticMeshComponent* ChronoSpawnMesh = ChronoSpawn
+		? ChronoSpawn->FindComponentByClass<UStaticMeshComponent>()
+		: nullptr;
+	TestNotNull(TEXT("Chrono Spawn owns its selection mesh"), ChronoSpawnMesh);
+	TestEqual(
+		TEXT("Chrono Spawn selection mesh keeps constructor scale one"),
+		ChronoSpawnMesh ? ChronoSpawnMesh->GetRelativeScale3D() : FVector::ZeroVector,
+		FVector::OneVector);
+	TestNull(
+		TEXT("Chrono Spawn no longer owns a native state label"),
+		ChronoSpawn ? ChronoSpawn->FindComponentByClass<UTextRenderComponent>() : nullptr);
 	TestTrue(TEXT("Pressure Plate enables puzzle-circuit presentation"),
 		PressurePlate && PressurePlate->SelectableComponent
 			&& PressurePlate->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
 	TestTrue(TEXT("Vertical Barrier enables puzzle-circuit presentation"),
 		VerticalBarrier && VerticalBarrier->SelectableComponent
 			&& VerticalBarrier->SelectableComponent->bShowPuzzleConnectionsWhenSelected);
-	TestFalse(TEXT("Chrono Spawn does not enable puzzle-circuit presentation"),
+	TestTrue(TEXT("Chrono Spawn enables puzzle-circuit presentation"),
 		ChronoSpawn && ChronoSpawn->GetSelectableComponent()
 			&& ChronoSpawn->GetSelectableComponent()->bShowPuzzleConnectionsWhenSelected);
+	TestFalse(TEXT("Chrono Spawn does not request interaction-cell presentation"),
+		ChronoSpawn && ChronoSpawn->GetSelectableComponent()
+			&& ChronoSpawn->GetSelectableComponent()->bShowInteractionCellsWhenSelected);
+	TestNull(TEXT("Chrono Spawn has no selection interaction widget"),
+		ChronoSpawn && ChronoSpawn->GetSelectableComponent()
+			? ChronoSpawn->GetSelectableComponent()->SelectionWidgetClass.Get()
+			: nullptr);
+	TestNotNull(TEXT("Chrono Spawn owns a native Puzzle Receiver"),
+		ChronoSpawn ? ChronoSpawn->GetPuzzleReceiverComponent() : nullptr);
+	const UWorldStateParticipantComponent* ChronoSpawnWorldState = ChronoSpawn
+		? ChronoSpawn->GetWorldStateParticipantComponent()
+		: nullptr;
+	TestNotNull(
+		TEXT("Chrono Spawn owns native World State participation"),
+		ChronoSpawnWorldState);
+	TestFalse(
+		TEXT("Chrono Spawn World State does not own level-placed existence"),
+		ChronoSpawnWorldState && ChronoSpawnWorldState->bCaptureExistence);
+	TestTrue(
+		TEXT("Chrono Spawn World State restores its authored transform"),
+		ChronoSpawnWorldState && ChronoSpawnWorldState->bCaptureActorTransform);
+	TestTrue(
+		TEXT("Chrono Spawn World State captures only the enabled baseline property"),
+		ChronoSpawnWorldState
+			&& ChronoSpawnWorldState->CapturedProperties.Num() == 1
+			&& ChronoSpawnWorldState->CapturedProperties[0].PropertyName
+				== TEXT("bChronoSpawnEnabled"));
+	TestEqual(TEXT("Chrono Spawn Receiver uses automatic activation"),
+		ChronoSpawn && ChronoSpawn->GetPuzzleReceiverComponent()
+			? ChronoSpawn->GetPuzzleReceiverComponent()->ActivationMode
+			: EPuzzleReceiverActivationMode::Manual,
+		EPuzzleReceiverActivationMode::Automatic);
 	TestNotNull(TEXT("Pressure Plate owns native Paradox Interaction Component"), PressurePlate ? PressurePlate->InteractionComponent.Get() : nullptr);
 	TestNotNull(TEXT("Vertical Barrier owns native Paradox Interaction Component"), VerticalBarrier ? VerticalBarrier->InteractionComponent.Get() : nullptr);
 	TestNotNull(TEXT("Pressure Plate owns native Smart Object Component"), PressurePlate ? PressurePlate->SmartObjectComponent.Get() : nullptr);
 	TestNotNull(TEXT("Vertical Barrier owns native Smart Object Component"), VerticalBarrier ? VerticalBarrier->SmartObjectComponent.Get() : nullptr);
-	TestNull(TEXT("Chrono Spawn intentionally has no Paradox Interaction Component"),
+	TestNotNull(TEXT("Chrono Spawn owns a native Paradox Interaction Component"),
 		ChronoSpawn ? ChronoSpawn->FindComponentByClass<UParadoxInteractionComponent>() : nullptr);
 	TestNull(TEXT("Chrono Spawn intentionally has no Smart Object Component"),
 		ChronoSpawn ? ChronoSpawn->FindComponentByClass<USmartObjectComponent>() : nullptr);
+	const UFunction* StateInitializationHook = AParadoxChronoSpawn::StaticClass()
+		->FindFunctionByName(
+			GET_FUNCTION_NAME_CHECKED(
+				AParadoxChronoSpawn,
+				ReceiveStateInitialized));
+	TestNotNull(
+		TEXT("Chrono Spawn exposes a Blueprint state-initialization hook"),
+		StateInitializationHook);
+	TestTrue(
+		TEXT("Chrono Spawn state-initialization hook is a Blueprint event"),
+		StateInitializationHook
+			&& StateInitializationHook->HasAnyFunctionFlags(FUNC_BlueprintEvent));
 	const AParadoxPlayerController* Controller = GetDefault<AParadoxPlayerController>();
 	TestNotNull(TEXT("Paradox Player Controller owns the puzzle-circuit renderer"),
 		Controller ? Controller->GetPuzzleCircuitRendererComponent() : nullptr);

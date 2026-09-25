@@ -2,9 +2,12 @@
 
 #include "Characters/ParadoxCharacter.h"
 #include "Engine/World.h"
+#include "GameModes/ParadoxGameMode.h"
 #include "Health/ParadoxHealthComponent.h"
 #include "Oxygen/ParadoxOxygenDepletionDamageType.h"
+#include "Oxygen/ParadoxOxygenWorldSubsystem.h"
 #include "Paradox.h"
+#include "TimeLoop/ParadoxTimeLoopComponent.h"
 
 namespace
 {
@@ -17,13 +20,26 @@ UParadoxOxygenComponent::UParadoxOxygenComponent()
 	SetIsReplicatedByDefault(false);
 }
 
+float UParadoxOxygenComponent::GetOxygenDurationSeconds() const
+{
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->GetSharedDurationSeconds()
+		: OxygenDurationSeconds;
+}
+
 float UParadoxOxygenComponent::GetRemainingOxygenSeconds() const
 {
-	return CalculateProjectedRemainingSeconds();
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->GetSharedRemainingSeconds()
+		: CalculateProjectedRemainingSeconds();
 }
 
 float UParadoxOxygenComponent::GetNormalizedOxygen() const
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		return SharedOxygenSubsystem->GetSharedNormalizedOxygen();
+	}
 	return OxygenDurationSeconds > UE_SMALL_NUMBER
 		? FMath::Clamp(
 			GetRemainingOxygenSeconds() / OxygenDurationSeconds,
@@ -34,11 +50,51 @@ float UParadoxOxygenComponent::GetNormalizedOxygen() const
 
 int32 UParadoxOxygenComponent::GetWholeSecondsRemaining() const
 {
-	return CalculateWholeSeconds(GetRemainingOxygenSeconds());
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->GetSharedWholeSecondsRemaining()
+		: CalculateWholeSeconds(GetRemainingOxygenSeconds());
+}
+
+bool UParadoxOxygenComponent::IsOxygenDepleted() const
+{
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->IsSharedOxygenDepleted()
+		: bIsDepleted;
+}
+
+bool UParadoxOxygenComponent::IsConsumptionBlocked() const
+{
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->IsSharedConsumptionBlocked()
+		: !ConsumptionBlocks.IsEmpty();
+}
+
+float UParadoxOxygenComponent::GetEffectiveConsumptionSpeed() const
+{
+	return IsUsingSharedGlobalOxygen()
+		? SharedOxygenSubsystem->GetSharedEffectiveConsumptionSpeed()
+		: EffectiveConsumptionSpeed;
+}
+
+EParadoxOxygenMode UParadoxOxygenComponent::GetOxygenMode() const
+{
+	return IsUsingSharedGlobalOxygen()
+		? EParadoxOxygenMode::SharedGlobal
+		: EParadoxOxygenMode::PerPawn;
+}
+
+bool UParadoxOxygenComponent::IsUsingSharedGlobalOxygen() const
+{
+	return SharedOxygenSubsystem.IsValid()
+		&& SharedOxygenSubsystem->IsSharedGlobalEnabled();
 }
 
 float UParadoxOxygenComponent::ConsumeOxygenSeconds(const float Seconds)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		return SharedOxygenSubsystem->ConsumeSharedOxygenSeconds(Seconds);
+	}
 	if (Seconds <= 0.0f || !FMath::IsFinite(Seconds) || bIsDepleted)
 	{
 		return 0.0f;
@@ -68,6 +124,10 @@ float UParadoxOxygenComponent::ConsumeOxygenSeconds(const float Seconds)
 
 float UParadoxOxygenComponent::RestoreOxygenSeconds(const float Seconds)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		return SharedOxygenSubsystem->RestoreSharedOxygenSeconds(Seconds);
+	}
 	if (Seconds <= 0.0f || !FMath::IsFinite(Seconds) || bIsDepleted)
 	{
 		return 0.0f;
@@ -90,6 +150,10 @@ float UParadoxOxygenComponent::RestoreOxygenSeconds(const float Seconds)
 
 float UParadoxOxygenComponent::SetRemainingOxygenSeconds(const float Seconds)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		return SharedOxygenSubsystem->SetSharedRemainingOxygenSeconds(Seconds);
+	}
 	if (!FMath::IsFinite(Seconds) || bIsDepleted)
 	{
 		return GetRemainingOxygenSeconds();
@@ -119,6 +183,10 @@ float UParadoxOxygenComponent::SetRemainingOxygenSeconds(const float Seconds)
 
 float UParadoxOxygenComponent::RefillOxygen()
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		return SharedOxygenSubsystem->RefillSharedOxygen();
+	}
 	if (bIsDepleted)
 	{
 		return 0.0f;
@@ -128,6 +196,11 @@ float UParadoxOxygenComponent::RefillOxygen()
 
 void UParadoxOxygenComponent::ResetOxygen()
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		SharedOxygenSubsystem->ResetSharedOxygen();
+		return;
+	}
 	ClearScheduledTimers();
 	const float OldRemaining = CalculateProjectedRemainingSeconds();
 	const float OldSpeed = EffectiveConsumptionSpeed;
@@ -162,6 +235,18 @@ UParadoxOxygenComponent::AddConsumptionSpeedModifier(
 	UObject* Source,
 	const float Multiplier)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		const FParadoxOxygenSpeedModifierHandle Handle =
+			SharedOxygenSubsystem->AddSharedConsumptionSpeedModifier(
+				Source,
+				Multiplier);
+		if (Handle.IsValid())
+		{
+			OwnedSharedSpeedModifierHandles.Add(Handle.Id);
+		}
+		return Handle;
+	}
 	FParadoxOxygenSpeedModifierHandle Handle;
 	if (!IsValid(Source)
 		|| !FMath::IsFinite(Multiplier)
@@ -203,6 +288,16 @@ UParadoxOxygenComponent::AddConsumptionSpeedModifier(
 bool UParadoxOxygenComponent::RemoveConsumptionSpeedModifier(
 	const FParadoxOxygenSpeedModifierHandle Handle)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		const bool bRemoved = SharedOxygenSubsystem
+			->RemoveSharedConsumptionSpeedModifier(Handle);
+		if (bRemoved)
+		{
+			OwnedSharedSpeedModifierHandles.Remove(Handle.Id);
+		}
+		return bRemoved;
+	}
 	if (!Handle.IsValid() || !SpeedModifiers.Contains(Handle.Id))
 	{
 		return false;
@@ -228,6 +323,16 @@ bool UParadoxOxygenComponent::RemoveConsumptionSpeedModifier(
 FParadoxOxygenBlockHandle UParadoxOxygenComponent::AddConsumptionBlock(
 	UObject* Source)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		const FParadoxOxygenBlockHandle Handle =
+			SharedOxygenSubsystem->AddSharedConsumptionBlock(Source);
+		if (Handle.IsValid())
+		{
+			OwnedSharedBlockHandles.Add(Handle.Id);
+		}
+		return Handle;
+	}
 	FParadoxOxygenBlockHandle Handle;
 	if (!IsValid(Source))
 	{
@@ -261,6 +366,16 @@ FParadoxOxygenBlockHandle UParadoxOxygenComponent::AddConsumptionBlock(
 bool UParadoxOxygenComponent::RemoveConsumptionBlock(
 	const FParadoxOxygenBlockHandle Handle)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		const bool bRemoved =
+			SharedOxygenSubsystem->RemoveSharedConsumptionBlock(Handle);
+		if (bRemoved)
+		{
+			OwnedSharedBlockHandles.Remove(Handle.Id);
+		}
+		return bRemoved;
+	}
 	if (!Handle.IsValid() || !ConsumptionBlocks.Contains(Handle.Id))
 	{
 		return false;
@@ -285,6 +400,14 @@ void UParadoxOxygenComponent::SetRunConsumptionActive(const bool bActive)
 	const bool bShouldActivate = bActive
 		&& HealthComponent.IsValid()
 		&& HealthComponent->IsAlive();
+	if (IsUsingSharedGlobalOxygen())
+	{
+		bRunConsumptionActive = bShouldActivate;
+		SharedOxygenSubsystem->SetParticipantActive(
+			*this,
+			bShouldActivate);
+		return;
+	}
 	if (bRunConsumptionActive == bShouldActivate)
 	{
 		if (bShouldActivate)
@@ -330,12 +453,54 @@ void UParadoxOxygenComponent::BeginPlay()
 	HealthComponent->OnDeath.AddUniqueDynamic(
 		this,
 		&ThisClass::HandleHealthDeath);
+
+	SharedOxygenSubsystem = GetWorld()
+		? GetWorld()->GetSubsystem<UParadoxOxygenWorldSubsystem>()
+		: nullptr;
+	if (IsUsingSharedGlobalOxygen())
+	{
+		const float PreviousRemainingSeconds = RemainingOxygenSeconds;
+		BindSharedOxygen();
+		SharedOxygenSubsystem->RegisterParticipant(*this);
+
+		// Presentation may already observe this component before Actor BeginPlay. Publish the
+		// authority handoff immediately so it does not display the per-Pawn fallback until the
+		// first shared countdown event.
+		OnOxygenChanged.Broadcast(
+			PreviousRemainingSeconds,
+			SharedOxygenSubsystem->GetSharedRemainingSeconds(),
+			SharedOxygenSubsystem->GetSharedDurationSeconds(),
+			SharedOxygenSubsystem->GetSharedNormalizedOxygen());
+	}
+	else
+	{
+		SharedOxygenSubsystem.Reset();
+	}
 }
 
 void UParadoxOxygenComponent::EndPlay(
 	const EEndPlayReason::Type EndPlayReason)
 {
 	ClearScheduledTimers();
+	if (SharedOxygenSubsystem.IsValid())
+	{
+		SharedOxygenSubsystem->SetParticipantActive(*this, false);
+		for (const FGuid& Id : OwnedSharedSpeedModifierHandles)
+		{
+			FParadoxOxygenSpeedModifierHandle Handle;
+			Handle.Id = Id;
+			SharedOxygenSubsystem->RemoveSharedConsumptionSpeedModifier(Handle);
+		}
+		for (const FGuid& Id : OwnedSharedBlockHandles)
+		{
+			FParadoxOxygenBlockHandle Handle;
+			Handle.Id = Id;
+			SharedOxygenSubsystem->RemoveSharedConsumptionBlock(Handle);
+		}
+		SharedOxygenSubsystem->UnregisterParticipant(*this);
+	}
+	UnbindSharedOxygen();
+	SharedOxygenSubsystem.Reset();
 	if (HealthComponent.IsValid())
 	{
 		HealthComponent->OnDeath.RemoveDynamic(
@@ -345,6 +510,8 @@ void UParadoxOxygenComponent::EndPlay(
 	HealthComponent.Reset();
 	SpeedModifiers.Reset();
 	ConsumptionBlocks.Reset();
+	OwnedSharedSpeedModifierHandles.Reset();
+	OwnedSharedBlockHandles.Reset();
 	bRunConsumptionActive = false;
 	Super::EndPlay(EndPlayReason);
 }
@@ -619,11 +786,124 @@ void UParadoxOxygenComponent::HandleWholeSecondTimer()
 	}
 }
 
+void UParadoxOxygenComponent::BindSharedOxygen()
+{
+	UnbindSharedOxygen();
+	if (!SharedOxygenSubsystem.IsValid())
+	{
+		return;
+	}
+	SharedOxygenSubsystem->OnGlobalOxygenChangedNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedOxygenChanged);
+	SharedOxygenSubsystem->OnGlobalWholeSecondChangedNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedWholeSecondChanged);
+	SharedOxygenSubsystem->OnGlobalConsumptionSpeedChangedNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedConsumptionSpeedChanged);
+	SharedOxygenSubsystem->OnGlobalConsumptionBlockedChangedNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedConsumptionBlockedChanged);
+	SharedOxygenSubsystem->OnGlobalOxygenDepletedNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedOxygenDepleted);
+	SharedOxygenSubsystem->OnGlobalOxygenResetNative().AddUObject(
+		this,
+		&ThisClass::HandleSharedOxygenReset);
+}
+
+void UParadoxOxygenComponent::UnbindSharedOxygen()
+{
+	if (!SharedOxygenSubsystem.IsValid())
+	{
+		return;
+	}
+	SharedOxygenSubsystem->OnGlobalOxygenChangedNative().RemoveAll(this);
+	SharedOxygenSubsystem->OnGlobalWholeSecondChangedNative().RemoveAll(this);
+	SharedOxygenSubsystem->OnGlobalConsumptionSpeedChangedNative().RemoveAll(this);
+	SharedOxygenSubsystem->OnGlobalConsumptionBlockedChangedNative().RemoveAll(this);
+	SharedOxygenSubsystem->OnGlobalOxygenDepletedNative().RemoveAll(this);
+	SharedOxygenSubsystem->OnGlobalOxygenResetNative().RemoveAll(this);
+}
+
+void UParadoxOxygenComponent::HandleSharedOxygenChanged(
+	const float OldRemainingSeconds,
+	const float NewRemainingSeconds,
+	const float DurationSeconds,
+	const float NormalizedOxygen)
+{
+	OnOxygenChanged.Broadcast(
+		OldRemainingSeconds,
+		NewRemainingSeconds,
+		DurationSeconds,
+		NormalizedOxygen);
+}
+
+void UParadoxOxygenComponent::HandleSharedWholeSecondChanged(
+	const int32 WholeSecondsRemaining,
+	const float RemainingSeconds,
+	const float NormalizedOxygen)
+{
+	OnWholeSecondChanged.Broadcast(
+		WholeSecondsRemaining,
+		RemainingSeconds,
+		NormalizedOxygen);
+}
+
+void UParadoxOxygenComponent::HandleSharedConsumptionSpeedChanged(
+	const float OldSpeed,
+	const float NewSpeed)
+{
+	OnConsumptionSpeedChanged.Broadcast(OldSpeed, NewSpeed);
+}
+
+void UParadoxOxygenComponent::HandleSharedConsumptionBlockedChanged(
+	const bool bIsBlocked)
+{
+	OnConsumptionBlockedChanged.Broadcast(bIsBlocked);
+}
+
+void UParadoxOxygenComponent::HandleSharedOxygenDepleted()
+{
+	OnOxygenDepleted.Broadcast();
+	const AParadoxGameMode* GameMode = GetWorld()
+		? Cast<AParadoxGameMode>(GetWorld()->GetAuthGameMode())
+		: nullptr;
+	const UParadoxTimeLoopComponent* TimeLoop = GameMode
+		? GameMode->GetTimeLoopComponent()
+		: nullptr;
+	if (TimeLoop && TimeLoop->IsTimeLoopEnabled())
+	{
+		return;
+	}
+	if (HealthComponent.IsValid() && HealthComponent->IsAlive())
+	{
+		HealthComponent->Kill(
+			nullptr,
+			GetOwner(),
+			UParadoxOxygenDepletionDamageType::StaticClass());
+	}
+}
+
+void UParadoxOxygenComponent::HandleSharedOxygenReset()
+{
+	OwnedSharedSpeedModifierHandles.Reset();
+	OwnedSharedBlockHandles.Reset();
+	OnOxygenReset.Broadcast();
+}
+
 void UParadoxOxygenComponent::HandleHealthDeath(
 	const UDamageType* DamageType,
 	AController* InstigatedBy,
 	AActor* DamageCauser)
 {
+	if (IsUsingSharedGlobalOxygen())
+	{
+		bRunConsumptionActive = false;
+		SharedOxygenSubsystem->SetParticipantActive(*this, false);
+		return;
+	}
 	SynchronizeElapsedTime(true);
 	bRunConsumptionActive = false;
 	ClearScheduledTimers();

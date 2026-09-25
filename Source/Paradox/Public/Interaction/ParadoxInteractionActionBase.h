@@ -161,6 +161,7 @@ private:
 		FParadoxInteractionActionParameters& OutParameters,
 		FGameplayTag& OutFailureReason,
 		FString& OutDiagnostic) const;
+	bool RequiresSmartObjectSlot() const;
 	bool ResolveCurrentContext(
 		FParadoxInteractionOption& OutOption,
 		EParadoxInteractionRequestStatus& OutStatus,

@@ -7,6 +7,7 @@
 #include "ParadoxGameplayHUDComponent.generated.h"
 
 class AParadoxCharacter;
+class AParadoxChronoSpawn;
 class AParadoxPlayerController;
 class APawn;
 class UParadoxGameplayHUDWidget;
@@ -63,6 +64,9 @@ public:
 	/** Used by Player Controller input so hidden HUDs cannot change mode unexpectedly. */
 	bool CanToggleHUDModeFromInput() const;
 
+	/** True when the current mouse position resolves to a hit-testable child of this HUD. */
+	bool IsPointerOverInteractiveHUD() const;
+
 	UPROPERTY(BlueprintAssignable, Category = "Paradox|Gameplay HUD|Events")
 	FParadoxGameplayHUDModeChanged OnHUDModeChanged;
 
@@ -117,6 +121,7 @@ private:
 	void BindTimeLoop();
 	void UnbindTimeLoop();
 	UParadoxTimeLoopComponent* ResolveTimeLoopComponent() const;
+	static bool IsTimeLoopPhaseVisible(EParadoxTimeLoopPhase Phase);
 
 	UFUNCTION()
 	void HandlePossessedPawnChanged(APawn* OldPawn, APawn* NewPawn);
@@ -125,6 +130,9 @@ private:
 	void HandleTimeLoopPhaseChanged(
 		EParadoxTimeLoopPhase PreviousPhase,
 		EParadoxTimeLoopPhase NewPhase);
+
+	UFUNCTION()
+	void HandleChronoSpawnSelected(AParadoxChronoSpawn* ChronoSpawn);
 
 	UPROPERTY(Transient)
 	TObjectPtr<UParadoxGameplayHUDWidget> GameplayHUDWidget = nullptr;
@@ -144,4 +152,8 @@ private:
 	EParadoxGameplayHUDMode CurrentMode = EParadoxGameplayHUDMode::Normal;
 	bool bHUDVisible = false;
 	bool bEndingPlay = false;
+
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FParadoxGameplayHUDTestAccessor;
+#endif
 };

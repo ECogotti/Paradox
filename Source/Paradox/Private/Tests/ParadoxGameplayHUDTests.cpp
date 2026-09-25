@@ -22,6 +22,11 @@
 
 struct FParadoxGameplayHUDTestAccessor
 {
+	static bool IsTimeLoopPhaseVisible(const EParadoxTimeLoopPhase Phase)
+	{
+		return UParadoxGameplayHUDComponent::IsTimeLoopPhaseVisible(Phase);
+	}
+
 	static UWidgetSwitcher* GetModeSwitcher(UParadoxGameplayHUDWidget& Widget)
 	{
 		return Widget.HUDModeSwitcher.Get();
@@ -179,6 +184,26 @@ bool FParadoxGameplayHUDArchitectureTest::RunTest(const FString& Parameters)
 		TEXT("root no longer exposes a Collapsed mode container binding"),
 		FindFProperty<FProperty>(UParadoxGameplayHUDWidget::StaticClass(), TEXT("CollapsedModeContainer")));
 	TestTrue(TEXT("screen-space HUD input defaults to Game and UI routing"), HUD->bConfigureGameAndUIInputMode);
+	TestTrue(
+		TEXT("HUD is visible during initial Chrono Spawn selection"),
+		FParadoxGameplayHUDTestAccessor::IsTimeLoopPhaseVisible(
+			EParadoxTimeLoopPhase::ChronoSpawnSelection));
+	TestTrue(
+		TEXT("HUD is visible while the synchronized barrier is preparing"),
+		FParadoxGameplayHUDTestAccessor::IsTimeLoopPhaseVisible(
+			EParadoxTimeLoopPhase::AwaitingSynchronizedStart));
+	TestTrue(
+		TEXT("HUD remains visible for late selection during ActiveRun"),
+		FParadoxGameplayHUDTestAccessor::IsTimeLoopPhaseVisible(
+			EParadoxTimeLoopPhase::ActiveRun));
+	TestFalse(
+		TEXT("HUD remains hidden during World reset"),
+		FParadoxGameplayHUDTestAccessor::IsTimeLoopPhaseVisible(
+			EParadoxTimeLoopPhase::WorldReset));
+	TestFalse(
+		TEXT("HUD remains hidden in terminal Game Over"),
+		FParadoxGameplayHUDTestAccessor::IsTimeLoopPhaseVisible(
+			EParadoxTimeLoopPhase::GameOver));
 	TestFalse(TEXT("inventory widget is concrete"), UParadoxInventoryWidget::StaticClass()->HasAnyClassFlags(CLASS_Abstract));
 	TestFalse(TEXT("action entry widget is concrete"), UParadoxInventoryActionButtonWidget::StaticClass()->HasAnyClassFlags(CLASS_Abstract));
 	TestTrue(TEXT("Tactical Pause controls are ordinary User Widgets"), UTacticalPauseControlsWidget::StaticClass()->IsChildOf(UUserWidget::StaticClass()));

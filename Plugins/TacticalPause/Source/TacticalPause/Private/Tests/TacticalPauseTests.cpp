@@ -7,7 +7,11 @@
 #include "CommonButtonBase.h"
 #include "Engine/Engine.h"
 #include "Engine/World.h"
+#include "GameTime.h"
+#include "Rendering/TacticalPauseSceneViewExtension.h"
+#include "SceneView.h"
 #include "Settings/TacticalPauseSettings.h"
+#include "ShowFlags.h"
 #include "Subsystems/TacticalPauseTemporalDriver.h"
 #include "Subsystems/TacticalPauseWorldSubsystem.h"
 #include "UObject/GarbageCollection.h"
@@ -27,7 +31,7 @@ public:
 
 	virtual bool AcquirePause(const FCanUnpause& CanUnpauseDelegate) override
 	{
-		if (!bAvailable || IsPaused())
+		if (!bAvailable || bRejectPauseAcquisition || IsPaused())
 		{
 			return false;
 		}
@@ -67,6 +71,7 @@ public:
 	bool bAvailable = true;
 	bool bPluginPause = false;
 	bool bExternalPause = false;
+	bool bRejectPauseAcquisition = false;
 	bool bRejectDilationWrites = false;
 	float GlobalTimeDilation = 1.0f;
 	float MaximumGlobalTimeDilation = 10.0f;
@@ -88,6 +93,7 @@ struct FTacticalPauseTestAccessor
 		Subsystem.bPauseOwnedByPlugin = false;
 		Subsystem.bDilationOwnedByPlugin = false;
 		Subsystem.bHasDilationSnapshot = false;
+		Subsystem.SetTemporalRenderingOverrideActive(false);
 		return RawDriver;
 	}
 
@@ -109,6 +115,21 @@ struct FTacticalPauseTestAccessor
 	static bool IsDilationOwned(const UTacticalPauseWorldSubsystem& Subsystem)
 	{
 		return Subsystem.bDilationOwnedByPlugin;
+	}
+
+	static bool HasSceneViewExtension(const UTacticalPauseWorldSubsystem& Subsystem)
+	{
+		return Subsystem.SceneViewExtension.IsValid();
+	}
+
+	static void ApplyTemporalRenderingOverride(
+		UTacticalPauseWorldSubsystem& Subsystem,
+		FSceneViewFamily& ViewFamily)
+	{
+		if (Subsystem.SceneViewExtension.IsValid())
+		{
+			Subsystem.SceneViewExtension->SetupViewFamily(ViewFamily);
+		}
 	}
 
 	static ETacticalPauseRequestResult SelectPresetSlot(UTacticalPauseControlsWidget& Widget, int32 SlotIndex)
@@ -178,6 +199,7 @@ namespace UE::TacticalPause::Tests
 				OriginalDefaultPresetId = Settings->DefaultPresetId;
 				OriginalMaximum = Settings->MaximumAllowedMultiplier;
 				bOriginalAllowPausedSelection = Settings->bAllowSpeedSelectionWhilePaused;
+				bOriginalKeepTemporalRenderingActive = Settings->bKeepTemporalRenderingActiveWhilePaused;
 			}
 		}
 
@@ -189,6 +211,7 @@ namespace UE::TacticalPause::Tests
 				Settings->DefaultPresetId = OriginalDefaultPresetId;
 				Settings->MaximumAllowedMultiplier = OriginalMaximum;
 				Settings->bAllowSpeedSelectionWhilePaused = bOriginalAllowPausedSelection;
+				Settings->bKeepTemporalRenderingActiveWhilePaused = bOriginalKeepTemporalRenderingActive;
 			}
 		}
 
@@ -197,6 +220,7 @@ namespace UE::TacticalPause::Tests
 		FName OriginalDefaultPresetId;
 		float OriginalMaximum = 3.0f;
 		bool bOriginalAllowPausedSelection = true;
+		bool bOriginalKeepTemporalRenderingActive = true;
 	};
 
 	FTacticalPlaybackSpeedPreset MakePreset(FName Id, float Multiplier, int32 SortOrder)
@@ -372,6 +396,140 @@ bool FTacticalPauseOwnershipTest::RunTest(const FString& Parameters)
 	StackedDriver->SetExternalPause(true);
 	TestEqual(TEXT("play reports remaining external owner"), StackedPauseSubsystem->RequestPlay(), ETacticalPauseRequestResult::ExternalStateConflict);
 	TestTrue(TEXT("stacked external owner keeps world paused"), StackedDriver->IsPaused());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FTacticalPauseTemporalRenderingTest,
+	"TacticalPause.Runtime.Rendering.TemporalOverrideOwnershipConfigurationAndWorldIsolation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FTacticalPauseTemporalRenderingTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::TacticalPause::Tests;
+	FScopedSettingsOverride SettingsOverride;
+	if (!TestNotNull(TEXT("Tactical Pause settings exist"), SettingsOverride.Settings))
+	{
+		return false;
+	}
+	TestTrue(TEXT("temporal rendering override is enabled by default"),
+		SettingsOverride.bOriginalKeepTemporalRenderingActive);
+	SettingsOverride.Settings->bKeepTemporalRenderingActiveWhilePaused = true;
+
+	auto MakeViewFamily = []()
+	{
+		const FEngineShowFlags ShowFlags(ESFIM_Game);
+		return MakeUnique<FSceneViewFamilyContext>(
+			FSceneViewFamily::ConstructionValues(nullptr, nullptr, ShowFlags)
+				.SetTime(FGameTime::CreateUndilated(0.0, 1.0f / 60.0f)));
+	};
+
+	FScopedTestWorld FirstScope(TEXT("TacticalPauseRenderingFirstWorld"));
+	UTacticalPauseWorldSubsystem* FirstSubsystem = FirstScope.GetSubsystem();
+	if (!TestNotNull(TEXT("first world subsystem exists"), FirstSubsystem))
+	{
+		return false;
+	}
+	InstallDefaultDriver(*FirstSubsystem);
+	TestTrue(TEXT("enabled setting creates a per-world view extension"),
+		FTacticalPauseTestAccessor::HasSceneViewExtension(*FirstSubsystem));
+	TestFalse(TEXT("renderer override starts inactive"),
+		FirstSubsystem->IsTemporalRenderingOverrideActive());
+
+	FScopedTestWorld SecondScope(TEXT("TacticalPauseRenderingSecondWorld"));
+	UTacticalPauseWorldSubsystem* SecondSubsystem = SecondScope.GetSubsystem();
+	if (!TestNotNull(TEXT("second world subsystem exists"), SecondSubsystem))
+	{
+		return false;
+	}
+	InstallDefaultDriver(*SecondSubsystem);
+
+	TestEqual(TEXT("successful Tactical Pause activates rendering override"),
+		FirstSubsystem->RequestPause(), ETacticalPauseRequestResult::Succeeded);
+	TestTrue(TEXT("first world renderer override is active"),
+		FirstSubsystem->IsTemporalRenderingOverrideActive());
+	TestFalse(TEXT("second world renderer override remains inactive"),
+		SecondSubsystem->IsTemporalRenderingOverrideActive());
+
+	TUniquePtr<FSceneViewFamilyContext> FirstPausedView = MakeViewFamily();
+	FirstPausedView->bWorldIsPaused = true;
+	FTacticalPauseTestAccessor::ApplyTemporalRenderingOverride(*FirstSubsystem, *FirstPausedView);
+	TestFalse(TEXT("owned Tactical Pause clears only the renderer pause flag"),
+		FirstPausedView->bWorldIsPaused);
+
+	TUniquePtr<FSceneViewFamilyContext> AlreadyRealtimeView = MakeViewFamily();
+	AlreadyRealtimeView->bWorldIsPaused = false;
+	FTacticalPauseTestAccessor::ApplyTemporalRenderingOverride(*FirstSubsystem, *AlreadyRealtimeView);
+	TestFalse(TEXT("override never converts a realtime view into a paused view"),
+		AlreadyRealtimeView->bWorldIsPaused);
+
+	TUniquePtr<FSceneViewFamilyContext> SecondPausedView = MakeViewFamily();
+	SecondPausedView->bWorldIsPaused = true;
+	FTacticalPauseTestAccessor::ApplyTemporalRenderingOverride(*SecondSubsystem, *SecondPausedView);
+	TestTrue(TEXT("inactive world retains its renderer pause flag"),
+		SecondPausedView->bWorldIsPaused);
+
+	TestEqual(TEXT("Play deactivates rendering override"),
+		FirstSubsystem->RequestPlay(), ETacticalPauseRequestResult::Succeeded);
+	TestFalse(TEXT("renderer override is inactive after Play"),
+		FirstSubsystem->IsTemporalRenderingOverrideActive());
+
+	FScopedTestWorld ExternalPauseScope(TEXT("TacticalPauseRenderingExternalPauseWorld"));
+	UTacticalPauseWorldSubsystem* ExternalPauseSubsystem = ExternalPauseScope.GetSubsystem();
+	if (!TestNotNull(TEXT("external-pause world subsystem exists"), ExternalPauseSubsystem))
+	{
+		return false;
+	}
+	auto ExternalDriverOwner = MakeUnique<FFakeTacticalPauseTemporalDriver>();
+	ExternalDriverOwner->SetExternalPause(true);
+	FTacticalPauseTestAccessor::InstallDriver(*ExternalPauseSubsystem, MoveTemp(ExternalDriverOwner));
+	TestEqual(TEXT("external pause remains an idempotent request"),
+		ExternalPauseSubsystem->RequestPause(), ETacticalPauseRequestResult::AlreadyInRequestedState);
+	TestFalse(TEXT("external pause does not activate renderer override"),
+		ExternalPauseSubsystem->IsTemporalRenderingOverrideActive());
+
+	FScopedTestWorld FailedPauseScope(TEXT("TacticalPauseRenderingFailedPauseWorld"));
+	UTacticalPauseWorldSubsystem* FailedPauseSubsystem = FailedPauseScope.GetSubsystem();
+	if (!TestNotNull(TEXT("failed-pause world subsystem exists"), FailedPauseSubsystem))
+	{
+		return false;
+	}
+	auto RejectingDriverOwner = MakeUnique<FFakeTacticalPauseTemporalDriver>();
+	RejectingDriverOwner->bRejectPauseAcquisition = true;
+	FTacticalPauseTestAccessor::InstallDriver(*FailedPauseSubsystem, MoveTemp(RejectingDriverOwner));
+	TestEqual(TEXT("rejected pause reports apply failure"),
+		FailedPauseSubsystem->RequestPause(), ETacticalPauseRequestResult::ApplyFailed);
+	TestFalse(TEXT("failed pause does not activate renderer override"),
+		FailedPauseSubsystem->IsTemporalRenderingOverrideActive());
+
+	TestEqual(TEXT("first world can pause again before restoration"),
+		FirstSubsystem->RequestPause(), ETacticalPauseRequestResult::Succeeded);
+	TestTrue(TEXT("override reactivates for a later owned pause"),
+		FirstSubsystem->IsTemporalRenderingOverrideActive());
+	FTacticalPauseTestAccessor::Restore(*FirstSubsystem);
+	TestFalse(TEXT("temporal restoration always deactivates renderer override"),
+		FirstSubsystem->IsTemporalRenderingOverrideActive());
+
+	SettingsOverride.Settings->bKeepTemporalRenderingActiveWhilePaused = false;
+	FScopedTestWorld DisabledScope(TEXT("TacticalPauseRenderingDisabledWorld"));
+	UTacticalPauseWorldSubsystem* DisabledSubsystem = DisabledScope.GetSubsystem();
+	if (!TestNotNull(TEXT("disabled-setting world subsystem exists"), DisabledSubsystem))
+	{
+		return false;
+	}
+	InstallDefaultDriver(*DisabledSubsystem);
+	TestFalse(TEXT("disabled setting does not create a view extension"),
+		FTacticalPauseTestAccessor::HasSceneViewExtension(*DisabledSubsystem));
+	TestEqual(TEXT("simulation pause still succeeds with renderer override disabled"),
+		DisabledSubsystem->RequestPause(), ETacticalPauseRequestResult::Succeeded);
+	TestFalse(TEXT("disabled setting keeps renderer override inactive"),
+		DisabledSubsystem->IsTemporalRenderingOverrideActive());
+	TUniquePtr<FSceneViewFamilyContext> DisabledPausedView = MakeViewFamily();
+	DisabledPausedView->bWorldIsPaused = true;
+	FTacticalPauseTestAccessor::ApplyTemporalRenderingOverride(*DisabledSubsystem, *DisabledPausedView);
+	TestTrue(TEXT("disabled setting preserves the legacy renderer pause flag"),
+		DisabledPausedView->bWorldIsPaused);
+
 	return true;
 }
 

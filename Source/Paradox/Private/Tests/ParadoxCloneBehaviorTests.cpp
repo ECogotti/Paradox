@@ -489,7 +489,7 @@ bool FParadoxCloneControllerAuthoredPerceptionProfileTest::RunTest(
 	const UPerceptionKnowledgeProfile* AuthoredProfile =
 		LoadObject<UPerceptionKnowledgeProfile>(
 			nullptr,
-			TEXT("/Game/Characters/Astronaut/DataAssets/Perception/DA_ClonePerceptiopnProfile.DA_ClonePerceptiopnProfile"));
+			TEXT("/Game/Characters/Astronaut/Data/Perception/DA_ClonePerceptiopnProfile.DA_ClonePerceptiopnProfile"));
 	UClass* ControllerClass =
 		LoadClass<AParadoxCloneController>(
 			nullptr,

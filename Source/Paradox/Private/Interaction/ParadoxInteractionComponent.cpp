@@ -198,6 +198,29 @@ namespace UE::Paradox::Interaction::Private
 		}
 		return Parameters;
 	}
+
+	const UParadoxInteractionActionDefinition* ResolveInteractionDefinition(
+		const FParadoxInteractionDefinition& CatalogEntry)
+	{
+		return Cast<UParadoxInteractionActionDefinition>(
+			CatalogEntry.GameplayActionDefinition.LoadSynchronous());
+	}
+
+	bool RequiresSmartObjectSlot(
+		const FParadoxInteractionDefinition& CatalogEntry)
+	{
+		const UParadoxInteractionActionDefinition* Definition =
+			ResolveInteractionDefinition(CatalogEntry);
+		return !Definition || Definition->RequiresSmartObjectSlot();
+	}
+
+	bool RequiresSmartObjectSlot(const FParadoxInteractionOption& Option)
+	{
+		const UParadoxInteractionActionDefinition* Definition =
+			Cast<UParadoxInteractionActionDefinition>(
+				Option.GameplayActionDefinition.LoadSynchronous());
+		return !Definition || Definition->RequiresSmartObjectSlot();
+	}
 }
 
 UParadoxInteractionComponent::UParadoxInteractionComponent()
@@ -316,44 +339,51 @@ UParadoxInteractionComponent::EvaluateInteractionAvailability(
 		Availability.DiagnosticMessage = TEXT("The exact interaction has no loadable Gameplay Action Definition.");
 		return Availability;
 	}
-	const FParadoxInteractionMovementParameters MovementParameters =
-		UE::Paradox::Interaction::Private::ReadAuthoredMovementParameters(*AuthoredDefinition);
-
-	FParadoxInteractionOption BestOption;
+	const UParadoxInteractionActionDefinition* InteractionDefinition =
+		Cast<UParadoxInteractionActionDefinition>(AuthoredDefinition);
+	const bool bRequiresSmartObjectSlot =
+		!InteractionDefinition || InteractionDefinition->RequiresSmartObjectSlot();
+	FParadoxInteractionOption BestOption = CatalogOption;
 	double PathCost = 0.0;
-	bool bAlreadyInPlace = false;
+	bool bAlreadyInPlace = !bRequiresSmartObjectSlot;
 	EParadoxInteractionRequestStatus CandidateStatus =
 		EParadoxInteractionRequestStatus::InvalidRequester;
-	if (!ResolveBestReachableExecutionOption(
-		Requester,
-		InteractionTag,
-		BestOption,
-		PathCost,
-		bAlreadyInPlace,
-		CandidateStatus,
-		Availability.QueryStatus,
-		Availability.DiagnosticMessage,
-		&MovementParameters))
+	if (bRequiresSmartObjectSlot)
 	{
-		switch (CandidateStatus)
+		const FParadoxInteractionMovementParameters MovementParameters =
+			UE::Paradox::Interaction::Private::ReadAuthoredMovementParameters(
+				*AuthoredDefinition);
+		if (!ResolveBestReachableExecutionOption(
+			Requester,
+			InteractionTag,
+			BestOption,
+			PathCost,
+			bAlreadyInPlace,
+			CandidateStatus,
+			Availability.QueryStatus,
+			Availability.DiagnosticMessage,
+			&MovementParameters))
 		{
-		case EParadoxInteractionRequestStatus::InvalidRequester:
-			Availability.Status = EParadoxInteractionAvailabilityStatus::InvalidRequester;
-			break;
-		case EParadoxInteractionRequestStatus::InvalidTarget:
-			Availability.Status = EParadoxInteractionAvailabilityStatus::InvalidTarget;
-			break;
-		case EParadoxInteractionRequestStatus::NoMatchingInteraction:
-			Availability.Status = EParadoxInteractionAvailabilityStatus::NoMatchingInteraction;
-			break;
-		case EParadoxInteractionRequestStatus::SlotUnavailable:
-			Availability.Status = EParadoxInteractionAvailabilityStatus::NoFreeSlot;
-			break;
-		default:
-			Availability.Status = EParadoxInteractionAvailabilityStatus::NoReachableSlot;
-			break;
+			switch (CandidateStatus)
+			{
+			case EParadoxInteractionRequestStatus::InvalidRequester:
+				Availability.Status = EParadoxInteractionAvailabilityStatus::InvalidRequester;
+				break;
+			case EParadoxInteractionRequestStatus::InvalidTarget:
+				Availability.Status = EParadoxInteractionAvailabilityStatus::InvalidTarget;
+				break;
+			case EParadoxInteractionRequestStatus::NoMatchingInteraction:
+				Availability.Status = EParadoxInteractionAvailabilityStatus::NoMatchingInteraction;
+				break;
+			case EParadoxInteractionRequestStatus::SlotUnavailable:
+				Availability.Status = EParadoxInteractionAvailabilityStatus::NoFreeSlot;
+				break;
+			default:
+				Availability.Status = EParadoxInteractionAvailabilityStatus::NoReachableSlot;
+				break;
+			}
+			return Availability;
 		}
-		return Availability;
 	}
 
 	Availability.DestinationCell = BestOption.GridCellId;
@@ -419,7 +449,9 @@ UParadoxInteractionComponent::EvaluateInteractionAvailability(
 		? EParadoxInteractionAvailabilityStatus::AvailableInPlace
 		: EParadoxInteractionAvailabilityStatus::AvailableAfterMovement;
 	Availability.DiagnosticMessage = bAlreadyInPlace
-		? TEXT("The interaction is executable from the requester's current cell.")
+		? (bRequiresSmartObjectSlot
+			? TEXT("The interaction is executable from the requester's current cell.")
+			: TEXT("The interaction is executable without a Smart Object slot or requester movement."))
 		: TEXT("The interaction is executable after reaching the selected GridWorld cell.");
 	return Availability;
 }
@@ -664,7 +696,14 @@ EDataValidationResult UParadoxInteractionComponent::IsDataValid(
 	}
 
 	TSet<FGameplayTag> SeenTags;
-	if (!InteractionDefinitions.IsEmpty())
+	const bool bCatalogRequiresSmartObject =
+		InteractionDefinitions.ContainsByPredicate(
+			[](const FParadoxInteractionDefinition& Definition)
+			{
+				return UE::Paradox::Interaction::Private::RequiresSmartObjectSlot(
+					Definition);
+			});
+	if (bCatalogRequiresSmartObject)
 	{
 		TInlineComponentArray<USmartObjectComponent*> SmartObjectComponents;
 		if (const AActor* Owner = GetOwner())
@@ -740,6 +779,19 @@ EDataValidationResult UParadoxInteractionComponent::IsDataValid(
 					FText::AsNumber(Index)));
 				Result = EDataValidationResult::Invalid;
 			}
+			if (const UParadoxInteractionActionDefinition* InteractionDefinition =
+				Cast<UParadoxInteractionActionDefinition>(ActionDefinition);
+				InteractionDefinition
+				&& !InteractionDefinition->RequiresSmartObjectSlot()
+				&& !Definition.SlotActivityRequirements.IsEmpty())
+			{
+				Context.AddError(FText::Format(
+					LOCTEXT(
+						"NonSpatialSlotRequirements",
+						"Non-spatial interaction definition {0} cannot use Smart Object slot activity requirements."),
+					FText::AsNumber(Index)));
+				Result = EDataValidationResult::Invalid;
+			}
 			FString SchemaDiagnostic;
 			if (!UE::Paradox::Interaction::Private::HasRequiredParameterSchema(
 				*ActionDefinition,
@@ -801,15 +853,69 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 		Result.DiagnosticMessage = TEXT("The interaction component has no World.");
 		return Result;
 	}
+	int32 MatchingDefinitionCount = 0;
+	TArray<const FParadoxInteractionDefinition*, TInlineAllocator<8>>
+		SpatialDefinitions;
+	for (const FParadoxInteractionDefinition& Definition : InteractionDefinitions)
+	{
+		if (!Definition.InteractionTag.IsValid()
+			|| (InteractionTag != nullptr
+				&& InteractionTag->IsValid()
+				&& !Definition.InteractionTag.MatchesTag(*InteractionTag)))
+		{
+			continue;
+		}
+		if (RequiresSmartObjectSlot(Definition))
+		{
+			SpatialDefinitions.Add(&Definition);
+			continue;
+		}
+
+		++MatchingDefinitionCount;
+		FParadoxInteractionOption& Option = Result.Options.AddDefaulted_GetRef();
+		Option.InteractionTag = Definition.InteractionTag;
+		Option.GameplayActionDefinition = Definition.GameplayActionDefinition;
+		Option.TargetActor = GetOwner();
+		Option.SlotWorldTransform = GetOwner()
+			? GetOwner()->GetActorTransform()
+			: FTransform::Identity;
+		Option.State = EParadoxInteractionOptionState::Free;
+	}
+	if (SpatialDefinitions.IsEmpty())
+	{
+		Result.Status = Result.Options.IsEmpty()
+			? EParadoxInteractionQueryStatus::NoOptions
+			: EParadoxInteractionQueryStatus::Success;
+		Result.DiagnosticMessage = Result.Options.IsEmpty()
+			? TEXT("No interaction catalog entry matched the requested tag.")
+			: FString::Printf(
+				TEXT("Resolved %d non-spatial interaction option(s)."),
+				Result.Options.Num());
+		return Result;
+	}
 	USmartObjectSubsystem* SmartObjects = USmartObjectSubsystem::GetCurrent(World);
 	if (SmartObjects == nullptr)
 	{
+		if (!Result.Options.IsEmpty())
+		{
+			Result.Status = EParadoxInteractionQueryStatus::Success;
+			Result.DiagnosticMessage = TEXT(
+				"Resolved non-spatial interactions; spatial entries are unavailable because the World has no Smart Object Subsystem.");
+			return Result;
+		}
 		Result.Status = EParadoxInteractionQueryStatus::MissingSmartObjectSubsystem;
 		Result.DiagnosticMessage = TEXT("The World has no Smart Object Subsystem.");
 		return Result;
 	}
 	if (InteractionSources.IsEmpty())
 	{
+		if (!Result.Options.IsEmpty())
+		{
+			Result.Status = EParadoxInteractionQueryStatus::Success;
+			Result.DiagnosticMessage = TEXT(
+				"Resolved non-spatial interactions; spatial entries are unavailable because the Actor has no Smart Object Component.");
+			return Result;
+		}
 		Result.Status = EParadoxInteractionQueryStatus::MissingSmartObjectComponent;
 		Result.DiagnosticMessage = TEXT(
 			"The interaction Actor has no registered direct Smart Object Component.");
@@ -818,6 +924,13 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 	UGridWorldSubsystem* GridWorld = World->GetSubsystem<UGridWorldSubsystem>();
 	if (GridWorld == nullptr)
 	{
+		if (!Result.Options.IsEmpty())
+		{
+			Result.Status = EParadoxInteractionQueryStatus::Success;
+			Result.DiagnosticMessage = TEXT(
+				"Resolved non-spatial interactions; spatial entries are unavailable because the World has no GridWorld Subsystem.");
+			return Result;
+		}
 		Result.Status = EParadoxInteractionQueryStatus::MissingGridWorld;
 		Result.DiagnosticMessage = TEXT("The World has no GridWorld Subsystem.");
 		return Result;
@@ -843,7 +956,6 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 	int32 EnabledSlotCount = 0;
 	int32 SelectableSlotCount = 0;
 	int32 TransformedSlotCount = 0;
-	int32 MatchingDefinitionCount = 0;
 
 	for (const TWeakObjectPtr<USmartObjectComponent>& WeakSource : InteractionSources)
 	{
@@ -905,12 +1017,14 @@ FParadoxInteractionQueryResult UParadoxInteractionComponent::QueryInteractionOpt
 				SlotTransform->GetLocation(),
 				GridProjectionExtent);
 
-			for (const FParadoxInteractionDefinition& Definition : InteractionDefinitions)
+			for (const FParadoxInteractionDefinition* DefinitionPtr : SpatialDefinitions)
 			{
+				if (!DefinitionPtr)
+				{
+					continue;
+				}
+				const FParadoxInteractionDefinition& Definition = *DefinitionPtr;
 				if (!Definition.InteractionTag.IsValid()
-					|| (InteractionTag != nullptr
-						&& InteractionTag->IsValid()
-						&& !Definition.InteractionTag.MatchesTag(*InteractionTag))
 					|| (!Definition.SlotActivityRequirements.IsEmpty()
 						&& !Definition.SlotActivityRequirements.Matches(SlotActivityTags)))
 				{
@@ -1078,6 +1192,19 @@ bool UParadoxInteractionComponent::ResolveCurrentExecutionOption(
 				*Query.Options[0].InteractionTag.ToString());
 		return false;
 	}
+	for (const FParadoxInteractionOption* Option : ExactOptions)
+	{
+		if (Option
+			&& Option->State == EParadoxInteractionOptionState::Free
+			&& !UE::Paradox::Interaction::Private::RequiresSmartObjectSlot(*Option))
+		{
+			OutOption = *Option;
+			OutStatus = EParadoxInteractionRequestStatus::Accepted;
+			OutDiagnostic = TEXT(
+				"Resolved a non-spatial interaction without a Smart Object slot.");
+			return true;
+		}
+	}
 
 	UGridWorldSubsystem* GridWorld = GetWorld()
 		? GetWorld()->GetSubsystem<UGridWorldSubsystem>()
@@ -1195,6 +1322,20 @@ bool UParadoxInteractionComponent::ResolveBestReachableExecutionOption(
 		OutStatus = EParadoxInteractionRequestStatus::SlotUnavailable;
 		OutDiagnostic = TEXT("No exact matching Smart Object slot is currently free.");
 		return false;
+	}
+	for (const FParadoxInteractionOption* Option : ExactOptions)
+	{
+		if (Option
+			&& !UE::Paradox::Interaction::Private::RequiresSmartObjectSlot(*Option))
+		{
+			OutOption = *Option;
+			OutPathCost = 0.0;
+			bOutAlreadyInPlace = true;
+			OutStatus = EParadoxInteractionRequestStatus::Accepted;
+			OutDiagnostic = TEXT(
+				"Resolved a non-spatial interaction without movement.");
+			return true;
+		}
 	}
 
 	UGridWorldSubsystem* GridWorld = GetWorld()

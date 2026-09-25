@@ -58,8 +58,10 @@ Temporal paradoxes use the same generic failure/recovery path with reason `Tempo
 wrappers for paradox-specific consumers. New presentation code can use `OnRunFailureAccepted`,
 `ContinueRunFailureRecovery`, `OnRunFailureRecoveryCompleted`, and `GetLastRunFailureContext`.
 
-The persistent Player calls `ResetHealth` and `ResetOxygen` when a new run activates. Reconstructed
-Clones are newly spawned and begin with full Health and Oxygen.
+The persistent Player always calls `ResetHealth` when a new run activates. In legacy `PerPawn`
+Oxygen mode it also calls `ResetOxygen`, and reconstructed Clones begin full. In `SharedGlobal`
+mode the World reservoir instead persists across successful Time Travel and is restored from the
+failed run's checkpoint; see [Paradox Oxygen System](OXYGEN_SYSTEM.md).
 
 ## Clone death
 
