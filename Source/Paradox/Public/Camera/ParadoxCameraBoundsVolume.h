@@ -7,7 +7,7 @@
 class UBoxComponent;
 
 /**
- * Axis-aligned designer volume that bounds the complete orthographic camera footprint.
+ * Axis-aligned designer volume that bounds the orthographic view or perspective pivot on its XY plane.
  *
  * It owns configuration only. The local PlayerController owns the runtime camera rig and input.
  */
@@ -21,6 +21,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
 	bool IsCameraVolumeEnabled() const { return bCameraVolumeEnabled; }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
+	EParadoxCameraProjectionMode GetCameraProjectionMode() const { return ProjectionMode; }
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
 	UBoxComponent* GetBoundsComponent() const { return BoundsComponent.Get(); }
@@ -44,6 +47,10 @@ private:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Camera", meta = (AllowPrivateAccess = "true"))
 	bool bCameraVolumeEnabled = true;
 
+	/** Selected once when the controller initializes its free camera. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Camera", meta = (AllowPrivateAccess = "true"))
+	EParadoxCameraProjectionMode ProjectionMode = EParadoxCameraProjectionMode::Orthographic;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Camera", meta = (AllowPrivateAccess = "true"))
 	bool bOverrideGlobalConfiguration = false;
 
@@ -66,5 +73,8 @@ private:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Camera|Debug", meta = (AllowPrivateAccess = "true"))
 	bool bEnableDebug = false;
-};
 
+#if WITH_DEV_AUTOMATION_TESTS
+	friend struct FParadoxCameraTestAccessor;
+#endif
+};

@@ -315,10 +315,19 @@ A receiver can be targeted by multiple controllers and OR-aggregates their prere
 default Automatic mode it remains active while at least one valid Controller requests active. When a
 Controller ends play, its request is removed.
 
+`bActivateWhenUncontrolled` is an opt-in fallback for capabilities that should work when puzzle wiring
+is optional. It defaults to `false`, so existing Receivers remain fail-closed. When enabled on an
+Automatic Receiver, the Receiver is active only while no valid Controller is registered. A Controller
+remains registered when its result is false, so connecting a valid Controller immediately makes that
+false result authoritative and suppresses the fallback. If the final Controller is removed, the fallback
+becomes active again. Manual mode ignores this option. `GetRegisteredControllerCount` distinguishes all
+registered Controllers from `GetActiveRequestCount`, which counts only active requests.
+
 Every Receiver exposes `ActivationMode`:
 
 - `Automatic` is the default and preserves the original behavior for existing content: the Receiver is
-  active whenever at least one valid Controller requests active.
+  active whenever at least one valid Controller requests active, plus the optional uncontrolled fallback
+  described above.
 - `Manual` treats the OR-aggregated Controller result as an activation prerequisite. The Receiver remains
   inactive until `RequestManualActivation` is called, and that command fails while no Controller requests
   active. `RequestManualDeactivation` is always allowed in Manual mode.

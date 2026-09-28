@@ -39,7 +39,7 @@ struct FParadoxCameraTestAccessor
 		const AParadoxPlayerController& Controller,
 		const float AspectRatio)
 	{
-		return Controller.CalculateMaximumCompatibleOrthoWidth(
+		return Controller.CalculateMaximumCompatibleCameraZoom(
 			Controller.GetCurrentCameraOrientation(),
 			AspectRatio);
 	}
@@ -48,7 +48,7 @@ struct FParadoxCameraTestAccessor
 		const AParadoxPlayerController& Controller,
 		const float AspectRatio)
 	{
-		return Controller.CalculateMaximumRotationSafeOrthoWidth(AspectRatio);
+		return Controller.CalculateMaximumRotationSafeCameraZoom(AspectRatio);
 	}
 
 	static FVector ClampFocus(
@@ -132,6 +132,13 @@ struct FParadoxCameraTestAccessor
 		const AParadoxPlayerController& Controller)
 	{
 		return Controller.ActiveCameraConfiguration;
+	}
+
+	static void SetProjectionMode(
+		AParadoxCameraBoundsVolume& Volume,
+		const EParadoxCameraProjectionMode ProjectionMode)
+	{
+		Volume.ProjectionMode = ProjectionMode;
 	}
 
 	static void SetFocus(
@@ -781,6 +788,228 @@ bool FParadoxCameraInvalidConfigurationTest::RunTest(const FString& Parameters)
 				EParadoxCameraOperationStatus::MultipleVolumes);
 		}
 	}
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxPerspectiveCameraBehaviorTest,
+	"Paradox.Camera.PerspectiveProjectionBoundsZoomAndRotation",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxPerspectiveCameraBehaviorTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::Camera::Tests;
+	FScopedCameraWorld Scope(TEXT("ParadoxPerspectiveCameraWorld"));
+	AParadoxCameraBoundsVolume* Volume = Scope.SpawnVolume();
+	if (!TestNotNull(TEXT("Perspective volume exists"), Volume))
+	{
+		return false;
+	}
+	FParadoxCameraTestAccessor::SetProjectionMode(
+		*Volume, EParadoxCameraProjectionMode::Perspective);
+	AParadoxPlayerController* Controller = Scope.SpawnController();
+	if (!TestNotNull(TEXT("Perspective controller exists"), Controller)
+		|| !TestTrue(TEXT("Perspective camera initializes"),
+			Controller->EnsureFreeCameraInitialized(true).IsSuccess()))
+	{
+		return false;
+	}
+	AParadoxCameraRig* Rig = Controller->GetFreeCameraRig();
+	if (!TestNotNull(TEXT("Perspective rig exists"), Rig))
+	{
+		return false;
+	}
+	const FParadoxCameraConfiguration& Configuration =
+		FParadoxCameraTestAccessor::GetConfiguration(*Controller);
+	TestEqual(TEXT("Volume selects perspective projection"),
+		Controller->GetActiveCameraProjectionMode(), EParadoxCameraProjectionMode::Perspective);
+	TestEqual(TEXT("Rig uses perspective projection"),
+		Rig->GetCameraComponent()->ProjectionMode, ECameraProjectionMode::Perspective);
+	TestTrue(TEXT("Rig applies configured horizontal FOV"),
+		FMath::IsNearlyEqual(Rig->GetCameraComponent()->FieldOfView,
+			Configuration.PerspectiveFieldOfView));
+	TestTrue(TEXT("Initial camera-pivot distance is applied"),
+		FMath::IsNearlyEqual((Rig->GetActorLocation() - Rig->GetFocusLocation()).Size(),
+			Controller->GetCurrentCameraArmDistance(), 0.1f));
+	TestEqual(TEXT("Orthographic width is inactive"), Controller->GetCurrentCameraOrthoWidth(), 0.0f);
+	TestTrue(TEXT("Perspective camera works without a pawn"), Controller->GetPawn() == nullptr);
+	TestTrue(TEXT("Perspective camera ticks during pause"),
+		FParadoxCameraTestAccessor::PerformsFullTickWhenPaused(*Controller));
+
+	const float InitialDistance = Controller->GetCurrentCameraArmDistance();
+	const float InitialPitch = Rig->GetActorRotation().Pitch;
+	FParadoxCameraTestAccessor::ApplyZoomInput(*Controller, 1000.0f);
+	TestTrue(TEXT("Zoom-in stops at minimum arm distance"),
+		FMath::IsNearlyEqual(Controller->GetCurrentCameraArmDistance(),
+			Configuration.MinimumCameraArmDistance, 0.1f));
+	FParadoxCameraTestAccessor::ApplyZoomInput(*Controller, -1000.0f);
+	TestTrue(TEXT("Zoom-out reaches configured maximum arm distance"),
+		FMath::IsNearlyEqual(Controller->GetCurrentCameraArmDistance(),
+			Configuration.MaximumCameraArmDistance, 0.1f));
+	TestTrue(TEXT("Perspective zoom changes distance"),
+		!FMath::IsNearlyEqual(InitialDistance, Controller->GetCurrentCameraArmDistance(), 0.1f));
+	TestTrue(TEXT("Perspective zoom keeps inclination"),
+		FMath::IsNearlyEqual(Rig->GetActorRotation().Pitch, InitialPitch));
+	TestTrue(TEXT("Perspective zoom keeps FOV"),
+		FMath::IsNearlyEqual(Rig->GetCameraComponent()->FieldOfView,
+			Configuration.PerspectiveFieldOfView));
+
+	for (const float AspectRatio : { 4.0f / 3.0f, 16.0f / 9.0f, 21.0f / 9.0f })
+	{
+		const FVector Clamped = FParadoxCameraTestAccessor::ClampFocus(
+			*Controller, FVector(100000.0, -100000.0, 0.0),
+			Controller->GetCurrentCameraArmDistance(), AspectRatio);
+		const FBox Bounds = Volume->GetCameraWorldBounds();
+		TestTrue(TEXT("Perspective pivot reaches right edge at every aspect"),
+			FMath::IsNearlyEqual(Clamped.X,
+				Bounds.Max.X - Configuration.BoundaryMargin, 1.0f));
+		TestTrue(TEXT("Perspective pivot reaches bottom edge at every aspect"),
+			FMath::IsNearlyEqual(Clamped.Y,
+				Bounds.Min.Y + Configuration.BoundaryMargin, 1.0f));
+		TestTrue(TEXT("Perspective pivot remains on logical XY plane"),
+			FMath::IsNearlyEqual(Clamped.Z, Volume->GetCameraLogicalCenter().Z, 1.0f));
+	}
+
+	for (int32 Step = 0; Step < 30; ++Step)
+	{
+		FParadoxCameraTestAccessor::SimulatePausedCameraPan(
+			*Controller, FVector2D(0.0f, 1.0f), 0.1f);
+	}
+	TestTrue(TEXT("Perspective WASD reaches pivot boundary at maximum arm distance"),
+		FMath::IsNearlyEqual(Controller->GetCameraFocusLocation().X,
+			Volume->GetCameraWorldBounds().Max.X - Configuration.BoundaryMargin, 1.0f));
+	TestTrue(TEXT("Perspective WASD keeps maximum arm distance"),
+		FMath::IsNearlyEqual(Controller->GetCurrentCameraArmDistance(),
+			Configuration.MaximumCameraArmDistance, 0.1f));
+	Controller->RequestCameraRecenter();
+	FParadoxCameraTestAccessor::Update(*Controller, Configuration.RecenterDuration);
+
+	FParadoxCameraTestAccessor::ApplyZoomInput(*Controller, 1000.0f);
+	const FVector BeforePan = Controller->GetCameraFocusLocation();
+	FParadoxCameraTestAccessor::SimulatePausedCameraPan(
+		*Controller, FVector2D(0.0f, 1.0f), 0.05f);
+	TestTrue(TEXT("Perspective WASD pan moves the pivot"),
+		!Controller->GetCameraFocusLocation().Equals(BeforePan, 0.1f));
+	Controller->RequestCameraRecenter();
+	FParadoxCameraTestAccessor::Update(*Controller, Configuration.RecenterDuration);
+	TestTrue(TEXT("Perspective recenter returns to logical center without a pawn"),
+		Controller->GetCameraFocusLocation().Equals(Volume->GetCameraLogicalCenter(), 1.0f));
+
+	for (int32 Turn = 0; Turn < 4; ++Turn)
+	{
+		const FVector2D Forward = FVector2D(
+			FParadoxCameraTestAccessor::GetOrientation(*Controller).Vector().X,
+			FParadoxCameraTestAccessor::GetOrientation(*Controller).Vector().Y).GetSafeNormal();
+		const FVector BeforeMove = Controller->GetCameraFocusLocation();
+		FParadoxCameraTestAccessor::SimulatePausedCameraPan(
+			*Controller, FVector2D(0.0f, 1.0f), 0.05f);
+		const FVector Delta = Controller->GetCameraFocusLocation() - BeforeMove;
+		TestTrue(TEXT("Perspective pan follows screen direction after rotation"),
+			FVector2D::DotProduct(FVector2D(Delta.X, Delta.Y).GetSafeNormal(), Forward) > 0.999f);
+		TestTrue(TEXT("Perspective quarter turn starts"),
+			FParadoxCameraTestAccessor::RequestRotation(*Controller, 1));
+		TestFalse(TEXT("Concurrent perspective rotation is ignored"),
+			FParadoxCameraTestAccessor::RequestRotation(*Controller, -1));
+		for (int32 Step = 0; Step < 30; ++Step)
+		{
+			FParadoxCameraTestAccessor::Update(
+				*Controller, Configuration.RotationDuration / 30.0f);
+			const FBox Bounds = Volume->GetCameraWorldBounds();
+			const FVector Focus = Controller->GetCameraFocusLocation();
+			TestTrue(TEXT("Intermediate perspective pivot remains inside X"),
+				Focus.X >= Bounds.Min.X + Configuration.BoundaryMargin - 1.0f
+					&& Focus.X <= Bounds.Max.X - Configuration.BoundaryMargin + 1.0f);
+			TestTrue(TEXT("Intermediate perspective pivot remains inside Y"),
+				Focus.Y >= Bounds.Min.Y + Configuration.BoundaryMargin - 1.0f
+					&& Focus.Y <= Bounds.Max.Y - Configuration.BoundaryMargin + 1.0f);
+		}
+	}
+	TestEqual(TEXT("Perspective quarter turns return to base index"),
+		FParadoxCameraTestAccessor::GetQuarterTurnIndex(*Controller), 0);
+	for (int32 Turn = 0; Turn < 64; ++Turn)
+	{
+		if (!FParadoxCameraTestAccessor::RequestRotation(*Controller, -1))
+		{
+			AddError(TEXT("Repeated perspective rotation was rejected."));
+			break;
+		}
+		FParadoxCameraTestAccessor::Update(*Controller, Configuration.RotationDuration);
+	}
+	TestEqual(TEXT("Repeated perspective turns have no index drift"),
+		FParadoxCameraTestAccessor::GetQuarterTurnIndex(*Controller), 0);
+	TestTrue(TEXT("Repeated perspective turns have no yaw drift"),
+		FMath::IsNearlyZero(FMath::FindDeltaAngleDegrees(
+			Configuration.Orientation.Yaw,
+			FParadoxCameraTestAccessor::GetOrientation(*Controller).Yaw)));
+
+	FParadoxCameraTestAccessor::ApplyZoomInput(*Controller, -1000.0f);
+	Volume->GetBoundsComponent()->SetBoxExtent(FVector(900.0, 900.0, 500.0));
+	FParadoxCameraTestAccessor::Update(*Controller, 0.0f);
+	TestTrue(TEXT("Shrinking volume leaves perspective arm distance unchanged"),
+		FMath::IsNearlyEqual(Controller->GetCurrentCameraArmDistance(),
+			Configuration.MaximumCameraArmDistance, 0.1f));
+	TestTrue(TEXT("Shrinking volume keeps perspective pivot inside bounds"),
+		Volume->GetCameraWorldBounds().IsInsideOrOn(Controller->GetCameraFocusLocation()));
+	TestTrue(TEXT("Rotation remains available after volume shrink"),
+		FParadoxCameraTestAccessor::RequestRotation(*Controller, 1));
+	Volume->GetBoundsComponent()->SetBoxExtent(FVector(50.0, 50.0, 500.0));
+	FParadoxCameraTestAccessor::Update(*Controller, 0.0f);
+	TestTrue(TEXT("Perspective pivot stays inside box after runtime shrink below margin"),
+		Volume->GetCameraWorldBounds().IsInsideOrOn(Controller->GetCameraFocusLocation()));
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxPerspectiveCameraInvalidConfigurationTest,
+	"Paradox.Camera.PerspectiveInvalidConfiguration",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxPerspectiveCameraInvalidConfigurationTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::Camera::Tests;
+	UParadoxCameraSettings* Settings = GetMutableDefault<UParadoxCameraSettings>();
+	const FParadoxCameraConfiguration SavedConfiguration = Settings->DefaultConfiguration;
+	const auto TestConfiguration = [&](const TCHAR* WorldName,
+		const EParadoxCameraOperationStatus ExpectedStatus)
+	{
+		FScopedCameraWorld Scope(WorldName);
+		AParadoxCameraBoundsVolume* Volume = Scope.SpawnVolume();
+		AParadoxPlayerController* Controller = Scope.SpawnController();
+		if (Volume && Controller)
+		{
+			FParadoxCameraTestAccessor::SetProjectionMode(
+				*Volume, EParadoxCameraProjectionMode::Perspective);
+			TestEqual(WorldName,
+				Controller->EnsureFreeCameraInitialized(true).Status, ExpectedStatus);
+		}
+		else
+		{
+			AddError(FString::Printf(TEXT("Could not construct %s."), WorldName));
+		}
+	};
+	Settings->DefaultConfiguration.PerspectiveFieldOfView = 0.0f;
+	TestConfiguration(TEXT("ParadoxPerspectiveInvalidFov"),
+		EParadoxCameraOperationStatus::InvalidConfiguration);
+	Settings->DefaultConfiguration = SavedConfiguration;
+	Settings->DefaultConfiguration.Orientation.Pitch = -10.0f;
+	TestConfiguration(TEXT("ParadoxPerspectiveHorizon"),
+		EParadoxCameraOperationStatus::InvalidConfiguration);
+	Settings->DefaultConfiguration = SavedConfiguration;
+	Settings->DefaultConfiguration.MinimumCameraArmDistance = 3000.0f;
+	Settings->DefaultConfiguration.MaximumCameraArmDistance = 1000.0f;
+	TestConfiguration(TEXT("ParadoxPerspectiveInvertedRange"),
+		EParadoxCameraOperationStatus::InvalidConfiguration);
+	Settings->DefaultConfiguration = SavedConfiguration;
+	Settings->DefaultConfiguration.MinimumCameraArmDistance = 4500.0f;
+	Settings->DefaultConfiguration.InitialCameraArmDistance = 4500.0f;
+	Settings->DefaultConfiguration.MaximumCameraArmDistance = 4800.0f;
+	TestConfiguration(TEXT("ParadoxPerspectiveViewMayExceedVolume"),
+		EParadoxCameraOperationStatus::Succeeded);
+	Settings->DefaultConfiguration = SavedConfiguration;
+	Settings->DefaultConfiguration.BoundaryMargin = 3100.0f;
+	TestConfiguration(TEXT("ParadoxPerspectivePivotHasNoRoom"),
+		EParadoxCameraOperationStatus::VolumeTooSmall);
+	Settings->DefaultConfiguration = SavedConfiguration;
 	return true;
 }
 

@@ -8,7 +8,7 @@
 
 namespace
 {
-	constexpr float MinimumTimerDelay = 0.001f;
+	constexpr float MinimumSharedOxygenTimerDelay = 0.001f;
 }
 
 void UParadoxOxygenWorldSubsystem::Initialize(
@@ -115,7 +115,7 @@ void UParadoxOxygenWorldSubsystem::InitializeSharedResource()
 	ConsumptionBlocks.Reset();
 	const float Duration = FMath::Max(
 		Configuration.SharedDurationSeconds,
-		MinimumTimerDelay);
+		MinimumSharedOxygenTimerDelay);
 	RemainingOxygenSeconds = Duration;
 	RunCheckpointRemainingSeconds = Duration;
 	bIsDepleted = false;
@@ -657,7 +657,7 @@ void UParadoxOxygenWorldSubsystem::RescheduleTimers()
 	}
 	const float DepletionDelay = FMath::Max(
 		Remaining / EffectiveConsumptionSpeed,
-		MinimumTimerDelay);
+		MinimumSharedOxygenTimerDelay);
 	World->GetTimerManager().SetTimer(
 		DepletionTimerHandle,
 		this,
@@ -669,14 +669,14 @@ void UParadoxOxygenWorldSubsystem::RescheduleTimers()
 	{
 		const float UntilBoundary = FMath::Max(
 			Remaining - static_cast<float>(WholeSeconds - 1),
-			MinimumTimerDelay * EffectiveConsumptionSpeed);
+			MinimumSharedOxygenTimerDelay * EffectiveConsumptionSpeed);
 		World->GetTimerManager().SetTimer(
 			WholeSecondTimerHandle,
 			this,
 			&ThisClass::HandleWholeSecondTimer,
 			FMath::Max(
 				UntilBoundary / EffectiveConsumptionSpeed,
-				MinimumTimerDelay),
+				MinimumSharedOxygenTimerDelay),
 			false);
 	}
 }

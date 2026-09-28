@@ -9,6 +9,12 @@ UPuzzleReceiverComponent::UPuzzleReceiverComponent()
 	PrimaryComponentTick.bCanEverTick = false;
 }
 
+void UPuzzleReceiverComponent::BeginPlay()
+{
+	Super::BeginPlay();
+	RecomputeEffectiveState();
+}
+
 void UPuzzleReceiverComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
 	BroadcastInvalidated();
@@ -46,14 +52,7 @@ bool UPuzzleReceiverComponent::SetControllerRequest(APuzzleController* SourceCon
 		return false;
 	}
 
-	if (bRequestedActive)
-	{
-		ControllerRequests.FindOrAdd(SourceController) = true;
-	}
-	else
-	{
-		ControllerRequests.Remove(SourceController);
-	}
+	ControllerRequests.FindOrAdd(SourceController) = bRequestedActive;
 
 	return RecomputeEffectiveState();
 }
@@ -218,6 +217,20 @@ int32 UPuzzleReceiverComponent::GetActiveRequestCount() const
 	return ActiveCount;
 }
 
+int32 UPuzzleReceiverComponent::GetRegisteredControllerCount() const
+{
+	int32 RegisteredCount = 0;
+	for (const TPair<TWeakObjectPtr<APuzzleController>, bool>& Request : ControllerRequests)
+	{
+		if (Request.Key.IsValid())
+		{
+			++RegisteredCount;
+		}
+	}
+
+	return RegisteredCount;
+}
+
 void UPuzzleReceiverComponent::GetRequestingControllers(TArray<APuzzleController*>& OutControllers) const
 {
 	OutControllers.Reset();
@@ -260,6 +273,7 @@ bool UPuzzleReceiverComponent::RecomputeEffectiveState()
 	{
 		bReconciliationRequested = false;
 		bool bNewPrerequisitesSatisfied = false;
+		int32 RegisteredControllerCount = 0;
 		for (TMap<TWeakObjectPtr<APuzzleController>, bool>::TIterator It(ControllerRequests); It; ++It)
 		{
 			if (!It.Key().IsValid())
@@ -267,6 +281,7 @@ bool UPuzzleReceiverComponent::RecomputeEffectiveState()
 				It.RemoveCurrent();
 				continue;
 			}
+			++RegisteredControllerCount;
 			bNewPrerequisitesSatisfied |= It.Value();
 		}
 
@@ -279,6 +294,7 @@ bool UPuzzleReceiverComponent::RecomputeEffectiveState()
 
 		const bool bNewActive = ActivationMode == EPuzzleReceiverActivationMode::Automatic
 			? bNewPrerequisitesSatisfied
+				|| (bActivateWhenUncontrolled && RegisteredControllerCount == 0)
 			: bNewPrerequisitesSatisfied && bNewManualActivationRequested;
 		const bool bPrerequisitesChanged =
 			bNewPrerequisitesSatisfied != bActivationPrerequisitesSatisfied;
@@ -311,10 +327,12 @@ void UPuzzleReceiverComponent::BroadcastReceiverStateChanged(bool bNewActive)
 	if (IsPuzzleSystemDebugEnabled())
 	{
 		PUZZLESYSTEM_LOG_INFO(
-			"Receiver '%s' changed state: Active=%s ActiveRequests=%d.",
+			"Receiver '%s' changed state: Active=%s ActiveRequests=%d RegisteredControllers=%d UncontrolledFallback=%s.",
 			*GetNameSafe(this),
 			bNewActive ? TEXT("true") : TEXT("false"),
-			GetActiveRequestCount());
+			GetActiveRequestCount(),
+			GetRegisteredControllerCount(),
+			bActivateWhenUncontrolled ? TEXT("true") : TEXT("false"));
 	}
 
 	HandleReceiverStateChanged(bNewActive);

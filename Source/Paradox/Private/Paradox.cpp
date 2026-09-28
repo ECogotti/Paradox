@@ -59,6 +59,12 @@ namespace
 		0,
 		TEXT("Enables event-driven inventory and drop diagnostics when the owning object's local flag is enabled."),
 		ECVF_Default);
+
+	TAutoConsoleVariable<int32> CVarParadoxPairedTransferDebug(
+		TEXT("Paradox.PairedTransfer.Debug"),
+		0,
+		TEXT("Enables paired-transfer lifecycle diagnostics when the endpoint's local debug flag is enabled."),
+		ECVF_Default);
 }
 
 bool IsParadoxTimeLoopDebugEnabled()
@@ -99,6 +105,11 @@ bool IsParadoxPuzzleOverlayDebugEnabled()
 bool IsParadoxInventoryDebugEnabled()
 {
 	return CVarParadoxInventoryDebug.GetValueOnGameThread() != 0;
+}
+
+bool IsParadoxPairedTransferDebugEnabled()
+{
+	return CVarParadoxPairedTransferDebug.GetValueOnGameThread() != 0;
 }
 
 namespace ParadoxGameplayTags
@@ -154,6 +165,8 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Action_Interaction_Swap, "GameplayAction.Type.Paradox.Interaction.Swap");
 	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Insert, "GameplayAction.Type.Paradox.ItemSlot.Insert");
 	UE_DEFINE_GAMEPLAY_TAG(Action_ItemSlot_Pickup, "GameplayAction.Type.Paradox.ItemSlot.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Action_Dumbwaiter_Send, "GameplayAction.Type.Paradox.Dumbwaiter.Send");
+	UE_DEFINE_GAMEPLAY_TAG(Action_TeleportGate_Enter, "GameplayAction.Type.Paradox.TeleportGate.Enter");
 	UE_DEFINE_GAMEPLAY_TAG(Action_Inventory_Drop, "GameplayAction.Type.Paradox.Inventory.Drop");
 	UE_DEFINE_GAMEPLAY_TAG(Action_Inventory_Use, "GameplayAction.Type.Paradox.Inventory.Use");
 	UE_DEFINE_GAMEPLAY_TAG(Lock_Inventory, "GameplayAction.Lock.Paradox.Inventory");
@@ -161,6 +174,8 @@ namespace ParadoxGameplayTags
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_Inventory_Swap, "Interaction.Paradox.Inventory.Swap");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Insert, "Interaction.Paradox.ItemSlot.Insert");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_ItemSlot_Pickup, "Interaction.Paradox.ItemSlot.Pickup");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_Dumbwaiter_Send, "Interaction.Paradox.Dumbwaiter.Send");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_TeleportGate_Enter, "Interaction.Paradox.TeleportGate.Enter");
 	UE_DEFINE_GAMEPLAY_TAG(Interaction_ChronoSpawn_Spawn, "Interaction.Paradox.ChronoSpawn.Spawn");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_InvalidRequest, "GameplayAction.Result.Failure.Paradox.ItemSlot.InvalidRequest");
 	UE_DEFINE_GAMEPLAY_TAG(Result_Failure_ItemSlot_Inactive, "GameplayAction.Result.Failure.Paradox.ItemSlot.Inactive");

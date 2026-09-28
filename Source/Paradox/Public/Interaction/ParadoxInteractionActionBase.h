@@ -43,7 +43,7 @@ public:
 	UParadoxInteractionComponent* GetInteractionComponent() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
-	FGameplayTag GetInteractionTag() const { return SemanticParameters.InteractionTag; }
+	FGameplayTag GetInteractionTag() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Interaction")
 	FSmartObjectSlotHandle GetResolvedSlotHandle() const { return ResolvedOption.SlotHandle; }
@@ -93,6 +93,14 @@ protected:
 	UFUNCTION(BlueprintNativeEvent, Category = "Paradox|Interaction", meta = (BlueprintProtected = "true"))
 	bool IsInteractionOutcomeSatisfied() const;
 	virtual bool IsInteractionOutcomeSatisfied_Implementation() const;
+
+	/**
+	 * Returns true after a concrete interaction has acquired asynchronous work that owns completion.
+	 * While true, affordance refreshes do not revalidate the requester's original interaction cell.
+	 */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox|Interaction", meta = (BlueprintProtected = "true"))
+	bool IsInteractionExecutionPending() const;
+	virtual bool IsInteractionExecutionPending_Implementation() const;
 
 	/** Concrete pre-execution policy evaluated after the current runtime context is resolved. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Paradox|Interaction", meta = (BlueprintProtected = "true"))

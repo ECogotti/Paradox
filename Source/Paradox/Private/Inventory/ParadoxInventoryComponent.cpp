@@ -9,6 +9,7 @@
 #include "Inventory/ParadoxPickupableActor.h"
 #include "Inventory/ParadoxPickupablePassiveEffect.h"
 #include "Paradox.h"
+#include "Puzzles/ParadoxDumbwaiter.h"
 #include "Subsystems/WorldStateSubsystem.h"
 
 namespace UE::Paradox::Inventory::Private
@@ -59,7 +60,8 @@ FParadoxItemSlotOperationResult UParadoxInventoryComponent::TransferEquippedItem
 			EParadoxItemSlotOperationStatus::OperationInProgress,
 			TEXT("A reentrant inventory transition was rejected."));
 	}
-	if (Slot.InsertedItem || Item.GetCurrentItemSlot() || !Slot.InsertAnchor)
+	if (Slot.InsertedItem || Item.GetCurrentItemSlot() || Item.GetCurrentDumbwaiter()
+		|| !Slot.InsertAnchor)
 	{
 		return Slot.MakeResult(
 			EParadoxItemSlotOperationStatus::OwnershipConflict,
@@ -82,13 +84,105 @@ FParadoxItemSlotOperationResult UParadoxInventoryComponent::TransferEquippedItem
 		TEXT("The equipped item was inserted atomically."));
 }
 
+FParadoxItemSlotOperationResult UParadoxInventoryComponent::TransferEquippedItemToDumbwaiter(
+	AParadoxDumbwaiter& Dumbwaiter,
+	AParadoxInsertablePickupableActor& Item)
+{
+	AParadoxCharacter* Character = GetParadoxCharacter();
+	if (!Character || EquippedItem.Get() != &Item || Item.GetCurrentHolder() != Character)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::OwnershipConflict,
+			TEXT("Inventory ownership changed before the Dumbwaiter Insert transaction committed."));
+	}
+	if (bResetInProgress || Dumbwaiter.bResetInProgress)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::ResetInProgress,
+			TEXT("Dumbwaiter Insert was rejected because World State restore started."));
+	}
+	if (bOperationInProgress)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::OperationInProgress,
+			TEXT("A reentrant inventory transition was rejected."));
+	}
+	if (Dumbwaiter.StoredPickupable || Item.GetCurrentItemSlot()
+		|| Item.GetCurrentDumbwaiter() || !Dumbwaiter.TransferAnchor)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::OwnershipConflict,
+			TEXT("Dumbwaiter ownership changed before the Insert transaction committed."));
+	}
+
+	UE::Paradox::Inventory::Private::FOperationGuard Guard(bOperationInProgress);
+	RemoveAppliedPassiveEffects(&Item);
+	UnbindEquippedItem(&Item);
+	EquippedItem = nullptr;
+	Dumbwaiter.SetStoredPickupableCommitted(&Item);
+	Item.SetDumbwaiterStateNative(Dumbwaiter, *Dumbwaiter.TransferAnchor);
+
+	Item.ReceiveStoredInDumbwaiter(&Dumbwaiter);
+	BroadcastTransition(&Item, nullptr);
+	Dumbwaiter.FinalizeCargoTransition(nullptr, &Item);
+	LogDebugState(TEXT("TransferToDumbwaiter"));
+	return Dumbwaiter.MakeCargoResult(
+		EParadoxItemSlotOperationStatus::Succeeded,
+		TEXT("The equipped cargo was inserted into the Dumbwaiter atomically."));
+}
+
+FParadoxItemSlotOperationResult UParadoxInventoryComponent::TransferDumbwaiterItemToInventory(
+	AParadoxDumbwaiter& Dumbwaiter,
+	AParadoxInsertablePickupableActor& Item)
+{
+	AParadoxCharacter* Character = GetParadoxCharacter();
+	if (!Character || EquippedItem || Dumbwaiter.StoredPickupable.Get() != &Item
+		|| Item.GetCurrentDumbwaiter() != &Dumbwaiter
+		|| Item.GetCurrentItemSlot() || Item.GetCurrentHolder())
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::OwnershipConflict,
+			TEXT("Dumbwaiter or inventory ownership changed before Pickup committed."));
+	}
+	if (bResetInProgress || Dumbwaiter.bResetInProgress)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::ResetInProgress,
+			TEXT("Dumbwaiter Pickup was rejected because World State restore started."));
+	}
+	if (bOperationInProgress)
+	{
+		return Dumbwaiter.MakeCargoResult(
+			EParadoxItemSlotOperationStatus::OperationInProgress,
+			TEXT("A reentrant inventory transition was rejected."));
+	}
+
+	UE::Paradox::Inventory::Private::FOperationGuard Guard(bOperationInProgress);
+	Dumbwaiter.ClearStoredPickupableCommitted(&Item);
+	Item.ClearDumbwaiterStateNative(true);
+	EquippedItem = &Item;
+	BindEquippedItem(Item);
+	Item.SetHeldStateNative(*Character, false);
+	ApplyPassiveEffects(Item);
+
+	Item.ReceiveRemovedFromDumbwaiter(&Dumbwaiter);
+	Item.ReceivePickedUp(Character);
+	BroadcastTransition(nullptr, &Item);
+	Dumbwaiter.FinalizeCargoTransition(&Item, nullptr);
+	LogDebugState(TEXT("TransferFromDumbwaiter"));
+	return Dumbwaiter.MakeCargoResult(
+		EParadoxItemSlotOperationStatus::Succeeded,
+		TEXT("The stored cargo was picked up atomically."));
+}
+
 FParadoxItemSlotOperationResult UParadoxInventoryComponent::TransferInsertedItemFromSlot(
 	AParadoxItemSlotActor& Slot,
 	AParadoxInsertablePickupableActor& Item)
 {
 	AParadoxCharacter* Character = GetParadoxCharacter();
 	if (!Character || EquippedItem || Slot.InsertedItem.Get() != &Item
-		|| Item.GetCurrentItemSlot() != &Slot || Item.GetCurrentHolder())
+		|| Item.GetCurrentItemSlot() != &Slot || Item.GetCurrentDumbwaiter()
+		|| Item.GetCurrentHolder())
 	{
 		return Slot.MakeResult(
 			EParadoxItemSlotOperationStatus::OwnershipConflict,

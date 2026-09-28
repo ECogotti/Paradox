@@ -837,22 +837,30 @@ void AParadoxPlayerController::OnCameraZoomTriggered(const FInputActionValue& Va
 	const float AspectRatio = GetCameraAspectRatio();
 	const FRotator CurrentOrientation = GetCurrentCameraOrientation();
 	const float MaximumCompatible =
-		CalculateMaximumRotationSafeOrthoWidth(AspectRatio);
+		CalculateMaximumRotationSafeCameraZoom(AspectRatio);
 	const float EffectiveMaximum = FMath::Min(
-		ActiveCameraConfiguration.MaximumOrthoWidth,
+		GetConfiguredMaximumCameraZoom(),
 		MaximumCompatible);
 	const float EffectiveMinimum = FMath::Min(
-		ActiveCameraConfiguration.MinimumOrthoWidth,
+		GetConfiguredMinimumCameraZoom(),
 		EffectiveMaximum);
-	CurrentOrthoWidth = FMath::Clamp(
-		CurrentOrthoWidth
+	const float ZoomValue = FMath::Clamp(
+		GetCurrentCameraZoomValue()
 			- Value.Get<float>() * ActiveCameraConfiguration.ZoomUnitsPerStep,
 		EffectiveMinimum,
 		EffectiveMaximum);
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		CurrentCameraArmDistance = ZoomValue;
+	}
+	else
+	{
+		CurrentOrthoWidth = ZoomValue;
+	}
 	CameraFocusLocation = ClampCameraFocus(
 		CameraFocusLocation,
 		CurrentOrientation,
-		CurrentOrthoWidth,
+		ZoomValue,
 		AspectRatio);
 	UpdateFreeCameraPose(AspectRatio);
 }
@@ -1082,6 +1090,15 @@ FParadoxCameraOperationResult AParadoxPlayerController::EnsureFreeCameraInitiali
 	}
 
 	CameraBoundsVolume = EnabledVolumes[0];
+	ActiveCameraProjectionMode = CameraBoundsVolume->GetCameraProjectionMode();
+	if (ActiveCameraProjectionMode != EParadoxCameraProjectionMode::Orthographic
+		&& ActiveCameraProjectionMode != EParadoxCameraProjectionMode::Perspective)
+	{
+		CameraInitializationResult.Status = EParadoxCameraOperationStatus::InvalidConfiguration;
+		CameraInitializationResult.DiagnosticMessage = TEXT("The camera bounds volume has an unsupported projection mode.");
+		CameraBoundsVolume = nullptr;
+		return CameraInitializationResult;
+	}
 	ActiveCameraConfiguration =
 		CameraBoundsVolume->GetEffectiveCameraConfiguration();
 	const float AspectRatio = GetCameraAspectRatio();
@@ -1092,12 +1109,28 @@ FParadoxCameraOperationResult AParadoxPlayerController::EnsureFreeCameraInitiali
 			AspectRatio,
 			ConfigurationFailure))
 	{
+		const FBox Bounds = CameraBoundsVolume->GetCameraWorldBounds();
+		const FVector BoundsExtent = Bounds.GetExtent();
+		const bool bPerspectivePivotHasNoRoom =
+			ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+			&& Bounds.IsValid
+			&& (BoundsExtent.X < ActiveCameraConfiguration.BoundaryMargin
+				|| BoundsExtent.Y < ActiveCameraConfiguration.BoundaryMargin);
+		FVector2D UnitFootprint;
 		CameraInitializationResult.Status =
-			CalculateMaximumCompatibleOrthoWidth(
+			bPerspectivePivotHasNoRoom
+			|| (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Orthographic
+			&& Bounds.IsValid
+			&& CalculateFootprintExtents(
+				ActiveCameraConfiguration.Orientation,
+				1.0f,
+				AspectRatio,
+				UnitFootprint)
+			&& CalculateMaximumCompatibleCameraZoom(
 				ActiveCameraConfiguration.Orientation,
 				AspectRatio)
-					+ KINDA_SMALL_NUMBER
-				< ActiveCameraConfiguration.MinimumOrthoWidth
+				+ KINDA_SMALL_NUMBER
+				< GetConfiguredMinimumCameraZoom())
 				? EParadoxCameraOperationStatus::VolumeTooSmall
 				: EParadoxCameraOperationStatus::InvalidConfiguration;
 		CameraInitializationResult.DiagnosticMessage = ConfigurationFailure;
@@ -1128,9 +1161,13 @@ FParadoxCameraOperationResult AParadoxPlayerController::EnsureFreeCameraInitiali
 		return CameraInitializationResult;
 	}
 
-	CurrentOrthoWidth = FMath::Min(
-		ActiveCameraConfiguration.InitialOrthoWidth,
-		CalculateMaximumRotationSafeOrthoWidth(AspectRatio));
+	const float InitialZoom = FMath::Min(
+		GetConfiguredInitialCameraZoom(),
+		CalculateMaximumRotationSafeCameraZoom(AspectRatio));
+	CurrentOrthoWidth = ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Orthographic
+		? InitialZoom : 0.0f;
+	CurrentCameraArmDistance = ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+		? InitialZoom : ActiveCameraConfiguration.CameraDistance;
 	CurrentCameraQuarterTurnIndex = 0;
 	CameraRotationStartQuarterTurnIndex = 0;
 	CameraRotationDirection = 0;
@@ -1140,14 +1177,16 @@ FParadoxCameraOperationResult AParadoxPlayerController::EnsureFreeCameraInitiali
 	CameraFocusLocation = ClampCameraFocus(
 		CameraFocusLocation,
 		GetCurrentCameraOrientation(),
-		CurrentOrthoWidth,
+		GetCurrentCameraZoomValue(),
 		AspectRatio);
 	UpdateFreeCameraPose(AspectRatio);
 	SetViewTarget(FreeCameraRig);
 
 	CameraInitializationResult.Status = EParadoxCameraOperationStatus::Succeeded;
 	CameraInitializationResult.DiagnosticMessage = FString::Printf(
-		TEXT("Initialized independent orthographic camera '%s' using volume '%s'."),
+		TEXT("Initialized independent %s camera '%s' using volume '%s'."),
+		ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+			? TEXT("perspective") : TEXT("orthographic"),
 		*GetNameSafe(FreeCameraRig),
 		*GetNameSafe(CameraBoundsVolume));
 	PARADOX_LOG_INFO(TEXT("%s"), *CameraInitializationResult.DiagnosticMessage);
@@ -1178,7 +1217,7 @@ void AParadoxPlayerController::RequestCameraRecenter()
 	CameraRecenterTarget = ClampCameraFocus(
 		CameraRecenterRequestedTarget,
 		GetCurrentCameraOrientation(),
-		CurrentOrthoWidth,
+		GetCurrentCameraZoomValue(),
 		GetCameraAspectRatio());
 	CameraRecenterElapsed = 0.0f;
 	bCameraRecenterActive = true;
@@ -1198,16 +1237,16 @@ bool AParadoxPlayerController::RequestCameraRotation(const int32 Direction)
 		StartYawOffset + NormalizedDirection * CameraQuarterTurnDegrees;
 	const float AspectRatio = GetCameraAspectRatio();
 	const float MaximumCompatible =
-		CalculateMaximumCompatibleOrthoWidthForRotationArc(
+		CalculateMaximumCompatibleCameraZoomForRotationArc(
 			StartYawOffset,
 			EndYawOffset,
 			AspectRatio);
-	if (CurrentOrthoWidth > MaximumCompatible + KINDA_SMALL_NUMBER)
+	if (GetCurrentCameraZoomValue() > MaximumCompatible + KINDA_SMALL_NUMBER)
 	{
 		PARADOX_LOG_WARNING(
-			TEXT("Camera rotation rejected for controller '%s': Ortho Width %.1f exceeds the full-arc limit %.1f at aspect %.3f in volume '%s'."),
+			TEXT("Camera rotation rejected for controller '%s': zoom %.1f exceeds the full-arc limit %.1f at aspect %.3f in volume '%s'."),
 			*GetNameSafe(this),
-			CurrentOrthoWidth,
+			GetCurrentCameraZoomValue(),
 			MaximumCompatible,
 			AspectRatio,
 			*GetNameSafe(CameraBoundsVolume));
@@ -1247,20 +1286,20 @@ void AParadoxPlayerController::UpdateFreeCamera(const float RealDeltaSeconds)
 
 	const FRotator CurrentOrientation = GetCurrentCameraOrientation();
 	const float MaximumCompatible =
-		CalculateMaximumRotationSafeOrthoWidth(AspectRatio);
+		CalculateMaximumRotationSafeCameraZoom(AspectRatio);
 	const float EffectiveMaximum = FMath::Min(
-		ActiveCameraConfiguration.MaximumOrthoWidth,
+		GetConfiguredMaximumCameraZoom(),
 		MaximumCompatible);
 	if (MaximumCompatible + KINDA_SMALL_NUMBER
-		< ActiveCameraConfiguration.MinimumOrthoWidth)
+		< GetConfiguredMinimumCameraZoom())
 	{
 		if (!bWarnedRuntimeAspectConstraint)
 		{
 			bWarnedRuntimeAspectConstraint = true;
 			PARADOX_LOG_WARNING(
-				TEXT("Viewport aspect ratio %.3f makes the configured minimum Ortho Width %.1f incompatible with full-rotation containment in camera volume '%s'; rotation-safe containment takes precedence with width %.1f."),
+				TEXT("Viewport aspect ratio %.3f makes the configured minimum camera zoom %.1f incompatible with full-rotation containment in camera volume '%s'; containment takes precedence with zoom %.1f."),
 				AspectRatio,
-				ActiveCameraConfiguration.MinimumOrthoWidth,
+				GetConfiguredMinimumCameraZoom(),
 				*GetNameSafe(CameraBoundsVolume),
 				EffectiveMaximum);
 		}
@@ -1269,7 +1308,14 @@ void AParadoxPlayerController::UpdateFreeCamera(const float RealDeltaSeconds)
 	{
 		bWarnedRuntimeAspectConstraint = false;
 	}
-	CurrentOrthoWidth = FMath::Min(CurrentOrthoWidth, EffectiveMaximum);
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		CurrentCameraArmDistance = FMath::Min(CurrentCameraArmDistance, EffectiveMaximum);
+	}
+	else
+	{
+		CurrentOrthoWidth = FMath::Min(CurrentOrthoWidth, EffectiveMaximum);
+	}
 
 	if (!CameraMoveInput.IsNearlyZero())
 	{
@@ -1292,7 +1338,7 @@ void AParadoxPlayerController::UpdateFreeCamera(const float RealDeltaSeconds)
 		CameraRecenterTarget = ClampCameraFocus(
 			CameraRecenterRequestedTarget,
 			CurrentOrientation,
-			CurrentOrthoWidth,
+			GetCurrentCameraZoomValue(),
 			AspectRatio);
 		CameraRecenterElapsed += RealDeltaSeconds;
 		const float Duration = ActiveCameraConfiguration.RecenterDuration;
@@ -1312,7 +1358,7 @@ void AParadoxPlayerController::UpdateFreeCamera(const float RealDeltaSeconds)
 	CameraFocusLocation = ClampCameraFocus(
 		CameraFocusLocation,
 		CurrentOrientation,
-		CurrentOrthoWidth,
+		GetCurrentCameraZoomValue(),
 		AspectRatio);
 	UpdateFreeCameraPose(AspectRatio);
 	DrawFreeCameraDebug(AspectRatio);
@@ -1328,13 +1374,15 @@ void AParadoxPlayerController::UpdateFreeCameraPose(const float AspectRatio)
 	CameraFocusLocation = ClampCameraFocus(
 		CameraFocusLocation,
 		CurrentOrientation,
-		CurrentOrthoWidth,
+		GetCurrentCameraZoomValue(),
 		AspectRatio);
 	FreeCameraRig->ApplyCameraPose(
 		CameraFocusLocation,
 		CurrentOrientation,
-		ActiveCameraConfiguration.CameraDistance,
-		CurrentOrthoWidth);
+		ActiveCameraProjectionMode,
+		CurrentCameraArmDistance,
+		CurrentOrthoWidth,
+		ActiveCameraConfiguration.PerspectiveFieldOfView);
 }
 
 FRotator AParadoxPlayerController::GetCurrentCameraOrientation() const
@@ -1378,17 +1426,43 @@ float AParadoxPlayerController::GetCameraAspectRatio() const
 		: FMath::Max(0.1f, ActiveCameraConfiguration.FallbackAspectRatio);
 }
 
+float AParadoxPlayerController::GetCurrentCameraZoomValue() const
+{
+	return ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+		? CurrentCameraArmDistance : CurrentOrthoWidth;
+}
+
+float AParadoxPlayerController::GetConfiguredMinimumCameraZoom() const
+{
+	return ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+		? ActiveCameraConfiguration.MinimumCameraArmDistance
+		: ActiveCameraConfiguration.MinimumOrthoWidth;
+}
+
+float AParadoxPlayerController::GetConfiguredMaximumCameraZoom() const
+{
+	return ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+		? ActiveCameraConfiguration.MaximumCameraArmDistance
+		: ActiveCameraConfiguration.MaximumOrthoWidth;
+}
+
+float AParadoxPlayerController::GetConfiguredInitialCameraZoom() const
+{
+	return ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+		? ActiveCameraConfiguration.InitialCameraArmDistance
+		: ActiveCameraConfiguration.InitialOrthoWidth;
+}
+
 bool AParadoxPlayerController::CalculateFootprint(
 	const FVector& FocusLocation,
 	const FRotator& Orientation,
-	const float OrthoWidth,
+	const float ZoomValue,
 	const float AspectRatio,
 	TArray<FVector>& OutCorners) const
 {
 	OutCorners.Reset(4);
 	const FVector Forward = Orientation.Vector();
-	if (FMath::Abs(Forward.Z) <= KINDA_SMALL_NUMBER
-		|| OrthoWidth <= 0.0f
+	if (ZoomValue <= 0.0f
 		|| AspectRatio <= 0.0f)
 	{
 		return false;
@@ -1397,7 +1471,39 @@ bool AParadoxPlayerController::CalculateFootprint(
 	const FRotationMatrix Rotation(Orientation);
 	const FVector Right = Rotation.GetUnitAxis(EAxis::Y);
 	const FVector Up = Rotation.GetUnitAxis(EAxis::Z);
-	const float HalfWidth = OrthoWidth * 0.5f;
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		if (Forward.Z >= -KINDA_SMALL_NUMBER)
+		{
+			return false;
+		}
+		const float HalfHorizontalAngle = FMath::DegreesToRadians(
+			ActiveCameraConfiguration.PerspectiveFieldOfView * 0.5f);
+		const float HorizontalTangent = FMath::Tan(HalfHorizontalAngle);
+		const float VerticalTangent = HorizontalTangent / AspectRatio;
+		for (const float HorizontalSign : { -1.0f, 1.0f })
+		{
+			for (const float VerticalSign : { -1.0f, 1.0f })
+			{
+				const FVector Ray = Forward
+					+ Right * HorizontalTangent * HorizontalSign
+					+ Up * VerticalTangent * VerticalSign;
+				if (Ray.Z >= -KINDA_SMALL_NUMBER)
+				{
+					OutCorners.Reset();
+					return false;
+				}
+				const float DistanceAlongRay = ZoomValue * Forward.Z / Ray.Z;
+				OutCorners.Add(FocusLocation - Forward * ZoomValue + Ray * DistanceAlongRay);
+			}
+		}
+		return true;
+	}
+	if (FMath::Abs(Forward.Z) <= KINDA_SMALL_NUMBER)
+	{
+		return false;
+	}
+	const float HalfWidth = ZoomValue * 0.5f;
 	const float HalfHeight = HalfWidth / AspectRatio;
 	for (const float HorizontalSign : { -1.0f, 1.0f })
 	{
@@ -1416,7 +1522,7 @@ bool AParadoxPlayerController::CalculateFootprint(
 
 bool AParadoxPlayerController::CalculateFootprintExtents(
 	const FRotator& Orientation,
-	const float OrthoWidth,
+	const float ZoomValue,
 	const float AspectRatio,
 	FVector2D& OutExtents) const
 {
@@ -1424,7 +1530,7 @@ bool AParadoxPlayerController::CalculateFootprintExtents(
 	if (!CalculateFootprint(
 		FVector::ZeroVector,
 		Orientation,
-		OrthoWidth,
+		ZoomValue,
 		AspectRatio,
 		Corners))
 	{
@@ -1442,14 +1548,14 @@ bool AParadoxPlayerController::CalculateFootprintExtents(
 }
 
 bool AParadoxPlayerController::CalculateRotationArcFootprintExtents(
-	const float OrthoWidth,
+	const float ZoomValue,
 	const float AspectRatio,
 	const float StartYawOffsetDegrees,
 	const float EndYawOffsetDegrees,
 	FVector2D& OutExtents) const
 {
 	OutExtents = FVector2D::ZeroVector;
-	if (OrthoWidth <= 0.0f || AspectRatio <= 0.0f)
+	if (ZoomValue <= 0.0f || AspectRatio <= 0.0f)
 	{
 		return false;
 	}
@@ -1462,7 +1568,7 @@ bool AParadoxPlayerController::CalculateRotationArcFootprintExtents(
 	}
 
 	const FRotationMatrix Rotation(BaseOrientation);
-	const float HalfWidth = OrthoWidth * 0.5f;
+	const float HalfWidth = ZoomValue * 0.5f;
 	const float HalfHeight = HalfWidth / AspectRatio;
 	const FVector RightOffset =
 		Rotation.GetUnitAxis(EAxis::Y) * HalfWidth;
@@ -1494,13 +1600,17 @@ bool AParadoxPlayerController::CalculateRotationArcFootprintExtents(
 	return true;
 }
 
-float AParadoxPlayerController::CalculateMaximumCompatibleOrthoWidth(
+float AParadoxPlayerController::CalculateMaximumCompatibleCameraZoom(
 	const FRotator& Orientation,
 	const float AspectRatio) const
 {
 	if (!IsValid(CameraBoundsVolume))
 	{
 		return 0.0f;
+	}
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		return ActiveCameraConfiguration.MaximumCameraArmDistance;
 	}
 
 	FVector2D UnitExtents;
@@ -1530,7 +1640,7 @@ float AParadoxPlayerController::CalculateMaximumCompatibleOrthoWidth(
 	return FMath::Max(0.0f, FMath::Min(WidthX, WidthY));
 }
 
-float AParadoxPlayerController::CalculateMaximumCompatibleOrthoWidthForRotationArc(
+float AParadoxPlayerController::CalculateMaximumCompatibleCameraZoomForRotationArc(
 	const float StartYawOffsetDegrees,
 	const float EndYawOffsetDegrees,
 	const float AspectRatio) const
@@ -1538,6 +1648,10 @@ float AParadoxPlayerController::CalculateMaximumCompatibleOrthoWidthForRotationA
 	if (!IsValid(CameraBoundsVolume))
 	{
 		return 0.0f;
+	}
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		return ActiveCameraConfiguration.MaximumCameraArmDistance;
 	}
 
 	FVector2D UnitExtents;
@@ -1567,12 +1681,12 @@ float AParadoxPlayerController::CalculateMaximumCompatibleOrthoWidthForRotationA
 	return FMath::Max(0.0f, FMath::Min(WidthX, WidthY));
 }
 
-float AParadoxPlayerController::CalculateMaximumRotationSafeOrthoWidth(
+float AParadoxPlayerController::CalculateMaximumRotationSafeCameraZoom(
 	const float AspectRatio) const
 {
 	// The four adjacent quarter-turn arcs cover the complete yaw circle. Calculating their
 	// continuous union keeps every future Q/E request valid regardless of the current index.
-	return CalculateMaximumCompatibleOrthoWidthForRotationArc(
+	return CalculateMaximumCompatibleCameraZoomForRotationArc(
 		0.0f,
 		4.0f * CameraQuarterTurnDegrees,
 		AspectRatio);
@@ -1581,18 +1695,33 @@ float AParadoxPlayerController::CalculateMaximumRotationSafeOrthoWidth(
 FVector AParadoxPlayerController::ClampCameraFocus(
 	const FVector& RequestedFocus,
 	const FRotator& Orientation,
-	const float OrthoWidth,
+	const float ZoomValue,
 	const float AspectRatio) const
 {
 	if (!IsValid(CameraBoundsVolume))
 	{
 		return RequestedFocus;
 	}
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		const FBox Bounds = CameraBoundsVolume->GetCameraWorldBounds();
+		const float Margin = ActiveCameraConfiguration.BoundaryMargin;
+		const FVector Extent = Bounds.GetExtent();
+		FVector Clamped = RequestedFocus;
+		Clamped.X = FMath::Clamp(RequestedFocus.X,
+			Bounds.Min.X + FMath::Min(Margin, Extent.X),
+			Bounds.Max.X - FMath::Min(Margin, Extent.X));
+		Clamped.Y = FMath::Clamp(RequestedFocus.Y,
+			Bounds.Min.Y + FMath::Min(Margin, Extent.Y),
+			Bounds.Max.Y - FMath::Min(Margin, Extent.Y));
+		Clamped.Z = CameraBoundsVolume->GetCameraLogicalCenter().Z;
+		return Clamped;
+	}
 
 	FVector2D FootprintExtents;
 	if (!CalculateFootprintExtents(
 		Orientation,
-		OrthoWidth,
+		ZoomValue,
 		AspectRatio,
 		FootprintExtents))
 	{
@@ -1628,11 +1757,10 @@ bool AParadoxPlayerController::ValidateCameraConfiguration(
 	{
 		return FMath::IsFinite(Value) && Value > 0.0f;
 	};
-	if (!IsFinitePositive(Configuration.CameraDistance)
-		|| !IsFinitePositive(Configuration.MinimumOrthoWidth)
-		|| !IsFinitePositive(Configuration.MaximumOrthoWidth)
-		|| !IsFinitePositive(Configuration.InitialOrthoWidth)
-		|| !IsFinitePositive(Configuration.FallbackAspectRatio)
+	if (!IsFinitePositive(Configuration.FallbackAspectRatio)
+		|| !FMath::IsFinite(Configuration.Orientation.Pitch)
+		|| !FMath::IsFinite(Configuration.Orientation.Yaw)
+		|| !FMath::IsFinite(Configuration.Orientation.Roll)
 		|| !FMath::IsFinite(Configuration.MovementSpeed)
 		|| Configuration.MovementSpeed < 0.0f
 		|| !FMath::IsFinite(Configuration.ZoomUnitsPerStep)
@@ -1646,6 +1774,27 @@ bool AParadoxPlayerController::ValidateCameraConfiguration(
 		OutFailure = TEXT("The camera configuration contains a non-finite, negative, or zero-required value.");
 		return false;
 	}
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		if (!FMath::IsFinite(Configuration.PerspectiveFieldOfView)
+			|| Configuration.PerspectiveFieldOfView < 1.0f
+			|| Configuration.PerspectiveFieldOfView > 170.0f
+			|| !IsFinitePositive(Configuration.InitialCameraArmDistance)
+			|| !IsFinitePositive(Configuration.MinimumCameraArmDistance)
+			|| !IsFinitePositive(Configuration.MaximumCameraArmDistance))
+		{
+			OutFailure = TEXT("Perspective camera FOV must be within 1-170 degrees and arm distances must be finite and positive.");
+			return false;
+		}
+	}
+	else if (!IsFinitePositive(Configuration.CameraDistance)
+		|| !IsFinitePositive(Configuration.InitialOrthoWidth)
+		|| !IsFinitePositive(Configuration.MinimumOrthoWidth)
+		|| !IsFinitePositive(Configuration.MaximumOrthoWidth))
+	{
+		OutFailure = TEXT("Orthographic camera distance and widths must be finite and positive.");
+		return false;
+	}
 	const UEnum* RotationEasingEnum = StaticEnum<EAlphaBlendOption>();
 	if (!RotationEasingEnum
 		|| !RotationEasingEnum->IsValidEnumValue(
@@ -1655,20 +1804,28 @@ bool AParadoxPlayerController::ValidateCameraConfiguration(
 		OutFailure = TEXT("Camera Rotation Easing must be a supported built-in non-custom blend option.");
 		return false;
 	}
-	if (Configuration.MinimumOrthoWidth > Configuration.MaximumOrthoWidth)
+	if (GetConfiguredMinimumCameraZoom() > GetConfiguredMaximumCameraZoom())
 	{
-		OutFailure = TEXT("Camera Minimum Ortho Width is greater than Maximum Ortho Width.");
+		OutFailure = TEXT("Camera minimum zoom is greater than maximum zoom.");
 		return false;
 	}
-	if (Configuration.InitialOrthoWidth < Configuration.MinimumOrthoWidth
-		|| Configuration.InitialOrthoWidth > Configuration.MaximumOrthoWidth)
+	if (GetConfiguredInitialCameraZoom() < GetConfiguredMinimumCameraZoom()
+		|| GetConfiguredInitialCameraZoom() > GetConfiguredMaximumCameraZoom())
 	{
-		OutFailure = TEXT("Camera Initial Ortho Width is outside the configured minimum/maximum range.");
+		OutFailure = TEXT("Initial camera zoom is outside the configured minimum/maximum range.");
 		return false;
 	}
-	if (FMath::Abs(Configuration.Orientation.Vector().Z) <= KINDA_SMALL_NUMBER)
+	TArray<FVector> InitialCorners;
+	if (!CalculateFootprint(
+			FVector::ZeroVector,
+			Configuration.Orientation,
+			GetConfiguredInitialCameraZoom(),
+			AspectRatio,
+			InitialCorners))
 	{
-		OutFailure = TEXT("Camera orientation is parallel to the map plane and cannot produce a bounded footprint.");
+		OutFailure = ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective
+			? TEXT("Perspective camera orientation or FOV lets a corner ray reach the horizon or miss the map plane.")
+			: TEXT("Camera orientation is parallel to the map plane and cannot produce a bounded footprint.");
 		return false;
 	}
 	if (!Volume.GetCameraWorldBounds().IsValid)
@@ -1676,27 +1833,37 @@ bool AParadoxPlayerController::ValidateCameraConfiguration(
 		OutFailure = TEXT("The camera bounds volume has invalid world bounds.");
 		return false;
 	}
+	if (ActiveCameraProjectionMode == EParadoxCameraProjectionMode::Perspective)
+	{
+		const FVector BoundsExtent = Volume.GetCameraWorldBounds().GetExtent();
+		if (BoundsExtent.X < Configuration.BoundaryMargin
+			|| BoundsExtent.Y < Configuration.BoundaryMargin)
+		{
+			OutFailure = TEXT("The camera bounds volume is too small to contain the perspective pivot and boundary margin.");
+			return false;
+		}
+	}
 
 	const float MaximumCompatible =
-		CalculateMaximumCompatibleOrthoWidth(
+		CalculateMaximumCompatibleCameraZoom(
 			Configuration.Orientation,
 			AspectRatio);
 	if (MaximumCompatible + KINDA_SMALL_NUMBER
-		< Configuration.MinimumOrthoWidth)
+		< GetConfiguredMinimumCameraZoom())
 	{
 		OutFailure = FString::Printf(
-			TEXT("Camera volume '%s' supports at most Ortho Width %.1f at aspect %.3f, below the configured minimum %.1f."),
+			TEXT("Camera volume '%s' supports at most camera zoom %.1f at aspect %.3f, below the configured minimum %.1f."),
 			*GetNameSafe(&Volume),
 			MaximumCompatible,
 			AspectRatio,
-			Configuration.MinimumOrthoWidth);
+			GetConfiguredMinimumCameraZoom());
 		return false;
 	}
-	if (Configuration.InitialOrthoWidth > MaximumCompatible + KINDA_SMALL_NUMBER)
+	if (GetConfiguredInitialCameraZoom() > MaximumCompatible + KINDA_SMALL_NUMBER)
 	{
 		OutFailure = FString::Printf(
-			TEXT("Initial Ortho Width %.1f does not fit camera volume '%s' at aspect %.3f."),
-			Configuration.InitialOrthoWidth,
+			TEXT("Initial camera zoom %.1f does not fit camera volume '%s' at aspect %.3f."),
+			GetConfiguredInitialCameraZoom(),
 			*GetNameSafe(&Volume),
 			AspectRatio);
 		return false;
@@ -1706,14 +1873,14 @@ bool AParadoxPlayerController::ValidateCameraConfiguration(
 	const FVector ClampedCenter = ClampCameraFocus(
 		LogicalCenter,
 		Configuration.Orientation,
-		Configuration.InitialOrthoWidth,
+		GetConfiguredInitialCameraZoom(),
 		AspectRatio);
 	if (!FVector2D(LogicalCenter.X, LogicalCenter.Y).Equals(
 		FVector2D(ClampedCenter.X, ClampedCenter.Y),
 		1.0f))
 	{
 		OutFailure = FString::Printf(
-			TEXT("Logical camera center %s is incompatible with volume '%s' and the initial footprint."),
+			TEXT("Logical camera center %s is incompatible with volume '%s' and the selected camera bounds."),
 			*LogicalCenter.ToCompactString(),
 			*GetNameSafe(&Volume));
 		return false;
@@ -1746,7 +1913,7 @@ void AParadoxPlayerController::DrawFreeCameraDebug(
 	if (CalculateFootprint(
 		CameraFocusLocation,
 		GetCurrentCameraOrientation(),
-		CurrentOrthoWidth,
+		GetCurrentCameraZoomValue(),
 		AspectRatio,
 		Corners)
 		&& Corners.Num() == 4)

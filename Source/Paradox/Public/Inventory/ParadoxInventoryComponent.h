@@ -8,6 +8,7 @@
 class AParadoxCharacter;
 class AParadoxInsertablePickupableActor;
 class AParadoxItemSlotActor;
+class AParadoxDumbwaiter;
 class AParadoxPickupableActor;
 class UParadoxPickupablePassiveEffect;
 struct FParadoxItemSlotOperationResult;
@@ -81,6 +82,12 @@ private:
 	FParadoxItemSlotOperationResult TransferInsertedItemFromSlot(
 		AParadoxItemSlotActor& Slot,
 		AParadoxInsertablePickupableActor& Item);
+	FParadoxItemSlotOperationResult TransferEquippedItemToDumbwaiter(
+		AParadoxDumbwaiter& Dumbwaiter,
+		AParadoxInsertablePickupableActor& Item);
+	FParadoxItemSlotOperationResult TransferDumbwaiterItemToInventory(
+		AParadoxDumbwaiter& Dumbwaiter,
+		AParadoxInsertablePickupableActor& Item);
 	FParadoxInventoryOperationResult MakeResult(
 		EParadoxInventoryOperationStatus Status,
 		FString Diagnostic) const;
@@ -110,4 +117,5 @@ private:
 	bool bResetInProgress = false;
 
 	friend class AParadoxItemSlotActor;
+	friend class AParadoxDumbwaiter;
 };

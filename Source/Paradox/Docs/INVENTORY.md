@@ -15,9 +15,10 @@ Player or the local controller. Target and interaction capability are likewise r
 immutable semantic Property Bag during preflight, before runtime caches exist.
 
 Insertable pickupables add a third gameplay state, `Inserted`, which is mutually exclusive with
-World and Held. Transfers between the Character slot and an `AParadoxItemSlotActor` use the same
-inventory-owned effect bookkeeping and preserve the `Inventory/CurrentHolder` and
-`ItemSlot/CurrentItemSlot` invariants atomically. See
+World and Held. Exactly one `AParadoxItemSlotActor` or `AParadoxDumbwaiter` may own that state;
+their backlinks cannot coexist. Transfers between the Character slot and either container use the
+same inventory-owned effect bookkeeping and preserve Inventory, holder, and container invariants
+atomically. See
 [Paradox insertable items and item slots](ITEM_SLOTS.md) for authoring and replay behavior.
 
 Use `HasItem`, `GetEquippedItem`, `CanEquip`, and `CanUnequip` for Blueprint-safe queries. Native
@@ -86,6 +87,12 @@ These base options apply only while the item is available in the world. Held and
 items still disable Actor/component collision, Unreal navigation relevance and active GridWorld
 occupancy/modifier blocking. Insertable subclasses expose separate, default-off collision and
 navigation options for their `Inserted` state.
+
+While an inserted item is in an active Dumbwaiter Send transaction, the Dumbwaiter temporarily
+suspends that `Inserted` physical presence without overwriting the captured authored settings. This
+prevents a moving cart from repeatedly affecting collision or navigation. Normal Transfer-In
+completion, cancellation, reset, and restore reapply the same authored Actor collision, primitive
+collision responses, navigation relevance, occupancy, and Grid modifier configuration.
 
 World state enables the Visibility selection query, selection state and interaction state. Logical
 occupancy is enabled only for navigation-blocking pickupables. Held and Inserted states clear
@@ -257,6 +264,11 @@ pickupables in `RestorePending`. Inventory transitions remain blocked until Worl
 completion or failure. World State restores existence and transform; pickupables then restore their
 world capabilities and the successful-baseline presentation hook. Gameplay Action abort remains the
 time loop's existing responsibility.
+
+Item Slot and Dumbwaiter owners participate in that same boundary. They clear their hard
+relationship before captured properties mutate and reconstruct the single captured owner
+afterward, so an insertable cannot remain attached to one container while another owns it
+logically.
 
 Consumed pickupables use this same lifecycle: `Consumed -> RestorePending -> World`. Authored Oxygen
 Canisters therefore return from the immutable baseline without a respawn manager or a second

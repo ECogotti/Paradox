@@ -98,6 +98,21 @@ UParadoxInteractionActionBase::GetInteractionComponent() const
 		: nullptr;
 }
 
+FGameplayTag UParadoxInteractionActionBase::GetInteractionTag() const
+{
+	if (SemanticParameters.InteractionTag.IsValid())
+	{
+		return SemanticParameters.InteractionTag;
+	}
+
+	FParadoxInteractionActionParameters SemanticValues;
+	FGameplayTag FailureReason;
+	FString Diagnostic;
+	return ReadSemanticParameters(SemanticValues, FailureReason, Diagnostic)
+		? SemanticValues.InteractionTag
+		: FGameplayTag();
+}
+
 bool UParadoxInteractionActionBase::CanStartAction_Implementation(
 	FGameplayTag& OutFailureReason,
 	FString& OutDiagnostic) const
@@ -329,6 +344,11 @@ bool UParadoxInteractionActionBase::CanSatisfyInteractionPreconditions_Implement
 }
 
 bool UParadoxInteractionActionBase::IsInteractionOutcomeSatisfied_Implementation() const
+{
+	return false;
+}
+
+bool UParadoxInteractionActionBase::IsInteractionExecutionPending_Implementation() const
 {
 	return false;
 }
@@ -1055,6 +1075,10 @@ void UParadoxInteractionActionBase::HandleInteractionAffordanceChanged(
 	}
 	ReevaluateRunningInteraction();
 	if (bCompletionRequested || bMovingToInteraction)
+	{
+		return;
+	}
+	if (IsInteractionExecutionPending())
 	{
 		return;
 	}

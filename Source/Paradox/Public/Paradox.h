@@ -28,6 +28,8 @@ PARADOX_API bool IsParadoxInteractionDebugEnabled();
 PARADOX_API bool IsParadoxPuzzleOverlayDebugEnabled();
 /** Global half of the single-slot inventory and drop-targeting debug gate. */
 PARADOX_API bool IsParadoxInventoryDebugEnabled();
+/** Global half of the paired-transfer visual and lifecycle diagnostic gate. */
+PARADOX_API bool IsParadoxPairedTransferDebugEnabled();
 
 namespace ParadoxGameplayTags
 {
@@ -54,6 +56,8 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Interaction_Swap);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_ItemSlot_Insert);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_ItemSlot_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Dumbwaiter_Send);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_TeleportGate_Enter);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Inventory_Drop);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Action_Inventory_Use);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Lock_Inventory);
@@ -61,6 +65,8 @@ namespace ParadoxGameplayTags
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Inventory_Swap);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_ItemSlot_Insert);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_ItemSlot_Pickup);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_Dumbwaiter_Send);
+	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_TeleportGate_Enter);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Interaction_ChronoSpawn_Spawn);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_InvalidRequest);
 	PARADOX_API UE_DECLARE_GAMEPLAY_TAG_EXTERN(Result_Failure_ItemSlot_Inactive);

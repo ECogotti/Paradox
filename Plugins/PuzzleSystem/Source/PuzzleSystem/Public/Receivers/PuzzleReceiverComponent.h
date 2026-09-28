@@ -29,6 +29,7 @@ class PUZZLESYSTEM_API UPuzzleReceiverComponent : public UActorComponent
 
 public:
 	UPuzzleReceiverComponent();
+	virtual void BeginPlay() override;
 
 	/**
 	 * Determines whether Controller prerequisites activate this Receiver immediately or require a
@@ -36,6 +37,15 @@ public:
 	 */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Receiver|Activation")
 	EPuzzleReceiverActivationMode ActivationMode = EPuzzleReceiverActivationMode::Automatic;
+
+	/**
+	 * Allows an Automatic Receiver to remain active while no valid Controller is registered.
+	 * Any registered Controller, including one currently requesting inactive, disables this fallback.
+	 * Disabled by default so existing puzzle content preserves its fail-closed behavior.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Receiver|Activation",
+		meta = (EditCondition = "ActivationMode == EPuzzleReceiverActivationMode::Automatic"))
+	bool bActivateWhenUncontrolled = false;
 
 	/**
 	 * Clears outstanding requests when the component leaves play.
@@ -73,7 +83,8 @@ public:
 	FPuzzleReceiverInvalidatedNativeDelegate OnReceiverInvalidatedNative;
 
 	/**
-	 * Adds or updates one controller's activation request.
+	 * Adds or updates one controller's activation request. Inactive requests remain registered so
+	 * the Receiver can distinguish an inactive Controller from having no Controller at all.
 	 *
 	 * @param SourceController Controller that owns this request.
 	 * @param bRequestedActive True when the controller wants this receiver active.
@@ -134,6 +145,10 @@ public:
 	 */
 	UFUNCTION(BlueprintPure, Category = "Puzzle|Receiver")
 	int32 GetActiveRequestCount() const;
+
+	/** Returns the number of valid Controllers currently registered, active or inactive. */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Receiver")
+	int32 GetRegisteredControllerCount() const;
 
 	/**
 	 * Returns valid controllers currently tracked by this receiver.

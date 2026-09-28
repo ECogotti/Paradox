@@ -6,6 +6,7 @@
 #include "ParadoxInsertablePickupableActor.generated.h"
 
 class AParadoxItemSlotActor;
+class AParadoxDumbwaiter;
 class UParadoxInventoryComponent;
 class USceneComponent;
 
@@ -26,6 +27,10 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Item Slot")
 	AParadoxItemSlotActor* GetCurrentItemSlot() const { return CurrentItemSlot.Get(); }
+
+	/** Returns the paired-transfer cargo owner, mutually exclusive with CurrentItemSlot. */
+	UFUNCTION(BlueprintPure, Category = "Paradox|Dumbwaiter")
+	AParadoxDumbwaiter* GetCurrentDumbwaiter() const { return CurrentDumbwaiter.Get(); }
 
 	/** Explicit event-driven refresh for dynamic conditions used by a derived Puzzle Slot. */
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Item Slot")
@@ -72,13 +77,30 @@ protected:
 	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Item Slot|Presentation", meta = (DisplayName = "On Removed From Slot"))
 	void ReceiveRemovedFromSlot(AParadoxItemSlotActor* PreviousSlot);
 
+	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Dumbwaiter|Presentation", meta = (DisplayName = "On Stored In Dumbwaiter"))
+	void ReceiveStoredInDumbwaiter(AParadoxDumbwaiter* NewDumbwaiter);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Dumbwaiter|Presentation", meta = (DisplayName = "On Removed From Dumbwaiter"))
+	void ReceiveRemovedFromDumbwaiter(AParadoxDumbwaiter* PreviousDumbwaiter);
+
 private:
 	void SetInsertedStateNative(AParadoxItemSlotActor& NewSlot, USceneComponent& InsertAnchor);
+	void SetDumbwaiterStateNative(AParadoxDumbwaiter& NewDumbwaiter, USceneComponent& CargoAnchor);
+	void SetDumbwaiterTransferPresenceSuspendedNative(bool bSuspended);
 	void ClearInsertedStateNative(bool bDetach);
+	void ClearDumbwaiterStateNative(bool bDetach);
 
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AParadoxItemSlotActor> CurrentItemSlot;
 
+	UPROPERTY(Transient)
+	TWeakObjectPtr<AParadoxDumbwaiter> CurrentDumbwaiter;
+
+	/** Suppresses collision and navigation influence while a Dumbwaiter cart transition is active. */
+	UPROPERTY(Transient)
+	bool bDumbwaiterTransferPresenceSuspended = false;
+
 	friend class AParadoxItemSlotActor;
+	friend class AParadoxDumbwaiter;
 	friend class UParadoxInventoryComponent;
 };

@@ -40,6 +40,8 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `Action_Interaction_Swap` | `GameplayAction.Type.Paradox.Interaction.Swap` |
 | `Action_ItemSlot_Insert` | `GameplayAction.Type.Paradox.ItemSlot.Insert` |
 | `Action_ItemSlot_Pickup` | `GameplayAction.Type.Paradox.ItemSlot.Pickup` |
+| `Action_Dumbwaiter_Send` | `GameplayAction.Type.Paradox.Dumbwaiter.Send` |
+| `Action_TeleportGate_Enter` | `GameplayAction.Type.Paradox.TeleportGate.Enter` |
 | `Action_Inventory_Drop` | `GameplayAction.Type.Paradox.Inventory.Drop` |
 | `Action_Inventory_Use` | `GameplayAction.Type.Paradox.Inventory.Use` |
 | `Lock_Inventory` | `GameplayAction.Lock.Paradox.Inventory` |
@@ -47,6 +49,8 @@ strings in `Source/Paradox/Private/Paradox.cpp`.
 | `Interaction_Inventory_Swap` | `Interaction.Paradox.Inventory.Swap` |
 | `Interaction_ItemSlot_Insert` | `Interaction.Paradox.ItemSlot.Insert` |
 | `Interaction_ItemSlot_Pickup` | `Interaction.Paradox.ItemSlot.Pickup` |
+| `Interaction_Dumbwaiter_Send` | `Interaction.Paradox.Dumbwaiter.Send` |
+| `Interaction_TeleportGate_Enter` | `Interaction.Paradox.TeleportGate.Enter` |
 | `Interaction_ChronoSpawn_Spawn` | `Interaction.Paradox.ChronoSpawn.Spawn` |
 | `Result_Failure_Inventory_UseUnsupported` | `GameplayAction.Result.Failure.Paradox.Inventory.UseUnsupported` |
 | `Result_Failure_Inventory_OwnerNotOperational` | `GameplayAction.Result.Failure.Paradox.Inventory.OwnerNotOperational` |
@@ -105,6 +109,9 @@ part of the public runtime API.
 The Item Slot automation fixtures likewise keep their item vocabulary private to
 `ParadoxItemSlotTests.cpp`, under `Interaction.Test.ItemSlot.Trait.*`. These tags exercise
 compatibility and right-item matching without coupling the tests to production item taxonomy.
+
+The Dumbwaiter fixtures follow the same rule under `Interaction.Test.Dumbwaiter.Cargo.*`; those
+tags exist only in development automation builds.
 
 ## PuzzleSystem plugin
 

@@ -1,9 +1,10 @@
 #pragma once
 
+#include "Camera/ParadoxCameraTypes.h"
 #include "Camera/CameraActor.h"
 #include "ParadoxCameraRig.generated.h"
 
-/** Controller-owned orthographic view target independent from every temporal avatar. */
+/** Controller-owned view target independent from every temporal avatar. */
 UCLASS(Blueprintable)
 class PARADOX_API AParadoxCameraRig : public ACameraActor
 {
@@ -15,8 +16,10 @@ public:
 	void ApplyCameraPose(
 		const FVector& InFocusLocation,
 		const FRotator& InOrientation,
+		EParadoxCameraProjectionMode InProjectionMode,
 		float InCameraDistance,
-		float InOrthoWidth);
+		float InOrthoWidth,
+		float InPerspectiveFieldOfView);
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
 	FVector GetFocusLocation() const { return FocusLocation; }
@@ -25,4 +28,3 @@ private:
 	UPROPERTY(Transient)
 	FVector FocusLocation = FVector::ZeroVector;
 };
-

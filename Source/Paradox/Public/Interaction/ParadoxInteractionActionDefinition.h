@@ -120,3 +120,25 @@ class PARADOX_API UParadoxPickupFromItemSlotInteractionActionDefinition
 public:
 	UParadoxPickupFromItemSlotInteractionActionDefinition();
 };
+
+/** Ready-to-author Definition for sending a Dumbwaiter's current cargo to its pair. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxSendDumbwaiterInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxSendDumbwaiterInteractionActionDefinition();
+};
+
+/** Ready-to-author Definition for entering a paired Teleport Gate. */
+UCLASS(BlueprintType)
+class PARADOX_API UParadoxEnterTeleportGateInteractionActionDefinition
+	: public UParadoxInteractionActionDefinition
+{
+	GENERATED_BODY()
+
+public:
+	UParadoxEnterTeleportGateInteractionActionDefinition();
+};

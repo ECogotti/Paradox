@@ -311,7 +311,8 @@ FParadoxItemSlotOperationResult AParadoxItemSlotActor::EvaluateAcceptItem(
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::RequesterDoesNotOwnItem, TEXT("The requester inventory does not authoritatively own this item."));
 	}
-	if (Item->GetCurrentItemSlot() || Item->GetPickupableState() != EParadoxPickupableState::Held)
+	if (Item->GetCurrentItemSlot() || Item->GetCurrentDumbwaiter()
+		|| Item->GetPickupableState() != EParadoxPickupableState::Held)
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::OwnershipConflict, TEXT("The item already has incompatible ownership state."));
 	}
@@ -372,7 +373,8 @@ FParadoxItemSlotOperationResult AParadoxItemSlotActor::EvaluatePickupInsertedIte
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::InventoryOccupied, TEXT("Pickup requires an empty requester inventory."));
 	}
-	if (!Item->IsInserted() || Item->GetCurrentItemSlot() != this || Item->GetCurrentHolder())
+	if (!Item->IsInserted() || Item->GetCurrentItemSlot() != this
+		|| Item->GetCurrentDumbwaiter() || Item->GetCurrentHolder())
 	{
 		return MakeResult(EParadoxItemSlotOperationStatus::OwnershipConflict, TEXT("The Item and Slot ownership references disagree."));
 	}
@@ -509,7 +511,7 @@ void AParadoxItemSlotActor::InitializeAuthoredInsertedItem()
 		WorldStateInsertedItem.Reset();
 		return;
 	}
-	if (Item->GetCurrentHolder() || Item->GetCurrentItemSlot()
+	if (Item->GetCurrentHolder() || Item->GetCurrentItemSlot() || Item->GetCurrentDumbwaiter()
 		|| !MatchesAllowedItemQuery(Item)
 		|| !InsertAnchor)
 	{
@@ -600,6 +602,7 @@ void AParadoxItemSlotActor::RestoreCapturedRelationship()
 	}
 	if (Item->GetCurrentHolder()
 		|| (Item->GetCurrentItemSlot() && Item->GetCurrentItemSlot() != this)
+		|| Item->GetCurrentDumbwaiter()
 		|| !MatchesAllowedItemQuery(Item)
 		|| !InsertAnchor)
 	{

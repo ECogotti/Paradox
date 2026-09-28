@@ -7,6 +7,7 @@
 #include "ParadoxPickupableActor.generated.h"
 
 class AParadoxCharacter;
+class AParadoxDumbwaiter;
 class AParadoxItemSlotActor;
 class AParadoxPickupableActor;
 class UGridNavigationModifierComponent;
@@ -304,6 +305,7 @@ private:
 	friend class UParadoxInventoryComponent;
 	friend class UParadoxDropAction;
 	friend class AParadoxItemSlotActor;
+	friend class AParadoxDumbwaiter;
 #if WITH_DEV_AUTOMATION_TESTS
 	friend struct FParadoxInventoryTestAccessor;
 #endif

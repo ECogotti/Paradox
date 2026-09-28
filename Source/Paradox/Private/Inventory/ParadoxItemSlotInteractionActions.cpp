@@ -6,6 +6,7 @@
 #include "Inventory/ParadoxInventoryComponent.h"
 #include "Inventory/ParadoxItemSlotActor.h"
 #include "Paradox.h"
+#include "Puzzles/ParadoxDumbwaiter.h"
 
 namespace UE::Paradox::ItemSlotInteraction::Private
 {
@@ -38,16 +39,18 @@ namespace UE::Paradox::ItemSlotInteraction::Private
 	bool Resolve(
 		const UParadoxInteractionActionBase& Action,
 		AParadoxCharacter*& OutCharacter,
-		AParadoxItemSlotActor*& OutSlot,
+		AActor*& OutTarget,
 		FGameplayTag& OutFailureReason,
 		FString& OutDiagnostic)
 	{
 		OutCharacter = Cast<AParadoxCharacter>(Action.GetInteractionRequester());
-		OutSlot = Cast<AParadoxItemSlotActor>(Action.GetInteractionTarget());
-		if (!OutCharacter || !OutCharacter->GetInventoryComponent() || !OutSlot)
+		OutTarget = Action.GetInteractionTarget();
+		if (!OutCharacter || !OutCharacter->GetInventoryComponent()
+			|| (!Cast<AParadoxItemSlotActor>(OutTarget)
+				&& !Cast<AParadoxDumbwaiter>(OutTarget)))
 		{
 			OutFailureReason = ParadoxGameplayTags::Result_Failure_ItemSlot_InvalidRequest;
-			OutDiagnostic = TEXT("Item Slot interactions require a Paradox Character, inventory and Item Slot target.");
+			OutDiagnostic = TEXT("Insert and Pickup require a Paradox Character, inventory, and Item Slot or Dumbwaiter target.");
 			return false;
 		}
 		return true;
@@ -59,9 +62,9 @@ bool UParadoxInsertItemInteractionAction::CanSatisfyInteractionPreconditions_Imp
 	FString& OutDiagnostic) const
 {
 	AParadoxCharacter* Character = nullptr;
-	AParadoxItemSlotActor* Slot = nullptr;
+	AActor* Target = nullptr;
 	if (!UE::Paradox::ItemSlotInteraction::Private::Resolve(
-		*this, Character, Slot, OutFailureReason, OutDiagnostic))
+		*this, Character, Target, OutFailureReason, OutDiagnostic))
 	{
 		return false;
 	}
@@ -76,7 +79,14 @@ bool UParadoxInsertItemInteractionAction::CanSatisfyInteractionPreconditions_Imp
 	}
 	else
 	{
-		Result = Slot->EvaluateAcceptItem(Item, Character);
+		if (AParadoxItemSlotActor* Slot = Cast<AParadoxItemSlotActor>(Target))
+		{
+			Result = Slot->EvaluateAcceptItem(Item, Character);
+		}
+		else
+		{
+			Result = CastChecked<AParadoxDumbwaiter>(Target)->EvaluateAcceptCargo(Item, Character);
+		}
 	}
 	if (Result.IsSuccess())
 	{
@@ -92,9 +102,12 @@ void UParadoxInsertItemInteractionAction::ExecuteInteraction_Implementation()
 {
 	AParadoxCharacter* Character = Cast<AParadoxCharacter>(GetInteractionRequester());
 	AParadoxItemSlotActor* Slot = Cast<AParadoxItemSlotActor>(GetInteractionTarget());
+	AParadoxDumbwaiter* Dumbwaiter = Cast<AParadoxDumbwaiter>(GetInteractionTarget());
 	const FParadoxItemSlotOperationResult Result = Slot
 		? Slot->TryInsertItem(Character)
-		: FParadoxItemSlotOperationResult();
+		: Dumbwaiter
+			? Dumbwaiter->TryInsertCargo(Character)
+			: FParadoxItemSlotOperationResult();
 	if (Result.IsSuccess())
 	{
 		CompleteInteractionSuccess(GameplayActionTags::Result_Success, Result.DiagnosticMessage);
@@ -110,14 +123,16 @@ bool UParadoxPickupFromItemSlotInteractionAction::ValidatePickupSource(
 	FString& OutDiagnostic) const
 {
 	AParadoxCharacter* Character = nullptr;
-	AParadoxItemSlotActor* Slot = nullptr;
+	AActor* Target = nullptr;
 	if (!UE::Paradox::ItemSlotInteraction::Private::Resolve(
-		*this, Character, Slot, OutFailureReason, OutDiagnostic))
+		*this, Character, Target, OutFailureReason, OutDiagnostic))
 	{
 		return false;
 	}
-	const FParadoxItemSlotOperationResult Result =
-		Slot->EvaluatePickupInsertedItem(Character);
+	const AParadoxItemSlotActor* Slot = Cast<AParadoxItemSlotActor>(Target);
+	const FParadoxItemSlotOperationResult Result = Slot
+		? Slot->EvaluatePickupInsertedItem(Character)
+		: CastChecked<AParadoxDumbwaiter>(Target)->EvaluatePickupCargo(Character);
 	if (Result.IsSuccess())
 	{
 		return true;
@@ -141,9 +156,12 @@ bool UParadoxPickupFromItemSlotInteractionAction::CommitPickupSource(
 {
 	AParadoxCharacter* Character = Cast<AParadoxCharacter>(GetInteractionRequester());
 	AParadoxItemSlotActor* Slot = Cast<AParadoxItemSlotActor>(GetInteractionTarget());
+	AParadoxDumbwaiter* Dumbwaiter = Cast<AParadoxDumbwaiter>(GetInteractionTarget());
 	const FParadoxItemSlotOperationResult Result = Slot
 		? Slot->TryPickupInsertedItem(Character)
-		: FParadoxItemSlotOperationResult();
+		: Dumbwaiter
+			? Dumbwaiter->TryPickupCargo(Character)
+			: FParadoxItemSlotOperationResult();
 	if (Result.IsSuccess())
 	{
 		OutDiagnostic = Result.DiagnosticMessage;

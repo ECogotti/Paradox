@@ -71,6 +71,58 @@ bool FPuzzleReceiverAutomaticCompatibilityTest::RunTest(const FString& Parameter
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPuzzleReceiverUncontrolledFallbackTest,
+	"PuzzleSystem.Receiver.ActivationMode.UncontrolledFallback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleReceiverUncontrolledFallbackTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::PuzzleSystem::Receiver::Tests;
+	AActor* Owner = NewActor(TEXT("UncontrolledFallbackOwner"));
+	UPuzzleReceiverComponent* Receiver = AddReceiver(*Owner, TEXT("Receiver"));
+	APuzzleController* Controller = NewController(TEXT("InactiveController"));
+	Receiver->bActivateWhenUncontrolled = true;
+
+	TestFalse(
+		TEXT("An explicitly inactive Controller keeps the opt-in Receiver inactive"),
+		Receiver->SetControllerRequest(Controller, false));
+	TestEqual(
+		TEXT("Inactive Controller remains registered"),
+		Receiver->GetRegisteredControllerCount(),
+		1);
+	TestFalse(TEXT("Registered inactive Controller suppresses fallback"), Receiver->IsReceiverActive());
+	TestTrue(
+		TEXT("Removing the final Controller activates the uncontrolled fallback"),
+		Receiver->RemoveControllerRequest(Controller));
+	TestEqual(
+		TEXT("No Controllers remain registered"),
+		Receiver->GetRegisteredControllerCount(),
+		0);
+	TestTrue(TEXT("Uncontrolled fallback is active"), Receiver->IsReceiverActive());
+
+	TestTrue(
+		TEXT("Registering an inactive Controller deactivates the fallback"),
+		Receiver->SetControllerRequest(Controller, false));
+	TestFalse(TEXT("Inactive control remains authoritative"), Receiver->IsReceiverActive());
+	TestTrue(TEXT("Active Controller overrides the fallback policy"),
+		Receiver->SetControllerRequest(Controller, true));
+	TestTrue(TEXT("Active Controller activates the Receiver"), Receiver->IsReceiverActive());
+	TestTrue(TEXT("Inactive update deactivates without becoming uncontrolled"),
+		Receiver->SetControllerRequest(Controller, false));
+	TestFalse(TEXT("Inactive Controller still suppresses fallback"), Receiver->IsReceiverActive());
+
+	AActor* DefaultOwner = NewActor(TEXT("DefaultFailClosedOwner"));
+	UPuzzleReceiverComponent* DefaultReceiver = AddReceiver(*DefaultOwner, TEXT("Receiver"));
+	DefaultReceiver->SetControllerRequest(Controller, false);
+	TestFalse(
+		TEXT("Existing default remains fail-closed after Controller removal"),
+		DefaultReceiver->RemoveControllerRequest(Controller));
+	TestFalse(TEXT("Default Receiver remains inactive while uncontrolled"),
+		DefaultReceiver->IsReceiverActive());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPuzzleReceiverManualLifecycleTest,
 	"PuzzleSystem.Receiver.ActivationMode.ManualLifecycle",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -225,7 +277,8 @@ bool FPuzzleReceiverActivationReflectionTest::RunTest(const FString& Parameters)
 		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, CanRequestManualActivation),
 		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, AreActivationPrerequisitesSatisfied),
 		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, IsManualActivationRequested),
-		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, GetActivationMode)
+		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, GetActivationMode),
+		GET_FUNCTION_NAME_CHECKED(UPuzzleReceiverComponent, GetRegisteredControllerCount)
 	};
 	for (const FName FunctionName : BlueprintFunctions)
 	{
@@ -248,6 +301,13 @@ bool FPuzzleReceiverActivationReflectionTest::RunTest(const FString& Parameters)
 		StaticEnum<EPuzzleReceiverActivationMode>());
 	TestNotNull(TEXT("Activation command status enum is reflected"),
 		StaticEnum<EPuzzleReceiverActivationCommandStatus>());
+	const FBoolProperty* UncontrolledFallbackProperty = FindFProperty<FBoolProperty>(
+		ReceiverClass,
+		GET_MEMBER_NAME_CHECKED(UPuzzleReceiverComponent, bActivateWhenUncontrolled));
+	TestTrue(TEXT("Uncontrolled fallback is designer-configurable and defaults off"),
+		UncontrolledFallbackProperty
+			&& UncontrolledFallbackProperty->HasAnyPropertyFlags(CPF_Edit)
+			&& !GetDefault<UPuzzleReceiverComponent>()->bActivateWhenUncontrolled);
 	TestTrue(TEXT("Activation command result is a Blueprint type"),
 		FPuzzleReceiverActivationCommandResult::StaticStruct()->HasMetaData(TEXT("BlueprintType")));
 	return true;

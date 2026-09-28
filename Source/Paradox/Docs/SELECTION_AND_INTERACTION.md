@@ -81,6 +81,30 @@ refreshes its requester-relative options. Inserted items disable their own selec
 interaction and GridWorld occupancy; only the slot remains interactable. See
 [Paradox insertable items and item slots](ITEM_SLOTS.md).
 
+Teleport Gates also use the same selection and spatial interaction pipeline. Their Enter catalog
+entry claims the Gate's single external Smart Object slot, then keeps that claim and the action's
+Movement/Interaction locks through direct ingress, teleport, and direct egress. The two tunnel
+segments are driven by forced `AddMovementInput` from the running Enter action and do not submit
+Path Following, GridWorld, or NavMesh requests; only the external slots must be walkable GridWorld
+cells. Movement direction, arrival, and watchdog distance use world XY, allowing the tunnel Arrow
+to be authored at floor height while the Character origin remains at capsule-center height. Each
+segment advances when it reaches the configured tolerance or when its watchdog of
+twice the nominal travel time at `MaxWalkSpeed` expires. A timed-out egress uses the normal
+Transfer-In finalization to place the Character on the reserved destination slot before success.
+Once the async Gate operation is acquired, affordance refresh still validates claim ownership but
+no longer requires the Character to remain in the original source cell. See
+[Paradox Teleport Gate](TELEPORT_GATE.md).
+
+This behavior uses `UParadoxInteractionActionBase::IsInteractionExecutionPending`: a concrete
+action that has already acquired asynchronous authority may remain valid after leaving its original
+interaction cell. The hook does not bypass the Smart Object claim, locks, cancellation, or target
+lifetime checks.
+
+Dumbwaiter Send uses the same semantic pipeline but intentionally completes the Gameplay Action
+immediately after pair acquisition. Its Explicit paired-transfer phases continue independently in
+Blueprint animation callbacks; selected interaction widgets refresh when either endpoint's pair
+occupancy changes.
+
 ## Outline setup
 
 The selectable component outlines only direct Actor-owned `UStaticMeshComponent` and

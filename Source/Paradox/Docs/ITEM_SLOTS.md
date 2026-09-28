@@ -3,9 +3,10 @@
 ## Purpose and ownership
 
 `AParadoxInsertablePickupableActor` extends the normal pickupable with data-driven
-`InsertableTraits` and one private weak backlink to its current `AParadoxItemSlotActor`. An item is
-always in exactly one authoritative state: World, Held by one Character inventory, Inserted in one
-slot, or restore-pending. `IsInserted` and `GetCurrentItemSlot` are read-only queries; callers never
+`InsertableTraits` and mutually exclusive private weak backlinks to its current
+`AParadoxItemSlotActor` or `AParadoxDumbwaiter`. An item is always in exactly one authoritative
+state: World, Held by one Character inventory, Inserted in one slot/Dumbwaiter, or restore-pending.
+`IsInserted`, `GetCurrentItemSlot`, and `GetCurrentDumbwaiter` are read-only queries; callers never
 write either side of the relationship directly.
 
 `AParadoxItemSlotActor` owns one private `InsertedItem`. Use `IsOccupied`, `GetInsertedItem`,
@@ -105,6 +106,10 @@ interaction tag. A clone creates a fresh action and may fail normally if its cur
 the reconstructed slot is no longer compatible. Pickup-from-Slot derives from the ordinary Pickup
 action and replaces only source validation/acquisition, so movement, claims, pause, abort, and
 replay behavior remain shared.
+
+The same Insert and Pickup action classes/assets also accept an `AParadoxDumbwaiter` semantic
+target. They keep the identical Inventory lock and requester-relative replay path; Dumbwaiter Send
+is a separate paired-transfer action. See [Paradox Dumbwaiter](DUMBWAITER.md).
 
 Occupancy and activity changes call the Interaction component's targeted affordance refresh. A
 selected slot therefore updates available options immediately without rebuilding the interaction

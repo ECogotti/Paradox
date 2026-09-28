@@ -8,6 +8,8 @@
 #include "Inventory/ParadoxItemSlotInteractionActions.h"
 #include "NavFilters/NavigationQueryFilter.h"
 #include "Paradox.h"
+#include "Puzzles/ParadoxDumbwaiterInteractionAction.h"
+#include "Puzzles/ParadoxTeleportGateInteractionAction.h"
 #include "StructUtils/PropertyBag.h"
 #include "StructUtils/StructView.h"
 
@@ -220,4 +222,19 @@ UParadoxPickupFromItemSlotInteractionActionDefinition::UParadoxPickupFromItemSlo
 	ActionTag = ParadoxGameplayTags::Action_ItemSlot_Pickup;
 	ExecutionLocks.AddTag(ParadoxGameplayTags::Lock_Inventory);
 	DebugDescription = TEXT("Moves to an Item Slot and atomically picks its unlocked item into an empty inventory.");
+}
+
+UParadoxSendDumbwaiterInteractionActionDefinition::UParadoxSendDumbwaiterInteractionActionDefinition()
+{
+	InstanceClass = UParadoxSendDumbwaiterInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_Dumbwaiter_Send;
+	DebugDescription = TEXT("Moves to a Dumbwaiter and starts its validated paired cargo transfer.");
+}
+
+UParadoxEnterTeleportGateInteractionActionDefinition::UParadoxEnterTeleportGateInteractionActionDefinition()
+{
+	InstanceClass = UParadoxEnterTeleportGateInteractionAction::StaticClass();
+	ActionTag = ParadoxGameplayTags::Action_TeleportGate_Enter;
+	JournalRequirement = EGameplayActionJournalRequirement::Required;
+	DebugDescription = TEXT("Moves beside a Teleport Gate and completes its validated paired Character transfer.");
 }

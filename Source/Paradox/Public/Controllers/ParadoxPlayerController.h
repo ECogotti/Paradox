@@ -126,7 +126,7 @@ protected:
 	UPROPERTY(EditAnywhere, Category = "Input|Camera")
 	TObjectPtr<UInputAction> CameraMoveAction;
 
-	/** Incremental orthographic zoom input. Expected value type: Axis1D. */
+	/** Incremental free-camera zoom input. Expected value type: Axis1D. */
 	UPROPERTY(EditAnywhere, Category = "Input|Camera")
 	TObjectPtr<UInputAction> CameraZoomAction;
 
@@ -221,6 +221,9 @@ protected:
 	FParadoxCameraConfiguration ActiveCameraConfiguration;
 
 	UPROPERTY(Transient)
+	EParadoxCameraProjectionMode ActiveCameraProjectionMode = EParadoxCameraProjectionMode::Orthographic;
+
+	UPROPERTY(Transient)
 	FParadoxCameraOperationResult CameraInitializationResult;
 
 	FVector CameraFocusLocation = FVector::ZeroVector;
@@ -229,6 +232,7 @@ protected:
 	FVector CameraRecenterRequestedTarget = FVector::ZeroVector;
 	FVector2D CameraMoveInput = FVector2D::ZeroVector;
 	float CurrentOrthoWidth = 0.0f;
+	float CurrentCameraArmDistance = 0.0f;
 	float CameraRecenterElapsed = 0.0f;
 	float CameraRotationElapsed = 0.0f;
 	int32 CurrentCameraQuarterTurnIndex = 0;
@@ -329,7 +333,7 @@ public:
 		return ResolvedRuntimeGridCellVisualStyle.Get();
 	}
 
-	/** Discovers one enabled map volume and creates the independent orthographic view target. */
+	/** Discovers one enabled map volume and creates the independent view target. */
 	FParadoxCameraOperationResult EnsureFreeCameraInitialized(bool bRequiredForTimeLoop);
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
@@ -349,6 +353,13 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
 	float GetCurrentCameraOrthoWidth() const { return CurrentOrthoWidth; }
+
+	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
+	EParadoxCameraProjectionMode GetActiveCameraProjectionMode() const { return ActiveCameraProjectionMode; }
+
+	/** Current pivot-to-camera distance, including the fixed distance in orthographic mode. */
+	UFUNCTION(BlueprintPure, Category = "Paradox|Camera")
+	float GetCurrentCameraArmDistance() const { return CurrentCameraArmDistance; }
 
 	UFUNCTION(BlueprintCallable, Category = "Paradox|Camera")
 	void RequestCameraRecenter();
@@ -400,35 +411,39 @@ protected:
 	FRotator GetCameraOrientationForYawOffset(float YawOffsetDegrees) const;
 	float GetCurrentCameraYawOffset() const;
 	float GetCameraAspectRatio() const;
+	float GetCurrentCameraZoomValue() const;
+	float GetConfiguredMinimumCameraZoom() const;
+	float GetConfiguredMaximumCameraZoom() const;
+	float GetConfiguredInitialCameraZoom() const;
 	bool CalculateFootprint(
 		const FVector& FocusLocation,
 		const FRotator& Orientation,
-		float OrthoWidth,
+		float ZoomValue,
 		float AspectRatio,
 		TArray<FVector>& OutCorners) const;
 	bool CalculateFootprintExtents(
 		const FRotator& Orientation,
-		float OrthoWidth,
+		float ZoomValue,
 		float AspectRatio,
 		FVector2D& OutExtents) const;
 	bool CalculateRotationArcFootprintExtents(
-		float OrthoWidth,
+		float ZoomValue,
 		float AspectRatio,
 		float StartYawOffsetDegrees,
 		float EndYawOffsetDegrees,
 		FVector2D& OutExtents) const;
-	float CalculateMaximumCompatibleOrthoWidth(
+	float CalculateMaximumCompatibleCameraZoom(
 		const FRotator& Orientation,
 		float AspectRatio) const;
-	float CalculateMaximumCompatibleOrthoWidthForRotationArc(
+	float CalculateMaximumCompatibleCameraZoomForRotationArc(
 		float StartYawOffsetDegrees,
 		float EndYawOffsetDegrees,
 		float AspectRatio) const;
-	float CalculateMaximumRotationSafeOrthoWidth(float AspectRatio) const;
+	float CalculateMaximumRotationSafeCameraZoom(float AspectRatio) const;
 	FVector ClampCameraFocus(
 		const FVector& RequestedFocus,
 		const FRotator& Orientation,
-		float OrthoWidth,
+		float ZoomValue,
 		float AspectRatio) const;
 	bool ValidateCameraConfiguration(
 		const AParadoxCameraBoundsVolume& Volume,

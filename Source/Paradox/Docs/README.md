@@ -29,9 +29,9 @@ responsibility and their implementations use the matching path under `Private`:
   presentation, the Blueprint-extensible world-space widget base, multi-interaction Smart Object
   slot queries/submission, and the replay-safe interaction Gameplay Action template;
 - `Public/Inventory` and `Private/Inventory` contain the shared single-slot inventory, native
-  pickupables and insertables, authoritative item slots, passive effects, Pickup/Swap/Drop/Insert
-  actions, generic replay-safe Use, the native Oxygen Canister consumable, player Drop targeting,
-  puzzle-slot composition, and the inventory widget base;
+  pickupables and insertables, authoritative item slots and Dumbwaiter cargo ownership, passive
+  effects, Pickup/Swap/Drop/Insert actions, generic replay-safe Use, the native Oxygen Canister
+  consumable, player Drop targeting, puzzle-slot composition, and the inventory widget base;
 - `Public/HUD` and `Private/HUD` contain the Player Controller-owned Gameplay HUD coordinator,
   persistent Normal/Collapsed root widget, Tactical Pause section and Equipment presentation;
 - `Public/Health` and `Private/Health` contain Character-owned health and the explicitly bound
@@ -236,15 +236,14 @@ after another action on resume remains governed by its Gameplay Actions executio
 
 ## Free camera
 
-Time-loop maps use a controller-owned `AParadoxCameraRig` as an independent orthographic view
+Time-loop maps use a controller-owned `AParadoxCameraRig` as an independent view
 target while the controller continues possessing the player Character. `AParadoxCameraBoundsVolume`
-contains the complete projected view, not only the focus point. W/A/S/D pans, the mouse wheel
-zooms, Space recenters, and Q/E rotate left/right in exact 90-degree steps. These actions continue
-during Tactical Pause without changing Common UI focus or input mode. Quarter turns use
-configurable duration/easing and are rejected without changing zoom when the complete intermediate
-footprint cannot remain inside the camera volume. The effective zoom-out ceiling is derived
-dynamically from the current volume, margin, aspect ratio, and complete yaw arc, so ordinary camera
-use keeps every quarter turn available without changing zoom on Q/E.
+contains the complete projected orthographic view; in perspective mode it confines the pivot while
+the view may extend beyond the box. W/A/S/D pans, the mouse wheel zooms, Space recenters, and Q/E
+rotate left/right in exact 90-degree steps. These actions continue during Tactical Pause without
+changing Common UI focus or input mode. Quarter turns use configurable duration/easing.
+Orthographic zoom-out is limited dynamically by the current volume, margin, aspect ratio, and full
+yaw arc to keep every turn available. Perspective zoom uses the configured arm-distance range.
 
 See [Paradox free camera - Milestones 5-6](Camera.md) for setup, configuration, containment
 formula, Blueprint API, debugging, and troubleshooting.
@@ -275,6 +274,18 @@ reset, synchronized clone preparation/playback, authoritative temporal perceptio
 recovery, Game Over, Level Complete, presentation hooks, and Blueprint APIs.
 
 ## Puzzles
+
+See [Paired Transfer Endpoint](PAIRED_TRANSFER_ENDPOINT.md) for the Milestone 1 reusable transfer
+transaction, reciprocal pairing, Receiver and Gameplay Action gating, async completion contract,
+subclass hooks, cancellation/WorldState safety, debug controls, and automation coverage.
+
+See [Paradox Dumbwaiter](DUMBWAITER.md) for the Milestone 2 one-item cargo endpoint, reciprocal
+authoring, shared Insert/Pickup actions, semantic Send, atomic ownership, World State behavior and
+focused automation coverage.
+
+See [Paradox Teleport Gate](TELEPORT_GATE.md) for the Milestone 3 Character endpoint, adjacent Enter
+interaction, collision-safe GridWorld reservation/parking, semantic player/clone replay, async lock
+lifetime, reset behavior and focused automation coverage.
 
 See [Pressure Plate](PRESSURE_PLATE.md) for the concrete Blueprint class, collision and tag setup,
 single-occupant behavior, movement feedback, semantic Hearing, WorldState restoration, extension

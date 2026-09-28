@@ -43,7 +43,7 @@ failure, and repeated World State baseline restoration.
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Health+StartsWith:Paradox.Oxygen+StartsWith:Paradox.GameplayHUD+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Health+StartsWith:Paradox.Oxygen+StartsWith:Paradox.GameplayHUD+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.PairedTransferEndpoint+StartsWith:Paradox.Dumbwaiter+StartsWith:Paradox.TeleportGate+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -56,10 +56,16 @@ Perception Entity IDs. `Paradox.Perception.PlayerSightUsesPawnFacing` deliberate
 Player Controller `ControlRotation` from Pawn rotation and verifies that both gameplay eyes and the
 native listener direction follow the Pawn immediately after it turns.
 
-`Paradox.Camera.*` covers configuration validation and asset wiring, exact left/right quarter turns,
+`Paradox.Camera.*` covers orthographic and perspective configuration validation, projection and
+asset wiring, mouse-wheel width/arm-distance limits, exact left/right quarter turns,
 ignored concurrent requests, held-input trigger semantics, drift resistance, screen-relative pan at
-all four orientations, no-Pawn operation, real-delta advancement while paused, continuous corner
-containment, and dynamic rotation-safe zoom limits after current Camera Volume bounds change.
+all four orientations, no-Pawn operation, and real-delta advancement while paused. Orthographic
+tests check continuous corner containment at multiple aspect ratios and dynamic rotation-safe zoom
+limits after Camera Volume bounds change. Perspective tests check pivot containment at multiple
+aspect ratios, WASD reaching the pivot boundary at maximum arm distance, and unchanged arm distance
+after bounds shrink. In PIE, choose each projection on the volume and check Q/E, WASD, wheel zoom,
+recenter, and Tactical Pause. The perspective view may extend beyond the box while its pivot stays
+inside.
 
 `PuzzleSystem.TransformMover.RequestGateAndRuntimeState` covers dependency-free defer semantics and
 event-free whole-state reconstruction. `GameplayActions.Locks.SourceOwnedExternalAuthority` covers
@@ -448,3 +454,57 @@ component setup, the Left Control mapping, both astronaut profiles, and walk/run
 
 The exact standing, suppressed-crouch, unsuppressed-crouch, listener-range, and observation replay
 procedure is documented in [Footsteps, semantic Hearing, and crouch](FOOTSTEPS.md).
+
+## Paired transfer endpoint automation
+
+After building `ParadoxEditor`, run:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests Paradox.PairedTransferEndpoint; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+`Paradox.PairedTransferEndpoint.*` validates the abstract/no-Tick architecture, backward-compatible
+Timed completion, Explicit phases that never self-advance, matching/stale operation IDs, a complete
+generic Actor transfer, atomic pair acquisition, inactive Receiver and busy-pair failures, reset,
+endpoint destruction cleanup, and the policy that Receiver deactivation blocks only new transactions.
+`PuzzleSystem.Receiver.ActivationMode.UncontrolledFallback`
+separately verifies that the opt-in fallback activates only without registered Controllers, that a
+registered false result remains authoritative, and that the global Receiver default stays fail-closed.
+See [Paired Transfer Endpoint](PAIRED_TRANSFER_ENDPOINT.md) for setup and extension rules.
+
+## Dumbwaiter automation
+
+Run the concrete cargo suite with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests Paradox.Dumbwaiter; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+`Paradox.Dumbwaiter.*` contains 16 scenarios covering native/no-Tick composition, Explicit phases with instantaneous Send
+acquisition, combined one-cargo pair capacity, pair occupancy events and partner affordance refresh,
+compatible and rejected Insert, busy/inactive state, single-owner commit, reverse Send, shared
+Pickup policy, semantic native action assets, authored cargo, absence of a required Emitter, cargo
+destruction, cancellation, World State restore before/after commit, and cargo collision/navigation
+suspension through both transfer phases with exact restoration after cancellation or completion. See
+[Paradox Dumbwaiter](DUMBWAITER.md) for authoring and ownership rules.
+
+## Teleport Gate automation
+
+Run the Character transfer suite with:
+
+```text
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -ExecCmds="Automation RunTests Paradox.TeleportGate; Quit" -TestExit="Automation Test Queue Empty" -log
+```
+
+`Paradox.TeleportGate.*` contains 24 scenarios covering unique external slots, non-walkable internal
+anchors, forced `AddMovementInput` direction for ingress and egress, the
+planar `2 * Distance / MaxWalkSpeed` watchdog, floor-authored anchor conversion to the Character
+capsule origin, rejection of a genuinely blocked anchor, pause/resume, forced ingress commit and successful egress
+slot recovery on timeout, commit only after ingress, parking only after egress, action lifetime,
+player/clone, replay and reset, plus regressions for Receiver deactivation after acquisition, stale
+operation callbacks, and Enter cancellation. It also verifies that collision-safe tunnel placement
+is deferred until acquired preparation, so it cannot reject an otherwise valid Enter submission
+during catalog preflight. Component coverage verifies the always-blocking permanent GridWorld
+modifier, the idle-open transit modifier, simultaneous source/destination blocking throughout
+ingress and egress, and restoration after completion or reset. See
+[Paradox Teleport Gate](TELEPORT_GATE.md) for authoring and runtime invariants.
