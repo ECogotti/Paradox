@@ -48,6 +48,15 @@ public:
 	bool bActivateWhenUncontrolled = false;
 
 	/**
+	 * In Manual mode, permits an explicit activation command when no valid Controller is registered.
+	 * A registered Controller, including one requesting inactive, takes precedence. This option never
+	 * activates the Receiver on its own and is enabled by default.
+	 */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Puzzle|Receiver|Activation",
+		meta = (EditCondition = "ActivationMode == EPuzzleReceiverActivationMode::Manual"))
+	bool bAllowManualActivationWithoutController = true;
+
+	/**
 	 * Clears outstanding requests when the component leaves play.
 	 *
 	 * @param EndPlayReason Unreal reason for the component ending play.
@@ -69,7 +78,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Receiver")
 	FPuzzleReceiverStateChangedDelegate OnReceiverStateChanged;
 
-	/** Fired after the OR-aggregated Controller prerequisite state changes. */
+	/** Fired after the effective prerequisite state changes. */
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Receiver|Activation")
 	FPuzzleReceiverPrerequisitesChangedDelegate OnReceiverActivationPrerequisitesChanged;
 
@@ -105,7 +114,7 @@ public:
 	/**
 	 * Requests activation while in Manual mode.
 	 *
-	 * The request is accepted only while at least one valid Controller requests this Receiver active.
+	 * The request requires an active Controller or the configurable uncontrolled Manual prerequisite.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Puzzle|Receiver|Activation")
 	FPuzzleReceiverActivationCommandResult RequestManualActivation();
@@ -118,7 +127,7 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Puzzle|Receiver|Activation")
 	bool CanRequestManualActivation() const;
 
-	/** Returns the OR-aggregated prerequisite state supplied by valid Controllers. */
+	/** Returns whether Controller requests or the configurable uncontrolled Manual fallback satisfy activation prerequisites. */
 	UFUNCTION(BlueprintPure, Category = "Puzzle|Receiver|Activation")
 	bool AreActivationPrerequisitesSatisfied() const { return bActivationPrerequisitesSatisfied; }
 
@@ -180,7 +189,7 @@ private:
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Puzzle|Receiver", meta = (AllowPrivateAccess = "true"))
 	bool bIsReceiverActive = false;
 
-	/** True while at least one valid Controller currently requests activation. */
+	/** True while Controller requests or the configurable uncontrolled Manual fallback allow activation. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Puzzle|Receiver|Activation", meta = (AllowPrivateAccess = "true"))
 	bool bActivationPrerequisitesSatisfied = false;
 

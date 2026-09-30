@@ -43,7 +43,7 @@ failure, and repeated World State baseline restoration.
 Build `ParadoxEditor`, then run:
 
 ```text
-UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Health+StartsWith:Paradox.Oxygen+StartsWith:Paradox.GameplayHUD+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.PairedTransferEndpoint+StartsWith:Paradox.Dumbwaiter+StartsWith:Paradox.TeleportGate+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
+UnrealEditor-Cmd.exe Paradox.uproject -unattended -nop4 -nosplash -NullRHI -DDC-ForceMemoryCache -ExecCmds="Automation RunTests StartsWith:GameplayActions+StartsWith:GameplayActionsGridWorld+StartsWith:IntentReplay+StartsWith:IntentReplayPerception+StartsWith:PerceptionKnowledge+StartsWith:GridWorld+StartsWith:PuzzleSystem.TransformMover+StartsWith:Paradox.Health+StartsWith:Paradox.Oxygen+StartsWith:Paradox.GameplayHUD+StartsWith:Paradox.Interaction+StartsWith:Paradox.Inventory+StartsWith:Paradox.ItemSlots+StartsWith:Paradox.PairedTransferEndpoint+StartsWith:Paradox.Dumbwaiter+StartsWith:Paradox.TeleportGate+StartsWith:Paradox.Selection+StartsWith:Paradox.VerticalBarrier+StartsWith:Paradox.Elevator+StartsWith:Paradox.Camera+StartsWith:Paradox.CloneBehavior+StartsWith:Paradox.Crouch+StartsWith:Paradox.Perception+StartsWith:Paradox.TimeLoop+StartsWith:Paradox.TimeTravel; Quit" -TestExit="Automation Test Queue Empty" -log
 ```
 
 Coverage includes interruption terminal reasons, pending-recovery resume rejection, immutable
@@ -77,6 +77,13 @@ safe defer/retry, safety return, navigation ordering, attachment persistence aft
 attached-passenger collision/navigation suppression and opt-out restoration, Paradox Character
 Movement-lock ownership, world-delta transport, 60 Hz PIE moving-base transport, and endpoint
 cleanup.
+`Paradox.Elevator.*` covers button tags and Character activation, full-press travel gating,
+Character/object early-exit cancellation, physical-empty rearming, press/release timing,
+alternating trips, Manual Receiver prerequisites and connection display, a zero-duration press when
+prerequisites change, the authored `BP_Elevator` mesh/collision setup in PIE, Drop overlap reconciliation,
+WorldState and reset, endpoint navigation, and PIE Character transport with platform and button
+meshes assigned at runtime. For a placed elevator Blueprint, also inspect its authored mesh
+collision, trigger sizes, shaft GridWorld bounds, and both destinations in PIE.
 
 `Paradox.Selection.*` covers hover/selected stencil transitions, exact restoration of existing
 Custom Depth/Stencil/write-mask state, RMB toggle/replacement and empty-world deselection,

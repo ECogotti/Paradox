@@ -123,6 +123,39 @@ bool FPuzzleReceiverUncontrolledFallbackTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FPuzzleReceiverManualDefaultFallbackTest,
+	"PuzzleSystem.Receiver.ActivationMode.ManualDefaultFallback",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleReceiverManualDefaultFallbackTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::PuzzleSystem::Receiver::Tests;
+	AActor* Owner = NewActor(TEXT("ManualDefaultFallbackOwner"));
+	UPuzzleReceiverComponent* Receiver = AddReceiver(*Owner, TEXT("Receiver"));
+	Receiver->ActivationMode = EPuzzleReceiverActivationMode::Manual;
+	APuzzleController* Controller = NewController(TEXT("ManualFallbackController"));
+
+	TestTrue(TEXT("Uncontrolled Manual activation is enabled by default"),
+		Receiver->bAllowManualActivationWithoutController);
+	TestFalse(TEXT("The fallback alone does not activate the Receiver"), Receiver->IsReceiverActive());
+	TestEqual(TEXT("A standalone manual command activates the Receiver"),
+		Receiver->RequestManualActivation().Status,
+		EPuzzleReceiverActivationCommandStatus::Applied);
+	TestTrue(TEXT("Standalone Manual Receiver becomes active"), Receiver->IsReceiverActive());
+	TestEqual(TEXT("Explicit deactivation closes the Receiver"),
+		Receiver->RequestManualDeactivation().Status,
+		EPuzzleReceiverActivationCommandStatus::Applied);
+	TestTrue(TEXT("An inactive Controller suppresses the fallback"),
+		Receiver->SetControllerRequest(Controller, false));
+	TestFalse(TEXT("Inactive Controller blocks a manual command"),
+		Receiver->RequestManualActivation().WasAccepted());
+	TestTrue(TEXT("Removing the Controller restores the fallback"),
+		Receiver->RemoveControllerRequest(Controller));
+	TestTrue(TEXT("Manual activation is available again"), Receiver->CanRequestManualActivation());
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FPuzzleReceiverManualLifecycleTest,
 	"PuzzleSystem.Receiver.ActivationMode.ManualLifecycle",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
@@ -133,6 +166,7 @@ bool FPuzzleReceiverManualLifecycleTest::RunTest(const FString& Parameters)
 	AActor* Owner = NewActor(TEXT("ManualReceiverOwner"));
 	UPuzzleReceiverComponent* Receiver = AddReceiver(*Owner, TEXT("Receiver"));
 	Receiver->ActivationMode = EPuzzleReceiverActivationMode::Manual;
+	Receiver->bAllowManualActivationWithoutController = false;
 	APuzzleController* Controller = NewController(TEXT("ManualController"));
 	UPuzzleReceiverTestObserver* Observer = NewObject<UPuzzleReceiverTestObserver>();
 	Receiver->OnReceiverStateChanged.AddDynamic(
@@ -206,6 +240,7 @@ bool FPuzzleReceiverManualAggregationTest::RunTest(const FString& Parameters)
 	UPuzzleReceiverComponent* ManualReceiver = AddReceiver(*Owner, TEXT("ManualReceiver"));
 	UPuzzleReceiverComponent* AutomaticReceiver = AddReceiver(*Owner, TEXT("AutomaticReceiver"));
 	ManualReceiver->ActivationMode = EPuzzleReceiverActivationMode::Manual;
+	ManualReceiver->bAllowManualActivationWithoutController = false;
 	APuzzleController* FirstController = NewController(TEXT("FirstController"));
 	APuzzleController* SecondController = NewController(TEXT("SecondController"));
 
@@ -308,6 +343,13 @@ bool FPuzzleReceiverActivationReflectionTest::RunTest(const FString& Parameters)
 		UncontrolledFallbackProperty
 			&& UncontrolledFallbackProperty->HasAnyPropertyFlags(CPF_Edit)
 			&& !GetDefault<UPuzzleReceiverComponent>()->bActivateWhenUncontrolled);
+	const FBoolProperty* ManualFallbackProperty = FindFProperty<FBoolProperty>(
+		ReceiverClass,
+		GET_MEMBER_NAME_CHECKED(UPuzzleReceiverComponent, bAllowManualActivationWithoutController));
+	TestTrue(TEXT("Uncontrolled Manual activation is designer-configurable and defaults on"),
+		ManualFallbackProperty
+			&& ManualFallbackProperty->HasAnyPropertyFlags(CPF_Edit)
+			&& GetDefault<UPuzzleReceiverComponent>()->bAllowManualActivationWithoutController);
 	TestTrue(TEXT("Activation command result is a Blueprint type"),
 		FPuzzleReceiverActivationCommandResult::StaticStruct()->HasMetaData(TEXT("BlueprintType")));
 	return true;

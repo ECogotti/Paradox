@@ -9,6 +9,10 @@ the passage, open, and traversable. Every partial, moving, or paused state block
 the default PingPong setup, activating the inherited Receiver lowers the barrier toward End and
 opens the passage only after exact End arrival; deactivation raises it back toward Start.
 
+Native subclasses may specialize the navigation policy at stable endpoints while retaining the
+barrier's occupant transport and moving-state blocking. `AParadoxElevator` uses this extension to
+make its platform navigable at both endpoints; see [Paradox Elevator](PARADOX_ELEVATOR.md).
+
 ## Blueprint setup
 
 1. Create a Blueprint child of `AParadoxVerticalBarrier`.

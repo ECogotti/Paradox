@@ -1224,12 +1224,16 @@ bool APuzzleTransformMover::GetActiveAlphaPerSecond(float& OutAlphaPerSecond) co
 
 void APuzzleTransformMover::UpdateMovementTickState()
 {
-	const bool bShouldTick = bIsRuntimeInitialized
+	SetActorTickEnabled(ShouldMoverTick());
+}
+
+bool APuzzleTransformMover::ShouldMoverTick() const
+{
+	return bIsRuntimeInitialized
 		&& bConfigurationValid
 		&& IsMoving()
 		&& !bIsMovementPaused
 		&& ValidateMovedComponent(MovedComponent, true, false);
-	SetActorTickEnabled(bShouldTick);
 }
 
 void APuzzleTransformMover::HandleMovedComponentInvalidation()

@@ -383,7 +383,10 @@ protected:
 	virtual void OnMovedComponentChangedNative(USceneComponent* PreviousComponent, USceneComponent* NewComponent);
 	virtual void OnMoverResetNative();
 
-	/** Re-evaluates movement-driven Tick after a native specialization changes relevant state. */
+	/** Returns whether valid, unpaused mover interpolation needs Actor Tick. Subclasses may add their own Tick work. */
+	virtual bool ShouldMoverTick() const;
+
+	/** Re-evaluates Actor Tick after a native specialization changes relevant state. */
 	void RefreshMovementTickState();
 
 	/** Starts or deduplicates movement toward Start while preserving reversal progress. */

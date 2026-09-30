@@ -103,7 +103,7 @@ FPuzzleReceiverActivationCommandResult UPuzzleReceiverComponent::RequestManualAc
 		}
 		return MakeActivationCommandResult(
 			EPuzzleReceiverActivationCommandStatus::PrerequisitesNotSatisfied,
-			TEXT("No valid Controller currently requests this Receiver active."));
+			TEXT("No Controller requests this Receiver active and uncontrolled Manual activation is unavailable."));
 	}
 	if (bManualActivationRequested && bIsReceiverActive)
 	{
@@ -284,6 +284,8 @@ bool UPuzzleReceiverComponent::RecomputeEffectiveState()
 			++RegisteredControllerCount;
 			bNewPrerequisitesSatisfied |= It.Value();
 		}
+		bNewPrerequisitesSatisfied |= ActivationMode == EPuzzleReceiverActivationMode::Manual
+			&& bAllowManualActivationWithoutController && RegisteredControllerCount == 0;
 
 		bool bNewManualActivationRequested = bManualActivationRequested;
 		if (ActivationMode != EPuzzleReceiverActivationMode::Manual

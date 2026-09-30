@@ -2,6 +2,7 @@
 
 #include "Actions/GameplayActionDefinition.h"
 #include "Characters/ParadoxCharacter.h"
+#include "Components/BoxComponent.h"
 #include "Components/GridNavigationModifierComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
 #include "Components/PrimitiveComponent.h"
@@ -17,6 +18,7 @@
 #include "Interaction/ParadoxSelectionComponent.h"
 #include "Inventory/ParadoxPickupableAction.h"
 #include "Paradox.h"
+#include "Puzzles/ParadoxElevator.h"
 #include "Puzzles/PressurePlate.h"
 #include "SmartObjectComponent.h"
 #include "SmartObjectDefinition.h"
@@ -467,6 +469,7 @@ void AParadoxPickupableActor::RefreshConfiguredCollisionOverlaps()
 	TArray<UPrimitiveComponent*> Primitives;
 	GetComponents(Primitives);
 	TSet<APressurePlate*> OverlappingPressurePlates;
+	TSet<AParadoxElevator*> OverlappingElevators;
 	for (UPrimitiveComponent* Primitive : Primitives)
 	{
 		if (IsValid(Primitive)
@@ -484,6 +487,11 @@ void AParadoxPickupableActor::RefreshConfiguredCollisionOverlaps()
 					{
 						OverlappingPressurePlates.Add(PressurePlate);
 					}
+					if (AParadoxElevator* Elevator = Cast<AParadoxElevator>(OtherComponent->GetOwner());
+						Elevator && OtherComponent == Elevator->ButtonOccupancyVolume.Get())
+					{
+						OverlappingElevators.Add(Elevator);
+					}
 				}
 			}
 		}
@@ -497,6 +505,13 @@ void AParadoxPickupableActor::RefreshConfiguredCollisionOverlaps()
 		if (IsValid(PressurePlate))
 		{
 			PressurePlate->RefreshOccupantFromVolume();
+		}
+	}
+	for (AParadoxElevator* Elevator : OverlappingElevators)
+	{
+		if (IsValid(Elevator))
+		{
+			Elevator->RefreshButtonOccupancy();
 		}
 	}
 }

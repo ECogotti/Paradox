@@ -72,7 +72,9 @@ presence without changing existing assets:
 - **Enable Authored World Collision** defaults to disabled. When enabled, each primitive's initial
   Collision Enabled mode and channel responses are respected while the item is in `World` state.
   Query-capable authored primitives automatically enable overlap events, so a dropped item can drive
-  overlap-based gameplay such as `APressurePlate`. Collision and overlaps are disabled again while
+  overlap-based gameplay such as `APressurePlate` or the button of `AParadoxElevator`. After Drop,
+  both detectors reconcile their local overlap caches so teleport placement can activate them
+  even when Unreal does not send a fresh BeginOverlap edge. Collision and overlaps are disabled again while
   Held and restored after Drop/reset. Insertable subclasses can configure the same behavior
   independently for their `Inserted` state.
 - **Enable Navigation Blocking** defaults to disabled. When enabled, world primitives set

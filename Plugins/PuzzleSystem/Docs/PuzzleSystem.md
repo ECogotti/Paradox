@@ -129,8 +129,10 @@ complete `FPuzzleTransformMoverRuntimeState` property in a save/world-state syst
 the derived mesh transform as a competing authority.
 
 The explicit state is `AtStart`, `MovingTowardEnd`, `AtEnd`, or `MovingTowardStart`. A separate paused
-flag preserves direction during `Stop`. Tick is enabled only while a valid component is actively
-interpolating; stable endpoints, paused movement, invalid components, and shutdown disable Tick.
+flag preserves direction during `Stop`. By default, Tick is enabled only while a valid component is
+actively interpolating; stable endpoints, paused movement, invalid components, and shutdown disable
+the mover's own Tick. Native subclasses with a separate animation may override the protected
+`ShouldMoverTick()` and call `RefreshMovementTickState()` when that animation starts or stops.
 
 Timing supports two exclusive models:
 
@@ -323,18 +325,29 @@ false result authoritative and suppresses the fallback. If the final Controller 
 becomes active again. Manual mode ignores this option. `GetRegisteredControllerCount` distinguishes all
 registered Controllers from `GetActiveRequestCount`, which counts only active requests.
 
+`bAllowManualActivationWithoutController` is a separate option for Manual Receivers. With no valid
+Controller registered, it satisfies the activation prerequisite but leaves the Receiver inactive
+until `RequestManualActivation` is called. A registered Controller, even one requesting inactive,
+suppresses this fallback and becomes authoritative. Removing the last Controller restores the
+fallback; a fresh manual command is still required if the earlier manual request was cleared.
+The option defaults to `true`, so standalone Manual Receivers can accept an explicit activation
+command. Set it to `false` when a Controller must authorize every activation.
+
 Every Receiver exposes `ActivationMode`:
 
 - `Automatic` is the default and preserves the original behavior for existing content: the Receiver is
   active whenever at least one valid Controller requests active, plus the optional uncontrolled fallback
   described above.
 - `Manual` treats the OR-aggregated Controller result as an activation prerequisite. The Receiver remains
-  inactive until `RequestManualActivation` is called, and that command fails while no Controller requests
-  active. `RequestManualDeactivation` is always allowed in Manual mode.
+  inactive until `RequestManualActivation` is called. That command requires an active Controller request,
+  except when the configurable uncontrolled Manual fallback above applies. `RequestManualDeactivation` is
+  always allowed in Manual mode.
 
-If the final active Controller request disappears, a Manual Receiver deactivates immediately and clears
+If the effective prerequisite disappears, a Manual Receiver deactivates immediately and clears
 its manual latch. Restoring the prerequisite does not reactivate it; a new explicit Open request is
-required. Use one Controller with an `All` condition when several signals must all authorize activation.
+required. This includes the final active Controller request becoming inactive; the uncontrolled
+Manual fallback applies only when no Controller remains registered. Use one Controller with an `All`
+condition when several signals must all authorize activation.
 Multiple independent Controllers targeting one Receiver intentionally retain OR semantics.
 
 Blueprint and C++ callers can inspect `CanRequestManualActivation`,

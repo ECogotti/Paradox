@@ -294,3 +294,6 @@ events, and debug controls.
 See [Vertical Barrier](PARADOX_VERTICAL_BARRIER.md) for the concrete Receiver-driven rising barrier,
 GridWorld passage bounds, safe/lift occupant policies, locomotion lock ownership, WorldState restore,
 PerceptionKnowledge state, Blueprint events, and PIE validation.
+
+See [Paradox Elevator](PARADOX_ELEVATOR.md) for the locally triggered moving platform, central
+pressure button, passenger transport, endpoint navigation, rearming, and Blueprint setup.

@@ -224,7 +224,7 @@ public:
 	FParadoxBarrierCountEvent OnAllOccupantsReleased;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox Barrier|State")
-	bool IsPassageOpen() const;
+	virtual bool IsPassageOpen() const;
 
 	UFUNCTION(BlueprintPure, Category = "Paradox Barrier|State")
 	bool IsPassageBlockingNavigation() const;
@@ -267,6 +267,9 @@ public:
 	bool CancelPendingRaiseRequest();
 
 protected:
+	/** Whether the stationary passage region blocks navigation at a stable endpoint. */
+	virtual bool ShouldBlockPassageAtEndpoint(EPuzzleTransformMoverTarget Endpoint) const;
+
 	UFUNCTION(BlueprintNativeEvent, Category = "Paradox Barrier|Occupants")
 	bool CanActorOccupyPassage(AActor* OccupantActor, UPrimitiveComponent* OccupantComponent) const;
 	virtual bool CanActorOccupyPassage_Implementation(AActor* OccupantActor, UPrimitiveComponent* OccupantComponent) const;

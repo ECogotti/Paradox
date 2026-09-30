@@ -116,7 +116,10 @@ void AParadoxVerticalBarrier::OnConstruction(const FTransform& Transform)
 	}
 	if (GridNavigationModifier && GetWorld() && !GetWorld()->IsGameWorld())
 	{
-		const bool bShouldBlock = InitialPosition != EPuzzleTransformMoverInitialPosition::End;
+		const bool bShouldBlock = ShouldBlockPassageAtEndpoint(
+			InitialPosition == EPuzzleTransformMoverInitialPosition::End
+				? EPuzzleTransformMoverTarget::End
+				: EPuzzleTransformMoverTarget::Start);
 		bPassageBlockingNavigation = bShouldBlock;
 		GridNavigationModifier->SetBlockingEnabled(bShouldBlock);
 	}
@@ -323,6 +326,11 @@ bool AParadoxVerticalBarrier::IsPassageOpen() const
 	return IsAtEnd() && !IsMovementPaused() && !bPassageBlockingNavigation;
 }
 
+bool AParadoxVerticalBarrier::ShouldBlockPassageAtEndpoint(const EPuzzleTransformMoverTarget Endpoint) const
+{
+	return Endpoint == EPuzzleTransformMoverTarget::Start;
+}
+
 bool AParadoxVerticalBarrier::IsPassageBlockingNavigation() const
 {
 	return bPassageBlockingNavigation;
@@ -487,6 +495,7 @@ bool AParadoxVerticalBarrier::ShouldProcessReceiverStateNative(const bool bRecei
 
 void AParadoxVerticalBarrier::OnMovementStartedNative()
 {
+	SetPassageNavigationBlocking(true);
 	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
@@ -495,6 +504,7 @@ void AParadoxVerticalBarrier::OnMovementStartedNative()
 
 void AParadoxVerticalBarrier::OnMovementResumedNative()
 {
+	SetPassageNavigationBlocking(true);
 	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
@@ -503,6 +513,7 @@ void AParadoxVerticalBarrier::OnMovementResumedNative()
 
 void AParadoxVerticalBarrier::OnMovementReversedNative()
 {
+	SetPassageNavigationBlocking(true);
 	SetBarrierMeshNavigationRelevant(false);
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
 	StartMovementFeedback(GetMoverState() == EPuzzleTransformMoverState::MovingTowardStart, true);
@@ -525,7 +536,7 @@ void AParadoxVerticalBarrier::OnMovementUpdatedNative(float CurrentMovementAlpha
 void AParadoxVerticalBarrier::OnReachedStartNative()
 {
 	StopMovementFeedback();
-	SetPassageNavigationBlocking(true);
+	SetPassageNavigationBlocking(ShouldBlockPassageAtEndpoint(EPuzzleTransformMoverTarget::Start));
 	RefreshBarrierMeshNavigationRelevance();
 	ReleaseAllLiftedActors(EParadoxBarrierPassengerReleaseReason::ReachedStart);
 	EmitMovementNoise(true, true);
@@ -535,7 +546,7 @@ void AParadoxVerticalBarrier::OnReachedStartNative()
 void AParadoxVerticalBarrier::OnReachedEndNative()
 {
 	StopMovementFeedback();
-	SetPassageNavigationBlocking(false);
+	SetPassageNavigationBlocking(ShouldBlockPassageAtEndpoint(EPuzzleTransformMoverTarget::End));
 	RefreshBarrierMeshNavigationRelevance();
 	ReleaseAllLiftedActors(EParadoxBarrierPassengerReleaseReason::ReachedEnd);
 	bSafetyReturnInProgress = false;
@@ -1194,7 +1205,9 @@ void AParadoxVerticalBarrier::SetPassageNavigationBlocking(const bool bBlocking)
 
 void AParadoxVerticalBarrier::RebuildDerivedState()
 {
-	const bool bShouldBlock = !IsAtEnd() || IsMovementPaused();
+	const bool bShouldBlock = IsMovementPaused() || (IsAtStart()
+		? ShouldBlockPassageAtEndpoint(EPuzzleTransformMoverTarget::Start)
+		: (IsAtEnd() ? ShouldBlockPassageAtEndpoint(EPuzzleTransformMoverTarget::End) : true));
 	SetPassageNavigationBlocking(bShouldBlock);
 	RefreshBarrierMeshNavigationRelevance();
 	PreviousBarrierLocation = GetMovedComponent() ? GetMovedComponent()->GetComponentLocation() : GetActorLocation();
