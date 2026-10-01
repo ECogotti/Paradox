@@ -171,6 +171,9 @@ public:
 		FGameplayTag ReasonTag,
 		const FString& DiagnosticMessage);
 
+	/** Authorizes an opted-in running instance's one-way release of execution resources. */
+	EGameplayActionOperationResult EnterBackgroundExecutionFromInstance(UGameplayActionInstance* Instance);
+
 public:
 	virtual void Activate(bool bReset = false) override;
 	virtual void Deactivate() override;

@@ -687,18 +687,58 @@ void UParadoxTimeLoopComponent::EnterCloneGoapAfterTimeTravel(
 	const FParadoxCloneBehaviorOperationResult HandoffResult = Coordinator
 		? Coordinator->RequestEnterGoapMode()
 		: FParadoxCloneBehaviorOperationResult();
+	FString Diagnostic = Coordinator
+		? HandoffResult.DiagnosticMessage
+		: TEXT("The clone has no behavior coordinator for terminal GOAP handoff.");
 	if (Coordinator && HandoffResult.IsSuccess())
 	{
 		SetClonePlaybackMovementEnabled(*Clone, false);
-		if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
+		AParadoxCloneController* Controller =
+			Cast<AParadoxCloneController>(Clone->GetController());
+		UPerceptionKnowledgeListenerComponent* Listener = Controller
+			? Controller->GetPerceptionKnowledgeListener()
+			: nullptr;
+		UParadoxTemporalVisionComponent* Vision = Clone->GetTemporalVisionComponent();
+		if (!Listener || !Vision)
 		{
-			// Terminal GOAP is still a live in-world temporal participant.
-			Oxygen->SetRunConsumptionActive(true);
+			Diagnostic = TEXT("Terminal GOAP requires a controller-owned Perception Listener and Temporal Vision.");
 		}
-		PARADOX_LOG_INFO(
-			TEXT("Clone '%s' entered terminal GOAP placeholder mode after recorded Time Travel."),
-			*GetNameSafe(Clone));
-		return;
+		else
+		{
+			// Departure suspended the senses only for its VFX. Comparison is now stopped,
+			// so live knowledge can resume without handing control back to investigation.
+			const FPerceptionKnowledgeOperationResult ListenerResult =
+				Listener->SetListenerEnabled(true);
+			if (!ListenerResult.IsSuccess() || Listener->IsObservationSuspended())
+			{
+				Diagnostic = FString::Printf(
+					TEXT("Terminal GOAP could not resume perception: %s"),
+					*ListenerResult.Message);
+			}
+			else
+			{
+				if (UParadoxOxygenComponent* Oxygen = Clone->GetOxygenComponent())
+				{
+					Oxygen->SetRunConsumptionActive(true);
+				}
+				Vision->EnableTemporalDetection(TemporalDetectionSessionId);
+				// Enabling detection immediately queries occupants and may accept a paradox,
+				// synchronously resetting the run and destroying this clone.
+				if (!WeakClone.IsValid() || CurrentPhase != EParadoxTimeLoopPhase::ActiveRun
+					|| bRunFailureAcceptedForRun)
+				{
+					return;
+				}
+				if (Vision->IsTemporalDetectionAuthoritative())
+				{
+					PARADOX_LOG_INFO(
+						TEXT("Clone '%s' entered terminal GOAP placeholder mode with live perception and temporal detection."),
+						*GetNameSafe(Clone));
+					return;
+				}
+				Diagnostic = TEXT("Terminal GOAP could not resume prepared Temporal Vision.");
+			}
+		}
 	}
 
 	FParadoxClonePlaybackRuntime* Runtime =
@@ -707,9 +747,6 @@ void UParadoxTimeLoopComponent::EnterCloneGoapAfterTimeTravel(
 			{
 				return Candidate.Clone.Get() == Clone;
 			});
-	const FString Diagnostic = Coordinator
-		? HandoffResult.DiagnosticMessage
-		: TEXT("The clone has no behavior coordinator for terminal GOAP handoff.");
 	if (Runtime)
 	{
 		FIntentReplayFailure Failure;

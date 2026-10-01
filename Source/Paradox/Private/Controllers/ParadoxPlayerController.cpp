@@ -40,6 +40,7 @@
 #include "Engine/LocalPlayer.h"
 #include "GameModes/ParadoxGameMode.h"
 #include "Paradox.h"
+#include "Interaction/ParadoxSelectableComponent.h"
 #include "Interaction/ParadoxSelectionComponent.h"
 #include "Interaction/ParadoxWidgetInteractionComponent.h"
 #include "Inventory/ParadoxDropTargetingComponent.h"
@@ -548,8 +549,14 @@ void AParadoxPlayerController::OnInputStarted()
 	bPrimaryPointerConsumedByWidget = false;
 	if (!bIsTouch)
 	{
-		if (GameplayHUDComponent
-			&& GameplayHUDComponent->IsPointerOverInteractiveHUD())
+		const AActor* SelectedActor = SelectionComponent
+			? SelectionComponent->GetSelectedActor()
+			: nullptr;
+		const UParadoxSelectableComponent* SelectedSelectable = IsValid(SelectedActor)
+			? SelectedActor->FindComponentByClass<UParadoxSelectableComponent>()
+			: nullptr;
+		if ((GameplayHUDComponent && GameplayHUDComponent->IsPointerOverInteractiveHUD())
+			|| (SelectedSelectable && SelectedSelectable->IsPointerOverInteractiveScreenWidget()))
 		{
 			bPrimaryPointerConsumedByWidget = true;
 			bHasCachedDestination = false;

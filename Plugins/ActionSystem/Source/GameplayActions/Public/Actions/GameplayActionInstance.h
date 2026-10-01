@@ -48,6 +48,15 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
 	FGameplayTagContainer GetExecutionLocks() const { return ExecutionLocks; }
 
+	/** Current lock ownership; background and queued instances own no locks. */
+	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
+	FGameplayTagContainer GetHeldExecutionLocks() const { return HeldExecutionLocks; }
+
+	/** Background work retains its handle and terminal result without occupying execution resources. */
+	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
+	bool IsBackgroundExecution() const { return bBackgroundExecution; }
+	bool IsBackgroundExecutionAllowed() const { return bAllowBackgroundExecution; }
+
 	UFUNCTION(BlueprintPure, Category = "Gameplay Actions")
 	bool IsInterruptible() const { return bInterruptible; }
 
@@ -186,6 +195,13 @@ protected:
 	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions|Tick", meta = (BlueprintProtected = "true"))
 	void SetActionTickEnabled(bool bEnabled);
 
+	/** One-way, component-authorized transition. Only opted-in running instances may release their locks. */
+	UFUNCTION(BlueprintCallable, Category = "Gameplay Actions", meta = (BlueprintProtected = "true"))
+	EGameplayActionOperationResult EnterBackgroundExecution();
+
+	/** Value-only terminal enrichment collected before Cleanup, including cancellation and abort paths. */
+	virtual FInstancedPropertyBag BuildTerminalOutcomeParameters(EGameplayActionState TerminalState) const;
+
 private:
 	void InitializeInstance(
 		UGameplayActionComponent* InOwningComponent,
@@ -223,6 +239,12 @@ private:
 
 	UPROPERTY(Transient)
 	FGameplayTagContainer ExecutionLocks;
+
+	UPROPERTY(Transient)
+	FGameplayTagContainer HeldExecutionLocks;
+
+	bool bAllowBackgroundExecution = false;
+	bool bBackgroundExecution = false;
 
 	UPROPERTY(Transient)
 	bool bInterruptible = true;

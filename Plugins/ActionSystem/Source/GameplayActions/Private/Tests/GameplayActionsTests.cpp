@@ -1140,4 +1140,42 @@ bool FGameplayActionsExternalExecutionLocksTest::RunTest(const FString& Paramete
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FGameplayActionsBackgroundTest,
+	"GameplayActions.Scheduling.BackgroundLocksQueueAndCopiedOutcome", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FGameplayActionsBackgroundTest::RunTest(const FString&)
+{
+	using namespace GameplayActionsTests;
+	auto* Definition = MakeDefinition();
+	AddLock(*Definition, GameplayActionTags::Lock_Movement);
+	auto* Component = MakeComponent();
+	const auto Denied = Component->SubmitAction(MakeRequest(*Definition));
+	auto* DeniedInstance = Cast<UGameplayActionTestInstance>(Component->GetActionInstance(Denied.Handle));
+	TestEqual(TEXT("Background transition requires opt-in"), DeniedInstance->EnterBackgroundForTest(), EGameplayActionOperationResult::InvalidState);
+	Component->CancelAction(Denied.Handle, FGameplayTag());
+	Definition->bAllowBackgroundExecution = true;
+	const auto First = Component->SubmitAction(MakeRequest(*Definition));
+	const auto Second = Component->SubmitAction(MakeRequest(*Definition));
+	TestEqual(TEXT("Second action initially queues"), Second.Status, EGameplayActionSubmissionStatus::AcceptedQueued);
+	auto* Instance = Cast<UGameplayActionTestInstance>(Component->GetActionInstance(First.Handle));
+	TestEqual(TEXT("Opt-in transition succeeds"), Instance->EnterBackgroundForTest(), EGameplayActionOperationResult::Succeeded);
+	TestTrue(TEXT("Declared locks remain immutable"), Instance->GetExecutionLocks().HasTagExact(GameplayActionTags::Lock_Movement));
+	TestTrue(TEXT("Owned locks are released"), Instance->GetHeldExecutionLocks().IsEmpty());
+	EGameplayActionState State;
+	Component->GetActionState(Second.Handle, State);
+	TestEqual(TEXT("Queue is re-evaluated immediately"), State, EGameplayActionState::Running);
+	TestEqual(TEXT("Transition is idempotent"), Instance->EnterBackgroundForTest(), EGameplayActionOperationResult::Succeeded);
+	Instance->bTestOutcome = true; Instance->TestOutcomeValue = 37;
+	Instance->CompleteForTest();
+	TestEqual(TEXT("Cleanup discards the instance outcome"), Instance->TestOutcomeValue, INDEX_NONE);
+	Instance->TestOutcomeValue = 99;
+	FGameplayActionResult Result;
+	TestTrue(TEXT("Result retained after cleanup"), Component->GetActionResult(First.Handle, Result));
+	const auto Value = Result.OutcomeParameters.GetValueInt32(TEXT("Value"));
+	TestTrue(TEXT("Copied outcome exists"), Value.HasValue());
+	if (Value.HasValue()) { TestEqual(TEXT("Outcome is isolated from instance mutation"), Value.GetValue(), 37); }
+	Component->AbortAllActions(FGameplayTag());
+	return true;
+}
+
 #endif

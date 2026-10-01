@@ -1,4 +1,5 @@
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
+#include "Types/IntentReplayTypes.h"
 
 #include "Actions/GridMoveToCellActionDefinition.h"
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
@@ -16,6 +17,15 @@
 #include "ParadoxCloneReplayExecutionStrategyPrivate.h"
 #include "Subsystems/GridWorldSubsystem.h"
 #include "UObject/UnrealType.h"
+
+bool UParadoxCloneReplayExecutionStrategy::IsExpectedTerminalResult(const FRecordedIntent& Intent, const FGameplayActionResult& Result) const
+{
+	if (Intent.ActionTag != ParadoxGameplayTags::Action_HackTerminal) { return false; }
+	if (Result.TerminalState == EGameplayActionState::Cancelled && Result.ReasonTag == ParadoxGameplayTags::Result_Hacking_Superseded) { return true; }
+	const auto Success = Intent.OriginalResult.OutcomeParameters.GetValueBool(TEXT("bSucceeded"));
+	return Intent.bHasOriginalResult && Success.HasValue() && !Success.GetValue()
+		&& Result.TerminalState == EGameplayActionState::Failed && Result.ReasonTag == ParadoxGameplayTags::Result_Hacking_Failure;
+}
 
 namespace UE::Paradox::CloneReplay::Private
 {

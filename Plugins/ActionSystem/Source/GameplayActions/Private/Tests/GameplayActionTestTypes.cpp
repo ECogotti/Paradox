@@ -1,6 +1,16 @@
 #include "Tests/GameplayActionTestTypes.h"
-
 #include "GameplayActionTags.h"
+
+FInstancedPropertyBag UGameplayActionTestInstance::BuildTerminalOutcomeParameters(EGameplayActionState) const
+{
+	FInstancedPropertyBag Bag;
+	if (bTestOutcome)
+	{
+		Bag.AddProperties({FPropertyBagPropertyDesc(TEXT("Value"), EPropertyBagPropertyType::Int32)});
+		Bag.SetValueInt32(TEXT("Value"), TestOutcomeValue);
+	}
+	return Bag;
+}
 
 int32 UGameplayActionTestInstance::InitCount = 0;
 int32 UGameplayActionTestInstance::StartedCount = 0;
@@ -134,6 +144,7 @@ void UGameplayActionTestInstance::OnActionAborted_Implementation(FGameplayTag Re
 void UGameplayActionTestInstance::OnActionCleanup_Implementation()
 {
 	++CleanupCount;
+	if (bTestOutcome) { TestOutcomeValue = INDEX_NONE; }
 }
 
 void UGameplayActionTestObserver::HandleActionEvent(const FGameplayActionEvent& Event)

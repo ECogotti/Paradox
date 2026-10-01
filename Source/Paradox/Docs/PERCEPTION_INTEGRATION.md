@@ -179,6 +179,10 @@ priority, rule and revision. This is transition-driven diagnostics, not a per-fr
 Observation comparison follows the full Action Track `RecordedDuration`, not merely the lifetime
 of its last action. A clone that reaches its final cell and replays a recorded ten-second idle tail
 therefore continues receiving unexpected Hearing/Sight comparisons for all ten seconds. When the
-recorded Time Travel action begins, a clone disables its listener and temporal-vision authority so
-a late stimulus cannot divert the terminal departure VFX; its semantic Source remains visible to
-other listeners until the VFX completes and the time loop retires it.
+recorded Time Travel action begins, a clone suspends its listener and temporal-vision authority so
+a late stimulus cannot divert the terminal departure VFX. With `EnterGoap`, the time loop stops
+observation comparison and reenables the listener and temporal detection after the VFX. Sight and
+Hearing continue updating Current Knowledge, the Hearing renderer follows the restored profile
+range, and the temporal cone still detects future entities. These observations cannot restart
+Replay or Investigating. With `RetireInPlace`, the senses remain disabled and the semantic Source
+is unregistered. The Source remains perceivable throughout departure VFX in both cases.

@@ -233,6 +233,7 @@ bool FParadoxPuzzleCircuitRendererWireTargetValidationTest::RunTest(const FStrin
 	return true;
 }
 
+#if WITH_EDITOR
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxPuzzleCircuitRendererBlueprintWireTargetValidationTest,
 	"Paradox.PuzzleOverlay.Renderer.BlueprintWireTargetValidation",
@@ -309,6 +310,8 @@ bool FParadoxPuzzleCircuitRendererBlueprintWireTargetValidationTest::RunTest(
 		bFoundMultipleWireTargetsWarning);
 	return true;
 }
+
+#endif // WITH_EDITOR: Blueprint asset validation is unavailable in game targets.
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FParadoxPuzzleCircuitRendererLifecycleTest,

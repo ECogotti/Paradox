@@ -70,6 +70,8 @@ public:
 	FParadoxInteractionRequestResult RequestInteraction(FGameplayTag InteractionTag);
 
 protected:
+	virtual void NativeSelectionContextAssigned() {}
+	virtual void NativeSelectionContextCleared() {}
 	virtual void NativeDestruct() override;
 
 	UFUNCTION(BlueprintImplementableEvent, Category = "Paradox|Selection", meta = (DisplayName = "On Selection Context Assigned"))
@@ -125,4 +127,5 @@ private:
 	FDelegateHandle InteractionOptionsRefreshedHandle;
 
 	friend class UParadoxSelectableComponent;
+	friend struct FParadoxHackingTestAccess;
 };

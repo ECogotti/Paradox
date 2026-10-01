@@ -8,11 +8,14 @@
 
 class UPuzzleSignalPayload;
 class UPuzzleEmitterComponent;
+class APuzzleController;
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FPuzzleSignalChangedDelegate, UPuzzleEmitterComponent*, Emitter, FGameplayTag, SignalTag, FPuzzleSignalState, SignalState);
 DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FPuzzleEmitterInvalidatedDelegate, UPuzzleEmitterComponent*, Emitter);
 DECLARE_MULTICAST_DELEGATE_ThreeParams(FPuzzleSignalChangedNativeDelegate, UPuzzleEmitterComponent*, FGameplayTag, FPuzzleSignalState);
 DECLARE_MULTICAST_DELEGATE_OneParam(FPuzzleEmitterInvalidatedNativeDelegate, UPuzzleEmitterComponent*);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_ThreeParams(FPuzzleEmitterGateInvalidationChangedDelegate, UPuzzleEmitterComponent*, Emitter, FGameplayTag, SignalTag, bool, bIsInvalidated);
+DECLARE_MULTICAST_DELEGATE_ThreeParams(FPuzzleEmitterGateInvalidationChangedNativeDelegate, UPuzzleEmitterComponent*, FGameplayTag, bool);
 
 /** Actor component that publishes persistent gameplay-tagged puzzle signal states. */
 UCLASS(ClassGroup = (Puzzle), Blueprintable, meta = (BlueprintSpawnableComponent))
@@ -41,7 +44,7 @@ public:
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Emitter")
 	FPuzzleSignalChangedDelegate OnSignalChanged;
 
-	/** Blueprint event fired when this emitter can no longer provide valid input state. */
+	/** Blueprint event fired on component shutdown/destruction, independently of Controller gates. */
 	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Emitter")
 	FPuzzleEmitterInvalidatedDelegate OnEmitterInvalidated;
 
@@ -50,6 +53,21 @@ public:
 
 	/** Native invalidation event used by controllers during shutdown/destruction. */
 	FPuzzleEmitterInvalidatedNativeDelegate OnEmitterInvalidatedNative;
+
+	/** Fired when all primary consumers of a signal block it (true), or admission returns (false). Raw signals remain unchanged. */
+	UPROPERTY(BlueprintAssignable, Category = "Puzzle|Emitter|Gate")
+	FPuzzleEmitterGateInvalidationChangedDelegate OnGateInvalidationChanged;
+
+	/** Native counterpart, broadcast before the Blueprint notification. */
+	FPuzzleEmitterGateInvalidationChangedNativeDelegate OnGateInvalidationChangedNative;
+
+	/**
+	 * True if all registered primary consumers block the exact signal through Closed/Invalid gates.
+	 * With no tag, considers all primary channels. No consumers means false; shutdown means true.
+	 * An Open/Bypassed consumer is sufficient for admission. This does not change raw signal validity.
+	 */
+	UFUNCTION(BlueprintPure, Category = "Puzzle|Emitter|Gate")
+	bool IsInvalidated(FGameplayTag SignalTag = FGameplayTag()) const;
 
 	/**
 	 * Sets or creates a signal channel state.
@@ -90,6 +108,17 @@ public:
 	const TMap<FGameplayTag, FPuzzleSignalState>& GetSignalStates() const;
 
 private:
+	friend class APuzzleController;
+
+	/** Weak, Controller-owned admission observations; never evaluates conditions or routes signals. */
+	TMap<TWeakObjectPtr<APuzzleController>, TMap<FGameplayTag, bool>> ControllerGateAdmissions;
+	TMap<FGameplayTag, bool> LastSignalInvalidations;
+	bool bNotifyingGateInvalidation = false;
+	bool bGateNotificationRequested = false;
+	void SetControllerGateAdmissions(APuzzleController* Controller, const TMap<FGameplayTag, bool>& Admissions);
+	void RemoveControllerGateAdmissions(APuzzleController* Controller);
+	void NotifyGateInvalidationChanges();
+
 	/** Current state for each published signal tag. */
 	UPROPERTY(VisibleInstanceOnly, BlueprintReadOnly, Category = "Puzzle|Emitter", meta = (AllowPrivateAccess = "true"))
 	TMap<FGameplayTag, FPuzzleSignalState> SignalStates;

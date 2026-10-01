@@ -25,6 +25,23 @@ Signals are identified by `FGameplayTag`. The active flag is the core signal sta
 
 Use `RepublishSignal` after mutating payload data in place. Conditions only reevaluate when the emitter publishes or republishes a signal.
 
+For gate-dependent interaction or effects, query `IsInvalidated(SignalTag)` on the Emitter. It returns
+true when every registered primary consumer of that exact channel has a Closed or Invalid gate.
+An Open or Bypassed consumer allows the channel; no consumers means unrestricted. Omitting the tag
+considers all primary channels together. Component shutdown always returns true. This is an admission
+query: it never changes the raw signal state, payload, or revision, and gate conditions remain
+Controller-owned. Observations work independently of Graph queries and Actor BeginPlay order.
+
+Bind `OnGateInvalidationChanged(Emitter, SignalTag, bIsInvalidated)` for cosmetic effects. True means
+blocked; false means admitted again. The event fires only on a channel's aggregate transition, after
+Controller evaluation settles, including initial blocked configuration and removal of the final
+blocking Controller. Read `IsInvalidated` when binding late to initialize the effect. Native subscribers
+use `OnGateInvalidationChangedNative`, which runs before the Blueprint event. Repeated gate republishes
+do not replay effects. On multiple channels, use the event's SignalTag with the query.
+
+The existing `OnEmitterInvalidated` / `OnEmitterInvalidatedNative` events describe component
+EndPlay/destruction, and retain their lifecycle semantics. Gate transitions use the new event above.
+
 ### Reusable Switch Actor Template
 
 `APuzzleSwitch` is an abstract native Actor for controls whose gameplay input can be expressed as `Press()` and `Release()`. Create a Blueprint child such as `BP_PressurePlate`, `BP_Button`, or `BP_Lever`, add only the mesh, collision, interaction, audio, and animation required by that child, then forward its concrete input to the inherited operations. The native base creates a minimal optional scene root and owns `UPuzzleEmitterComponent`. A specialized native child that supplies a more meaningful root may suppress that optional default subobject through Unreal's object-initializer pattern; ordinary Blueprint children retain it.

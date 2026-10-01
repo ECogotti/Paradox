@@ -380,7 +380,7 @@ EGameplayActionOperationResult UGameplayActionComponent::AcquireExternalExecutio
 		const UGameplayActionInstance* Instance = GetActionInstance(Handle);
 		return !Instance || !IsRuntimeState(Instance->State)
 			|| Instance->State == EGameplayActionState::Ending
-			|| !Instance->ExecutionLocks.HasAnyExact(ExecutionLocks);
+			|| !Instance->HeldExecutionLocks.HasAnyExact(ExecutionLocks);
 	});
 	SortHandlesBySchedulerOrder(ConflictingHandles);
 	for (const FGameplayActionHandle Handle : ConflictingHandles)
@@ -649,6 +649,8 @@ FGameplayActionDebugSnapshot UGameplayActionComponent::GetDebugSnapshot() const
 			Entry.State = Instance->State;
 			Entry.Priority = Instance->Priority;
 			Entry.ExecutionLocks = Instance->ExecutionLocks;
+			Entry.HeldExecutionLocks = Instance->HeldExecutionLocks;
+			Entry.bBackgroundExecution = Instance->bBackgroundExecution;
 			Entry.SubmissionSequence = Instance->SubmissionSequence;
 			Entry.ElapsedSeconds = FMath::Max(0.0, Now - Instance->AcceptedTimeSeconds);
 			Entry.MaxQueueTimeSeconds = Instance->MaxQueueTimeSeconds;
@@ -689,6 +691,29 @@ void UGameplayActionComponent::FinishActionFromInstance(
 	}
 	FinishActionInternal(*Instance, TerminalState, ReasonTag, DiagnosticMessage, true);
 	FlushEventQueue();
+}
+
+EGameplayActionOperationResult UGameplayActionComponent::EnterBackgroundExecutionFromInstance(UGameplayActionInstance* Instance)
+{
+	if (!IsInGameThread() || bInInitialJournalTransaction || bInValidationCallback || bInInitCallback)
+	{
+		return EGameplayActionOperationResult::RejectedReentrant;
+	}
+	if (bShuttingDown || !Instance || Instance->OwningComponent != this
+		|| GetActionInstance(Instance->Handle) != Instance || !Instance->bAllowBackgroundExecution
+		|| Instance->State != EGameplayActionState::Running)
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+	if (!Instance->bBackgroundExecution)
+	{
+		Instance->bBackgroundExecution = true;
+		Instance->HeldExecutionLocks.Reset();
+		RecordSchedulerDecision(FString::Printf(TEXT("Action %lld entered background execution."), Instance->Handle.GetValue()));
+		EvaluateQueuedActions();
+		FlushEventQueue();
+	}
+	return EGameplayActionOperationResult::Succeeded;
 }
 
 void UGameplayActionComponent::Activate(const bool bReset)
@@ -876,7 +901,7 @@ TArray<FGameplayActionHandle> UGameplayActionComponent::FindConflicts(const UGam
 	for (const FGameplayActionHandle ActiveHandle : ActiveHandles)
 	{
 		const UGameplayActionInstance* Active = GetActionInstance(ActiveHandle);
-		if (Active && Active != &Incoming && Active->ExecutionLocks.HasAnyExact(Incoming.ExecutionLocks))
+		if (Active && Active != &Incoming && Active->HeldExecutionLocks.HasAnyExact(Incoming.ExecutionLocks))
 		{
 			Conflicts.Add(ActiveHandle);
 		}
@@ -954,6 +979,7 @@ void UGameplayActionComponent::StartAction(UGameplayActionInstance& Instance)
 	QueuedHandles.RemoveSingle(Instance.Handle);
 	ActiveHandles.AddUnique(Instance.Handle);
 	Instance.State = EGameplayActionState::Running;
+	Instance.HeldExecutionLocks = Instance.ExecutionLocks;
 	Instance.bHasStarted = true;
 	QueueEvent(BuildEvent(Instance, EGameplayActionEventType::Started));
 	Instance.OnActionStarted();
@@ -994,6 +1020,7 @@ bool UGameplayActionComponent::FinishActionInternal(
 		default:
 			break;
 		}
+		const FInstancedPropertyBag OutcomeParameters = Instance.BuildTerminalOutcomeParameters(TerminalState);
 		Instance.OnActionCleanup();
 
 		FGameplayActionResult Result;
@@ -1001,6 +1028,8 @@ bool UGameplayActionComponent::FinishActionInternal(
 		Result.ReasonTag = ReasonTag;
 		Result.CausingActionHandle = CausingActionHandle;
 		Result.DiagnosticMessage = DiagnosticMessage;
+		Result.OutcomeParameters = OutcomeParameters;
+		Instance.HeldExecutionLocks.Reset();
 		Instance.State = TerminalState;
 		ActiveHandles.RemoveSingle(Instance.Handle);
 		QueuedHandles.RemoveSingle(Instance.Handle);

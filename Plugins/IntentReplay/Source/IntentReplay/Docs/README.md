@@ -1,5 +1,16 @@
 # Modulo IntentReplay
 
+BeginExternalReplayInterruption preserva le azioni già in background, senza inserirle nel pending
+set di reissue. StopReplay/reset/teardown conservano la cancellazione esplicita. Per investigazioni
+durante lavoro in background usare bPauseBoundActions=false.
+
+La strategia può specializzare IsExpectedTerminalResult(Intent, Result), default false. Un fallimento
+semantico riconosciuto resta nel journal con lo stato reale e non attiva StopPlayback. Gli errori
+inattesi di target/configurazione/lifecycle devono restare osservabili.
+
+OriginalResult conserva anche OutcomeParameters copiati da GameplayActions prima del cleanup,
+se Ended arriva prima della finalizzazione immutabile del track. Usare solo dati replay-safe.
+
 Il runtime espone snapshot per interruzioni esterne recuperabili e API di reissue/already
 satisfied. La playback session mantiene privato il pending set; track e Recorded Intent restano
 immutabili.

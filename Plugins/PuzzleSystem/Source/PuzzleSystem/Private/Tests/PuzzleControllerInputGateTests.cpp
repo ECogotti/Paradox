@@ -483,4 +483,119 @@ bool FPuzzleControllerGateSerializedAssetCompatibilityTest::RunTest(const FStrin
 	return true;
 }
 
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPuzzleEmitterGateNotifications,
+	"PuzzleSystem.Emitter.GateInvalidationNotifications", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleEmitterGateNotifications::RunTest(const FString&)
+{
+	using namespace PuzzleControllerGateTest;
+	AActor* PrimaryActor = NewActor(TEXT("PrimaryActor"));
+	auto* Primary = AddComponent<UPuzzleEmitterComponent>(PrimaryActor, TEXT("Emitter"));
+	AActor* GateActor = NewActor(TEXT("GateActor"));
+	auto* Gate = AddComponent<UPuzzleEmitterComponent>(GateActor, TEXT("Emitter"));
+	AActor* ReceiverActor = NewActor(TEXT("ReceiverActor"));
+	AddComponent<UPuzzleReceiverComponent>(ReceiverActor, TEXT("Receiver"));
+	Primary->SetSignalState(PressedTag(), true, nullptr);
+	Gate->SetSignalState(PoweredTag(), false, nullptr);
+	int32 GateEvents = 0, LifecycleEvents = 0;
+	Primary->OnEmitterInvalidatedNative.AddLambda([&](UPuzzleEmitterComponent*) { ++LifecycleEvents; });
+	Primary->OnGateInvalidationChangedNative.AddLambda([&](UPuzzleEmitterComponent* Emitter, FGameplayTag Signal, bool bInvalidated)
+	{
+		++GateEvents;
+		TestTrue(TEXT("Notification describes the exact emitter/channel"), Emitter == Primary && Signal == PressedTag());
+		TestEqual(TEXT("Query is updated before notification"), Primary->IsInvalidated(Signal), bInvalidated);
+	});
+	APuzzleController* Controller = BuildSingleInputController(PrimaryActor, ReceiverActor);
+	AddGateInput(Controller->InputBindings[0], TEXT("Enabled"), GateActor);
+	Controller->InputBindings[0].GateConditions.Add(NewInputCondition(Controller, TEXT("Enabled")));
+	TestFalse(TEXT("Uncontrolled emitter is available"), Primary->IsInvalidated());
+	TestTrue(TEXT("Controller initializes without a World/Graph"), Controller->InitializePuzzleController());
+	TestTrue(TEXT("Initially closed gate invalidates admission"), Primary->IsInvalidated(PressedTag()));
+	TestEqual(TEXT("Initial closed gate notifies once"), GateEvents, 1);
+	Gate->RepublishSignal(PoweredTag());
+	TestEqual(TEXT("Identical gate republish does not replay effects"), GateEvents, 1);
+	Gate->SetSignalState(PoweredTag(), true, nullptr);
+	TestFalse(TEXT("Open gate validates admission"), Primary->IsInvalidated());
+	TestEqual(TEXT("Open transition notifies once"), GateEvents, 2);
+	FPuzzleSignalState Raw;
+	Primary->TryGetSignalState(PressedTag(), Raw);
+	TestTrue(TEXT("Gate feedback preserves raw activity and revision"), Raw.bIsActive && Raw.Revision == 1);
+	Gate->DestroyComponent();
+	TestTrue(TEXT("Destroyed required gate blocks admission"), Primary->IsInvalidated());
+	TestEqual(TEXT("Invalid gate notifies"), GateEvents, 3);
+	TestEqual(TEXT("Gate changes never invoke lifecycle invalidation"), LifecycleEvents, 0);
+	Controller->ShutdownPuzzleController();
+	TestFalse(TEXT("Removing final consumer restores unrestricted admission"), Primary->IsInvalidated());
+	TestEqual(TEXT("Controller removal notifies validation"), GateEvents, 4);
+	Primary->DestroyComponent();
+	TestTrue(TEXT("Shutdown query is invalidated"), Primary->IsInvalidated());
+	TestEqual(TEXT("Existing lifecycle delegate stays single-shot"), LifecycleEvents, 1);
+	Primary->OnGateInvalidationChangedNative.Clear(); Primary->OnEmitterInvalidatedNative.Clear();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPuzzleEmitterMultipleConsumers,
+	"PuzzleSystem.Emitter.MultipleConsumersAndExactChannels", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleEmitterMultipleConsumers::RunTest(const FString&)
+{
+	using namespace PuzzleControllerGateTest;
+	AActor* PrimaryActor = NewActor(TEXT("PrimaryActor"));
+	auto* Primary = AddComponent<UPuzzleEmitterComponent>(PrimaryActor, TEXT("Emitter"));
+	AActor* GateActor = NewActor(TEXT("GateActor"));
+	auto* Gate = AddComponent<UPuzzleEmitterComponent>(GateActor, TEXT("Emitter"));
+	AActor* ReceiverActor = NewActor(TEXT("ReceiverActor"));
+	AddComponent<UPuzzleReceiverComponent>(ReceiverActor, TEXT("Receiver"));
+	Primary->SetSignalState(PressedTag(), true, nullptr); Primary->SetSignalState(PoweredTag(), false, nullptr);
+	Gate->SetSignalState(PoweredTag(), false, nullptr);
+	APuzzleController* Gated = BuildSingleInputController(PrimaryActor, ReceiverActor);
+	AddGateInput(Gated->InputBindings[0], TEXT("Enabled"), GateActor);
+	Gated->InputBindings[0].GateConditions.Add(NewInputCondition(Gated, TEXT("Enabled")));
+	TestTrue(TEXT("Gated consumer initializes"), Gated->InitializePuzzleController());
+	APuzzleController* Bypass = BuildSingleInputController(PrimaryActor, ReceiverActor);
+	TestTrue(TEXT("Bypassed consumer initializes"), Bypass->InitializePuzzleController());
+	TestFalse(TEXT("One bypassed consumer admits exact channel"), Primary->IsInvalidated(PressedTag()));
+	Bypass->ShutdownPuzzleController();
+	TestTrue(TEXT("Final admitting consumer removed blocks channel"), Primary->IsInvalidated(PressedTag()));
+	Bypass->InputBindings[0].SignalTag = PoweredTag();
+	TestTrue(TEXT("Other channel consumer initializes"), Bypass->InitializePuzzleController());
+	TestTrue(TEXT("Other channel cannot admit blocked exact channel"), Primary->IsInvalidated(PressedTag()));
+	TestFalse(TEXT("Other channel remains available"), Primary->IsInvalidated(PoweredTag()));
+	TestFalse(TEXT("Component-wide query finds an admitted channel"), Primary->IsInvalidated());
+	Bypass->ShutdownPuzzleController(); Gated->ShutdownPuzzleController();
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FPuzzleEmitterReentrantGateEffects,
+	"PuzzleSystem.Emitter.ReentrantGateEffects", EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FPuzzleEmitterReentrantGateEffects::RunTest(const FString&)
+{
+	using namespace PuzzleControllerGateTest;
+	AActor* PrimaryActor = NewActor(TEXT("PrimaryActor"));
+	auto* Primary = AddComponent<UPuzzleEmitterComponent>(PrimaryActor, TEXT("Emitter"));
+	AActor* GateActor = NewActor(TEXT("GateActor"));
+	auto* Gate = AddComponent<UPuzzleEmitterComponent>(GateActor, TEXT("Emitter"));
+	AActor* ReceiverActor = NewActor(TEXT("ReceiverActor"));
+	AddComponent<UPuzzleReceiverComponent>(ReceiverActor, TEXT("Receiver"));
+	Primary->SetSignalState(PressedTag(), true, nullptr); Gate->SetSignalState(PoweredTag(), true, nullptr);
+	APuzzleController* Controller = BuildSingleInputController(PrimaryActor, ReceiverActor);
+	AddGateInput(Controller->InputBindings[0], TEXT("Enabled"), GateActor);
+	Controller->InputBindings[0].GateConditions.Add(NewInputCondition(Controller, TEXT("Enabled")));
+	TestTrue(TEXT("Controller initializes"), Controller->InitializePuzzleController());
+	int32 Events = 0, CallbackDepth = 0;
+	Primary->OnGateInvalidationChangedNative.AddLambda([&](UPuzzleEmitterComponent*, FGameplayTag, bool bInvalidated)
+	{
+		++Events; ++CallbackDepth;
+		TestEqual(TEXT("Gate effects never recursively notify"), CallbackDepth, 1);
+		if (bInvalidated) { Gate->SetSignalState(PoweredTag(), true, nullptr); }
+		--CallbackDepth;
+	});
+	Gate->SetSignalState(PoweredTag(), false, nullptr);
+	TestFalse(TEXT("Reentrant gate update settles open"), Primary->IsInvalidated());
+	TestEqual(TEXT("Both admission edges notify once"), Events, 2);
+	Primary->OnGateInvalidationChangedNative.Clear(); Controller->ShutdownPuzzleController();
+	return true;
+}
+
 #endif

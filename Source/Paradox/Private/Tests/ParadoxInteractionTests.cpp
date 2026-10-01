@@ -1681,7 +1681,9 @@ bool FParadoxInteractionStandardPuzzleEffectsTest::RunTest(const FString& Parame
 		UPuzzleReceiverComponent* Receiver = NewObject<UPuzzleReceiverComponent>(Fixture.Target, TEXT("DoorReceiver"));
 		Fixture.Target->AddInstanceComponent(Receiver);
 		Receiver->ActivationMode = EPuzzleReceiverActivationMode::Manual;
+		Receiver->bAllowManualActivationWithoutController = false;
 		Receiver->RegisterComponent();
+		TestFalse(TEXT("Receiver needs Controller prerequisites before activation"), Receiver->AreActivationPrerequisitesSatisfied());
 		APuzzleController* PrerequisiteController = Fixture.Scope.World->SpawnActor<APuzzleController>();
 		TestTrue(TEXT("Receiver prerequisites are supplied by a Controller"), Receiver->SetControllerRequest(PrerequisiteController, true));
 		UParadoxReceiverInteractionActionDefinition* Definition = NewObject<UParadoxReceiverInteractionActionDefinition>(Fixture.Target);

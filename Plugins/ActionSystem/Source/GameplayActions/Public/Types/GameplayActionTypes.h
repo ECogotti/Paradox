@@ -185,6 +185,10 @@ struct GAMEPLAYACTIONS_API FGameplayActionResult
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions")
 	FString DiagnosticMessage;
 
+	/** Optional isolated semantic output. Actions should use replay-safe value data rather than runtime object references. */
+	UPROPERTY()
+	FInstancedPropertyBag OutcomeParameters;
+
 	bool IsTerminal() const;
 };
 
@@ -421,6 +425,12 @@ struct GAMEPLAYACTIONS_API FGameplayActionDebugEntry
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions|Debug")
 	FGameplayTagContainer ExecutionLocks;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions|Debug")
+	FGameplayTagContainer HeldExecutionLocks;
+
+	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions|Debug")
+	bool bBackgroundExecution = false;
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Gameplay Actions|Debug")
 	int64 SubmissionSequence = 0;

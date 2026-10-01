@@ -5,10 +5,12 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/WidgetComponent.h"
+#include "Framework/Application/SlateApplication.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/PlayerController.h"
 #include "Interaction/ParadoxInteractionWidgetBase.h"
 #include "Interaction/ParadoxSelectionComponent.h"
+#include "Layout/WidgetPath.h"
 #include "Misc/DataValidation.h"
 #include "Paradox.h"
 
@@ -113,6 +115,39 @@ void UParadoxSelectableComponent::SetSelectionAvailability(
 	bCanBeHovered = bInCanBeHovered;
 	bCanBeSelected = bInCanBeSelected;
 	SelectionAvailabilityChangedNative.Broadcast(this);
+}
+
+bool UParadoxSelectableComponent::IsPointerOverInteractiveScreenWidget() const
+{
+	if (!bIsSelected || !IsValid(InteractionWidgetComponent)
+		|| InteractionWidgetComponent->GetWidgetSpace() != EWidgetSpace::Screen
+		|| !InteractionWidgetComponent->IsVisible()
+		|| !FSlateApplication::IsInitialized())
+	{
+		return false;
+	}
+	const UUserWidget* Widget = InteractionWidgetComponent->GetUserWidgetObject();
+	const TSharedPtr<SWidget> RootWidget = Widget ? Widget->GetCachedWidget() : nullptr;
+	if (!RootWidget.IsValid())
+	{
+		return false;
+	}
+
+	FSlateApplication& SlateApplication = FSlateApplication::Get();
+	const FWidgetPath WidgetPath = SlateApplication.LocateWindowUnderMouse(
+		SlateApplication.GetCursorPos(),
+		SlateApplication.GetInteractiveTopLevelWindows());
+	bool bInsideInteractionWidget = false;
+	for (int32 Index = 0; Index < WidgetPath.Widgets.Num(); ++Index)
+	{
+		const TSharedRef<SWidget>& PathWidget = WidgetPath.Widgets[Index].Widget;
+		bInsideInteractionWidget |= PathWidget == RootWidget;
+		if (bInsideInteractionWidget && PathWidget->IsEnabled() && PathWidget->IsInteractable())
+		{
+			return true;
+		}
+	}
+	return false;
 }
 
 #if WITH_EDITOR
@@ -450,8 +485,14 @@ bool UParadoxSelectableComponent::EnsureInteractionWidget(
 	InteractionWidgetComponent->SetupAttachment(Anchor);
 	InteractionWidgetComponent->SetRelativeLocation(WidgetRelativeOffset);
 	InteractionWidgetComponent->SetRelativeRotation(WidgetRelativeRotation);
-	InteractionWidgetComponent->SetWidgetSpace(EWidgetSpace::World);
-	InteractionWidgetComponent->SetDrawSize(FVector2D(WidgetDrawSize));
+	InteractionWidgetComponent->SetWidgetSpace(WidgetSpace);
+	InteractionWidgetComponent->SetDrawSize(FVector2D(
+		FMath::Max(1, WidgetDrawSize.X),
+		FMath::Max(1, WidgetDrawSize.Y)));
+	InteractionWidgetComponent->SetDrawAtDesiredSize(bWidgetDrawAtDesiredSize);
+	InteractionWidgetComponent->SetPivot(WidgetPivot);
+	InteractionWidgetComponent->SetInitialSharedLayerName(WidgetScreenLayerName);
+	InteractionWidgetComponent->SetInitialLayerZOrder(WidgetScreenLayerZOrder);
 	InteractionWidgetComponent->SetTwoSided(true);
 	InteractionWidgetComponent->SetCollisionProfileName(TEXT("UI"));
 	InteractionWidgetComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
@@ -493,20 +534,33 @@ void UParadoxSelectableComponent::ShowInteractionWidget(
 	APlayerController* PlayerController = InSelectionComponent
 		? Cast<APlayerController>(InSelectionComponent->GetOwner())
 		: nullptr;
+	InteractionWidgetComponent->SetOwnerPlayer(PlayerController ? PlayerController->GetLocalPlayer() : nullptr);
 	if (UParadoxInteractionWidgetBase* Widget = Cast<UParadoxInteractionWidgetBase>(
 		InteractionWidgetComponent->GetUserWidgetObject()))
 	{
+		if (ScreenWidgetVisibilityBeforeHide.IsSet())
+		{
+			const ESlateVisibility PreviousVisibility = ScreenWidgetVisibilityBeforeHide.GetValue();
+			ScreenWidgetVisibilityBeforeHide.Reset();
+			Widget->SetVisibility(PreviousVisibility);
+		}
 		Widget->AssignSelectionContext(GetOwner(), this, InSelectionComponent, PlayerController);
 		InteractionWidgetComponent->SetCollisionResponseToAllChannels(ECR_Ignore);
 		InteractionWidgetComponent->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-		InteractionWidgetComponent->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		const bool bWorldSpace = InteractionWidgetComponent->GetWidgetSpace() == EWidgetSpace::World;
+		InteractionWidgetComponent->SetCollisionEnabled(bWorldSpace
+			? ECollisionEnabled::QueryOnly
+			: ECollisionEnabled::NoCollision);
 		InteractionWidgetComponent->SetVisibility(true, true);
-		// Request while disabled: UE forces the first render-target update even if the
-		// World is paused and this newly created primitive has never rendered before.
-		InteractionWidgetComponent->RequestRenderUpdate();
+		if (bWorldSpace)
+		{
+			// Request while disabled: UE forces the first render-target update even if the
+			// World is paused and this newly created primitive has never rendered before.
+			InteractionWidgetComponent->RequestRenderUpdate();
+		}
 		InteractionWidgetComponent->SetTickMode(ETickMode::Enabled);
 		UpdateInteractionWidgetFacing();
-		SetComponentTickEnabled(bFaceOwningPlayerCamera);
+		SetComponentTickEnabled(bWorldSpace && bFaceOwningPlayerCamera);
 	}
 }
 
@@ -520,7 +574,18 @@ void UParadoxSelectableComponent::HideInteractionWidget()
 	if (UParadoxInteractionWidgetBase* Widget = Cast<UParadoxInteractionWidgetBase>(
 		InteractionWidgetComponent->GetUserWidgetObject()))
 	{
+		const bool bScreenSpace = InteractionWidgetComponent->GetWidgetSpace() == EWidgetSpace::Screen;
+		if (bScreenSpace && !ScreenWidgetVisibilityBeforeHide.IsSet())
+		{
+			ScreenWidgetVisibilityBeforeHide = Widget->GetVisibility();
+		}
 		Widget->ClearSelectionContext();
+		if (bScreenSpace)
+		{
+			// Component visibility does not hide Slate content already hosted in the screen layer.
+			// Collapse it before disabling component ticks so draw and hit testing stop immediately.
+			Widget->SetVisibility(ESlateVisibility::Collapsed);
+		}
 	}
 	InteractionWidgetComponent->SetVisibility(false, true);
 	InteractionWidgetComponent->SetTickMode(ETickMode::Disabled);
@@ -532,11 +597,13 @@ void UParadoxSelectableComponent::DestroyInteractionWidget()
 	if (!IsValid(InteractionWidgetComponent))
 	{
 		InteractionWidgetComponent = nullptr;
+		ScreenWidgetVisibilityBeforeHide.Reset();
 		return;
 	}
 	HideInteractionWidget();
 	InteractionWidgetComponent->DestroyComponent();
 	InteractionWidgetComponent = nullptr;
+	ScreenWidgetVisibilityBeforeHide.Reset();
 }
 
 void UParadoxSelectableComponent::UpdateInteractionWidgetFacing()
@@ -544,6 +611,7 @@ void UParadoxSelectableComponent::UpdateInteractionWidgetFacing()
 	if (!bFaceOwningPlayerCamera
 		|| !bIsSelected
 		|| !IsValid(InteractionWidgetComponent)
+		|| InteractionWidgetComponent->GetWidgetSpace() != EWidgetSpace::World
 		|| !InteractionWidgetComponent->IsVisible())
 	{
 		return;

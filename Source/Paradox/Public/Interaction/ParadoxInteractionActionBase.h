@@ -157,6 +157,9 @@ protected:
 	/** Revalidates a running movement after a concrete Puzzle endpoint changed. */
 	void ReevaluateRunningInteraction();
 
+	/** Releases this action's completed approach/claim and enters component-authorized background execution. */
+	EGameplayActionOperationResult EnterBackgroundInteraction();
+
 private:
 	struct FExecutionCandidate
 	{

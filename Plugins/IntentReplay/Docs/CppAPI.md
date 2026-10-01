@@ -1,10 +1,17 @@
 # API Blueprint e C++
 
+UIntentReplayExecutionStrategy::IsExpectedTerminalResult è l'hook nativo per esiti terminali
+semantici previsti. Non modifica i risultati del Journal. Il default false conserva il comportamento
+precedente; un adapter può riconoscere solo reason/outcome del proprio dominio.
+
+BeginExternalReplayInterruption mantiene le azioni in background. I loro handle restano
+session-owned e vengono cancellati da StopReplay; l'investigazione non li interrompe/reissue.
+
 ## Interruzione esterna recuperabile
 
 `BeginExternalReplayInterruption(ReasonTag)` è valido soltanto in `Playing`. Mette in pausa clock
 ed emissioni, cattura `FIntentReplaySuspendedIntent`, registra il reason atteso e interrompe gli
-handle replay-owned. Le interruzioni restano nel Journal e non sono replay fracture.
+handle replay-owned che non sono in background. Le interruzioni restano nel Journal e non sono replay fracture.
 
 `ResumeReplay` restituisce `PendingExternalRecovery` finché ogni Recorded Intent non viene
 riconciliato con `ReissueExternallyInterruptedIntent` oppure

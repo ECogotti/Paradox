@@ -964,6 +964,22 @@ void UParadoxInteractionActionBase::ReevaluateRunningInteraction()
 	}
 }
 
+EGameplayActionOperationResult UParadoxInteractionActionBase::EnterBackgroundInteraction()
+{
+	if (bMovingToInteraction || bCompletionRequested || GetState() != EGameplayActionState::Running
+		|| !IsBackgroundExecutionAllowed())
+	{
+		return EGameplayActionOperationResult::InvalidState;
+	}
+	if (UParadoxInteractionComponent* Component = InteractionComponent.Get())
+	{
+		Component->OnInteractionAffordanceChangedNative().Remove(InteractionAffordanceChangedHandle);
+	}
+	InteractionAffordanceChangedHandle.Reset();
+	ReleaseInteractionClaim();
+	return EnterBackgroundExecution();
+}
+
 void UParadoxInteractionActionBase::FailInteraction(
 	const FGameplayTag ReasonTag,
 	const FString& DiagnosticMessage)

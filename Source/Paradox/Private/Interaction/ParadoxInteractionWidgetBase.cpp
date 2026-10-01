@@ -131,6 +131,7 @@ void UParadoxInteractionWidgetBase::AssignSelectionContext(
 		CachedInteractionOptions =
 			InSelectionComponent->GetSelectedInteractionOptions();
 	}
+	NativeSelectionContextAssigned();
 	OnSelectionContextAssigned();
 	OnInteractionOptionsRefreshed(CachedInteractionOptions);
 	OnInteractionAvailabilityRefreshed(GetInteractionAvailabilities());
@@ -142,6 +143,7 @@ void UParadoxInteractionWidgetBase::ClearSelectionContext()
 		|| SelectableComponent.IsValid()
 		|| SelectionComponent.IsValid()
 		|| OwningPlayerController.IsValid();
+	NativeSelectionContextCleared();
 	if (UParadoxSelectionComponent* Selection = SelectionComponent.Get())
 	{
 		Selection->OnSelectedInteractionOptionsRefreshedNative().Remove(

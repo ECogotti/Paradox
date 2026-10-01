@@ -38,9 +38,13 @@ next tick by default. Deferral lets the Time Travel Gameplay Action complete bef
 stops replay, investigation, Behavior Tree, Gameplay Actions and movement and commits terminal
 `Goap`. The transition cannot be reversed for that run. This is currently a stationary GOAP
 placeholder: the clone remains visible, collidable, GridWorld-occupied, semantically observable and
-continues consuming Oxygen, while the Time Travel action has already disabled its perception
-listener and Temporal Vision. A failed handoff leaves the clone stationary and reports playback
-failure.
+continues consuming Oxygen. The Time Travel action suspends its perception listener and Temporal
+Vision only during departure VFX. After the handoff stops observation comparison, the time loop
+reenables native Sight/Hearing and temporal detection in the same run session. Current knowledge
+keeps updating, the configured Hearing sphere becomes visible again, and seeing a future temporal
+entity through the cone can still cause a paradox. Live observations cannot return terminal GOAP
+to investigation or replay. A failed handoff or sensory reactivation leaves the clone stationary
+and reports playback failure.
 
 In `SharedGlobal` Oxygen mode, a terminal GOAP clone remains an active reservoir participant.
 `RetireInPlace` deactivates its facade before hiding it, so it no longer contributes to either the

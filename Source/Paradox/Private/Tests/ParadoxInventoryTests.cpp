@@ -409,7 +409,7 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 			AuthoredTargeting ? AuthoredTargeting->DropPreviewMaterial.Get() : nullptr);
 		UClass* KeyCardClass = LoadClass<AParadoxPickupableActor>(
 			nullptr,
-			TEXT("/Game/Environment/SpaceShip/Blueprints/BP_KeyCard.BP_KeyCard_C"));
+			TEXT("/Game/Environment/SpaceShip/Blueprints/Access/BP_KeyCard.BP_KeyCard_C"));
 		const AParadoxPickupableActor* KeyCard = KeyCardClass
 			? Cast<AParadoxPickupableActor>(KeyCardClass->GetDefaultObject())
 			: nullptr;
@@ -844,6 +844,7 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 			return false;
 		}
 		Selectable->SelectionWidgetClass = UParadoxSelectionTestWidget::StaticClass();
+		Selectable->WidgetSpace = EWidgetSpace::World;
 
 		FActorSpawnParameters ControllerParameters;
 		ControllerParameters.SpawnCollisionHandlingOverride =
@@ -984,7 +985,7 @@ bool FParadoxInventoryScenariosTest::RunTest(const FString& Parameters)
 	{
 		UClass* KeyCardClass = LoadClass<AParadoxPickupableActor>(
 			nullptr,
-			TEXT("/Game/Environment/SpaceShip/Blueprints/BP_KeyCard.BP_KeyCard_C"));
+			TEXT("/Game/Environment/SpaceShip/Blueprints/Access/BP_KeyCard.BP_KeyCard_C"));
 		if (!TestNotNull(TEXT("BP_KeyCard class resolves"), KeyCardClass))
 		{
 			return false;
