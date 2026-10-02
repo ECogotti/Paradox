@@ -14,12 +14,24 @@ reconstruction, and preservation of Collapsed mode after a temporary hide. After
 Play without selecting: the HUD must remain visible in `ActiveRun`, and clicking Play must not also
 select a Chrono Spawn behind the button.
 
-Run `Paradox.Selection.WidgetAndWorldStateReset` for the selectable world-widget lifecycle. The test
+Run `Paradox.Selection.WidgetAndWorldStateReset` for the explicitly configured World widget lifecycle. The test
 pauses the World before the first-ever selection and verifies visibility through a paused update,
 pause/offscreen tick configuration, hiding, reuse, and World State cleanup. In PIE, enter Tactical
 Pause and verify RMB selection shows a never-before-selected Actor's widget immediately, RMB on the
 same selectable hides it, and selecting another new Actor shows its widget without a Play frame or
 World resume.
+
+Run `Paradox.Selection.ScreenWidgetAndWorldStateReset` for the default Screen presentation configuration,
+selection while paused, collision/tick isolation, context clearing, reuse, reset and component
+destruction. It retains the live Slate content to verify immediate hiding on deselection, target
+replacement and reset without a component tick, plus restoration of the original UMG hit-test policy
+after repeated cleanup. In PIE, assign a concrete interaction widget and keep the default `WidgetSpace = Screen` on the
+selectable. Move/zoom/rotate the camera and verify the widget follows its Actor anchor, keeps its
+screen size, and remains visible through world occluders. Check fixed versus desired size and pivot;
+use different layer names to compare Z order. Click an interaction control during ordinary play and
+Tactical Pause: it must invoke the interaction without navigation or Drop confirmation. Deselect,
+rewind and destroy the Actor to verify the widget disappears and stops receiving clicks. Repeat with
+World space to verify camera-facing, Visibility queries and paused first-render behavior remain intact.
 
 Run `Paradox.Health.*` to validate native generic/point/radial damage, actual HP-delta return values,
 death/heal/reset/`Kill`, the visual-tree-free widget base, explicit Player-to-Clone widget rebinding,
@@ -256,12 +268,21 @@ must continue to fail when their required Smart Object configuration is absent.
 4. Remove the Niagara System and repeat. The player must rewind immediately.
 5. With the default `EnterGoap`, let T0 replay the recorded Time Travel in T1. Its VFX must play;
    after completion T0 must remain visible, collidable, GridWorld-occupied, semantically observable,
-   stationary, in terminal GOAP and consuming Oxygen. Listener and Temporal Vision remain disabled.
+   stationary, in terminal GOAP and consuming Oxygen. Listener and Temporal Vision resume after
+   VFX; verify native Sight/Hearing remain enabled, the Hearing sphere returns, a new semantic
+   noise enters Recent Events, and a visible cube state updates Current Knowledge without starting
+   investigation. Enter T0's cone as the current future player and verify temporal paradox recovery.
 6. Repeat with `RetireInPlace`. T0 must be hidden, non-collidable, absent from GridWorld occupancy,
    and unregistered as perception Source.
 7. Run `IntentReplay.Playback.PreservesRecordedIdleTail`,
    `Paradox.TimeTravel.RecordedActionPreemptsMovementAndSupportsNoVfx`, and
    `Paradox.TimeLoop.CloneTimeTravelDepartureUsesConfiguredCompletionBehavior`.
+
+The clone-departure test reproduces VFX sensory suspension and verifies native Sight/Hearing
+delivery after GOAP, visible-state updates, Hearing mesh restoration, current-session temporal
+authority, and a real Pawn cone query causing a paradox. It also covers a future player already
+inside the cone when GOAP reenables detection, including synchronous recovery during the handoff,
+and checks that `RetireInPlace` keeps perception disabled.
 
 ## Runtime Chrono Spawn selection after rewind
 

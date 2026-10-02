@@ -32,6 +32,7 @@
 #include "SmartObjectDefinition.h"
 #include "SmartObjectSubsystem.h"
 #include "Types/WorldStateTypes.h"
+#include "Widgets/SWidget.h"
 
 namespace UE::Paradox::Selection::Tests
 {
@@ -244,6 +245,7 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 		return false;
 	}
 	Actor->Selectable->SelectionWidgetClass = UParadoxSelectionTestWidget::StaticClass();
+	Actor->Selectable->WidgetSpace = EWidgetSpace::World;
 	Actor->Selectable->WidgetAnchor.OtherActor = ExternalAnchorActor;
 	TestWorld.StartPlay();
 	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(PauserState);
@@ -329,6 +331,133 @@ bool FParadoxSelectionWidgetAndWorldStateTest::RunTest(const FString& Parameters
 	TestEqual(TEXT("Hidden widget no longer intercepts cursor queries"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
 	TestNull(TEXT("Restore Started clears widget Actor context"), Widget->GetSelectedActor());
 	Controller->Selection->ResetSelectionState();
+	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(nullptr);
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FParadoxSelectionScreenWidgetTest,
+	"Paradox.Selection.ScreenWidgetAndWorldStateReset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+
+bool FParadoxSelectionScreenWidgetTest::RunTest(const FString& Parameters)
+{
+	using namespace UE::Paradox::Selection::Tests;
+	FScopedSelectionWorld TestWorld(TEXT("ParadoxSelectionScreenWidgetWorld"));
+	if (!TestNotNull(TEXT("Screen widget test world exists"), TestWorld.World))
+	{
+		return false;
+	}
+	AParadoxSelectionTestController* Controller = Spawn<AParadoxSelectionTestController>(
+		*TestWorld.World, TEXT("ScreenWidgetSelectionController"));
+	AParadoxSelectionTestActor* Actor = Spawn<AParadoxSelectionTestActor>(
+		*TestWorld.World, TEXT("ScreenWidgetSelectable"));
+	APlayerState* PauserState = Spawn<APlayerState>(
+		*TestWorld.World, TEXT("ScreenWidgetTestPauser"));
+	if (!TestNotNull(TEXT("Screen widget controller exists"), Controller)
+		|| !TestNotNull(TEXT("Screen selectable exists"), Actor)
+		|| !TestNotNull(TEXT("Screen widget pauser exists"), PauserState))
+	{
+		return false;
+	}
+	Actor->Selectable->SelectionWidgetClass = UParadoxSelectionTestWidget::StaticClass();
+	Actor->Selectable->WidgetDrawSize = FIntPoint(640, 240);
+	Actor->Selectable->bWidgetDrawAtDesiredSize = true;
+	Actor->Selectable->WidgetPivot = FVector2D(0.25, 1.0);
+	Actor->Selectable->WidgetRelativeOffset = FVector(10.0, 20.0, 80.0);
+	Actor->Selectable->WidgetRelativeRotation = FRotator(0.0, 35.0, 0.0);
+	Actor->Selectable->WidgetScreenLayerName = TEXT("SelectionScreenTestLayer");
+	Actor->Selectable->WidgetScreenLayerZOrder = 25;
+	TestWorld.StartPlay();
+	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(PauserState);
+
+	const FHitResult Hit = MakeHit(*Actor);
+	TestTrue(TEXT("Screen widget can first select while paused"), Controller->Selection->HandleSelectionPointerHit(Hit, true));
+	UWidgetComponent* WidgetComponent = Actor->Selectable->GetInteractionWidget();
+	UParadoxSelectionTestWidget* Widget = WidgetComponent
+		? Cast<UParadoxSelectionTestWidget>(WidgetComponent->GetUserWidgetObject())
+		: nullptr;
+	if (!TestNotNull(TEXT("Screen widget component exists"), WidgetComponent)
+		|| !TestNotNull(TEXT("Screen user widget exists"), Widget))
+	{
+		return false;
+	}
+	TestEqual(TEXT("Widget uses Screen space"), WidgetComponent->GetWidgetSpace(), EWidgetSpace::Screen);
+	TestTrue(TEXT("Screen widget is visible"), WidgetComponent->IsVisible());
+	TestEqual(TEXT("Screen widget has no world collision"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+	TestFalse(TEXT("Screen widget cannot affect navigation"), WidgetComponent->CanEverAffectNavigation());
+	TestFalse(TEXT("Screen widget never emits overlaps"), WidgetComponent->GetGenerateOverlapEvents());
+	TestFalse(TEXT("Screen widget requires no camera-facing tick"), Actor->Selectable->IsComponentTickEnabled());
+	TestTrue(TEXT("Screen widget can update while paused"), WidgetComponent->PrimaryComponentTick.bTickEvenWhenPaused);
+	TestTrue(TEXT("Screen widget does not apply camera-facing rotation"), WidgetComponent->GetRelativeRotation().Equals(Actor->Selectable->WidgetRelativeRotation));
+	TestEqual(TEXT("Screen widget tracks the Actor anchor"), WidgetComponent->GetAttachParent(), Actor->Root.Get());
+	TestTrue(TEXT("Screen widget uses the anchor offset"), WidgetComponent->GetRelativeLocation().Equals(Actor->Selectable->WidgetRelativeOffset));
+	TestEqual(TEXT("Screen widget retains fixed-size configuration"), WidgetComponent->GetDrawSize(), FVector2D(640.0, 240.0));
+	TestTrue(TEXT("Screen widget can use its desired size"), WidgetComponent->GetDrawAtDesiredSize());
+	TestTrue(TEXT("Screen widget aligns with the configured pivot"), WidgetComponent->GetPivot().Equals(FVector2D(0.25, 1.0)));
+	TestEqual(TEXT("Screen widget receives selected Actor context"), Widget->GetSelectedActor(), static_cast<AActor*>(Actor));
+	TestWorld.World->Tick(LEVELTICK_All, 1.0f / 60.0f);
+	TestTrue(TEXT("Screen widget stays visible through a paused update"), WidgetComponent->IsVisible());
+	// Keep the live Slate content that the screen layer hosts, independently of the 3D primitive.
+	const TSharedRef<SWidget> ScreenContent = Widget->TakeWidget();
+	Widget->SetVisibility(ESlateVisibility::SelfHitTestInvisible);
+	TestTrue(TEXT("Selected screen content is visible in Slate"), ScreenContent->GetVisibility().IsVisible());
+
+	Controller->Selection->DeselectCurrentActor();
+	TestFalse(TEXT("Deselect hides the screen widget"), WidgetComponent->IsVisible());
+	TestEqual(TEXT("Deselect collapses the hosted UMG widget immediately"), Widget->GetVisibility(), ESlateVisibility::Collapsed);
+	TestFalse(TEXT("Deselect hides the actual screen-layer content without a component tick"), ScreenContent->GetVisibility().IsVisible());
+	TestFalse(TEXT("Hidden screen widget stops its component tick"), WidgetComponent->IsComponentTickEnabled());
+	TestNull(TEXT("Deselect clears screen widget context"), Widget->GetSelectedActor());
+	TestFalse(TEXT("Hidden screen widget cannot consume input"), Actor->Selectable->IsPointerOverInteractiveScreenWidget());
+	Controller->Selection->HandleSelectionPointerHit(Hit, true);
+	TestEqual(TEXT("Reselection reuses the screen widget"), Actor->Selectable->GetInteractionWidget(), WidgetComponent);
+	TestTrue(TEXT("Reselection shows the screen widget"), WidgetComponent->IsVisible());
+	TestEqual(TEXT("Reselection preserves the widget's prior hit-test visibility"), Widget->GetVisibility(), ESlateVisibility::SelfHitTestInvisible);
+	TestTrue(TEXT("Reselection shows the hosted Slate content"), ScreenContent->GetVisibility().IsVisible());
+	TestEqual(TEXT("Reselection keeps world collision disabled"), WidgetComponent->GetCollisionEnabled(), ECollisionEnabled::NoCollision);
+
+	AParadoxSelectionTestActor* OtherActor = Spawn<AParadoxSelectionTestActor>(
+		*TestWorld.World, TEXT("OtherScreenWidgetSelectable"));
+	if (!TestNotNull(TEXT("Second screen selectable exists"), OtherActor))
+	{
+		return false;
+	}
+	OtherActor->Selectable->SelectionWidgetClass = UParadoxSelectionTestWidget::StaticClass();
+	Controller->Selection->HandleSelectionPointerHit(MakeHit(*OtherActor), true);
+	TestFalse(TEXT("Selecting another Actor immediately hides the previous Slate widget"), ScreenContent->GetVisibility().IsVisible());
+	UWidgetComponent* OtherWidgetComponent = OtherActor->Selectable->GetInteractionWidget();
+	UParadoxSelectionTestWidget* OtherWidget = OtherWidgetComponent
+		? Cast<UParadoxSelectionTestWidget>(OtherWidgetComponent->GetUserWidgetObject())
+		: nullptr;
+	if (!TestNotNull(TEXT("Second screen widget exists"), OtherWidget))
+	{
+		return false;
+	}
+	const TSharedRef<SWidget> OtherScreenContent = OtherWidget->TakeWidget();
+	TestTrue(TEXT("Only the new Actor's screen widget is visible"), OtherScreenContent->GetVisibility().IsVisible());
+	Controller->Selection->HandleSelectionPointerHit(Hit, true);
+	TestTrue(TEXT("Returning to the first Actor restores its Slate widget"), ScreenContent->GetVisibility().IsVisible());
+	TestFalse(TEXT("Returning to the first Actor hides the second Slate widget"), OtherScreenContent->GetVisibility().IsVisible());
+
+	UWorldStateSubsystem* WorldState = TestWorld.World->GetSubsystem<UWorldStateSubsystem>();
+	if (!TestNotNull(TEXT("Screen widget World State subsystem exists"), WorldState))
+	{
+		return false;
+	}
+	FWorldStateRestoreLifecycleContext RestoreContext;
+	RestoreContext.Stage = EWorldStateRestoreStage::Preflight;
+	WorldState->OnRestoreStartedNative().Broadcast(RestoreContext);
+	TestFalse(TEXT("World State reset hides screen widget"), WidgetComponent->IsVisible());
+	TestFalse(TEXT("World State reset immediately hides hosted Slate content"), ScreenContent->GetVisibility().IsVisible());
+	TestNull(TEXT("World State reset clears screen widget context"), Widget->GetSelectedActor());
+	Controller->Selection->ResetSelectionState();
+	Controller->Selection->HandleSelectionPointerHit(Hit, true);
+	TestEqual(TEXT("Repeated cleanup does not replace the saved visible state with Collapsed"), Widget->GetVisibility(), ESlateVisibility::SelfHitTestInvisible);
+	Actor->Selectable->DestroyComponent();
+	TestNull(TEXT("Selectable destruction clears selection"), Controller->Selection->GetSelectedActor());
+	TestFalse(TEXT("Selectable destruction destroys screen widget component"), IsValid(WidgetComponent));
+	TestNull(TEXT("Selectable destruction clears screen widget context"), Widget->GetSelectedActor());
 	TestWorld.World->GetWorldSettings()->SetPauserPlayerState(nullptr);
 	return true;
 }

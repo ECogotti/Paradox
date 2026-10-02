@@ -6,6 +6,7 @@
 #include "IntentReplayExecutionStrategy.generated.h"
 
 class UGameplayActionComponent;
+struct FRecordedIntent;
 
 /**
  * Replaceable submission boundary for already validated and prepared replay requests.
@@ -17,6 +18,9 @@ class INTENTREPLAY_API UIntentReplayExecutionStrategy : public UObject
 	GENERATED_BODY()
 
 public:
+	/** Recognizes a semantic terminal outcome that is expected by this adapter; it remains in the journal. */
+	virtual bool IsExpectedTerminalResult(const FRecordedIntent& Intent, const FGameplayActionResult& Result) const;
+
 	/** Base implementation rejects safely; concrete strategies must return GameplayActions' result. */
 	virtual FGameplayActionSubmissionResult SubmitPreparedRequest(
 		UGameplayActionComponent* ActionComponent,

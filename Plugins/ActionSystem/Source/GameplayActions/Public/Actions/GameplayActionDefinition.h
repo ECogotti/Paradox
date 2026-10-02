@@ -43,9 +43,13 @@ public:
 	UPROPERTY(EditDefaultsOnly, Category = "Parameters")
 	FInstancedPropertyBag DefaultParameters;
 
-	/** Exact-match resources acquired atomically before Action Start and held until terminal cleanup. */
+	/** Declared resources acquired before Start, held until cleanup or an authorized background transition. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Scheduling", meta = (Categories = "GameplayAction.Lock"))
 	FGameplayTagContainer ExecutionLocks;
+
+	/** Allows the instance to enter background execution once, releasing its locks while retaining its lifecycle. */
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Scheduling")
+	bool bAllowBackgroundExecution = false;
 
 	/** Whether a strictly higher-priority incoming action may interrupt this instance. */
 	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Scheduling")

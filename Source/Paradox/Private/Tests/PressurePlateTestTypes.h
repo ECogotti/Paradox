@@ -34,10 +34,12 @@ public:
 			INDEX_NONE);
 	}
 
+#if WITH_DEV_AUTOMATION_TESTS
 	void SetMovementNoiseInstigatorObserver(TFunction<void(AActor*)> Observer)
 	{
 		TestMovementNoiseInstigatorObserver = MoveTemp(Observer);
 	}
+#endif
 
 	int32 ConfirmedPressCount = 0;
 	int32 ConfirmedReleaseCount = 0;

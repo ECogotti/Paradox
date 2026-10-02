@@ -1,6 +1,7 @@
 #include "Components/IntentReplayComponent.h"
 
 #include "Actions/GameplayActionDefinition.h"
+#include "Actions/GameplayActionInstance.h"
 #include "Blueprint/GameplayActionBlueprintLibrary.h"
 #include "Components/GameplayActionComponent.h"
 #include "Engine/AssetManager.h"
@@ -736,6 +737,11 @@ UIntentReplayComponent::BeginExternalReplayInterruption(const FGameplayTag Inter
 	PendingInterruptions.Reserve(Session.ActiveReplayHandles.Num());
 	for (const FGameplayActionHandle Handle : Session.ActiveReplayHandles)
 	{
+		const UGameplayActionInstance* Instance = BoundActionComponent->GetActionInstance(Handle);
+		if (Instance && Instance->IsBackgroundExecution())
+		{
+			continue;
+		}
 		const FRecordedIntentId* RecordedIntentId = Session.RecordByRuntimeHandle.Find(Handle);
 		const FRecordedIntent* RecordedIntent = RecordedIntentId && Session.SourceTrack
 			? Session.SourceTrack->GetEntries().FindByPredicate(
@@ -1679,11 +1685,16 @@ void UIntentReplayComponent::ProcessLifecycleEvent(const FGameplayActionEvent& E
 			&& Event.Result.CausingActionHandle.IsValid()
 			&& Session.RecordByRuntimeHandle.Contains(
 				Event.Result.CausingActionHandle);
+		FRecordedIntent CompletedIntent;
+		const bool bExpectedSemanticResult = Event.bHasResult && ExecutionStrategy && Session.SourceTrack
+			&& Session.SourceTrack->FindEntryById(ReplayRecordedIntentId, CompletedIntent)
+			&& ExecutionStrategy->IsExpectedTerminalResult(CompletedIntent, Event.Result);
 		if (!bStoppingPlayback
 			&& Event.bHasResult
 			&& !IsSuccessfulTerminalAction(Event.Result)
 			&& !bExpectedSameSessionPreemption
 			&& !bExpectedExternalInterruption
+			&& !bExpectedSemanticResult
 			&& Session.Options.TerminalFailurePolicy == EIntentReplayTerminalFailurePolicy::StopPlayback
 			&& !IsPlaybackTerminal(Session.State))
 		{

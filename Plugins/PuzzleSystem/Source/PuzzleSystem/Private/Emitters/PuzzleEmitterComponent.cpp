@@ -1,6 +1,7 @@
 #include "Emitters/PuzzleEmitterComponent.h"
 
 #include "PuzzleSystem.h"
+#include "Controllers/PuzzleController.h"
 #include "Signals/PuzzleSignalPayload.h"
 
 UPuzzleEmitterComponent::UPuzzleEmitterComponent()
@@ -83,6 +84,73 @@ bool UPuzzleEmitterComponent::TryGetSignalState(FGameplayTag SignalTag, FPuzzleS
 const TMap<FGameplayTag, FPuzzleSignalState>& UPuzzleEmitterComponent::GetSignalStates() const
 {
 	return SignalStates;
+}
+
+bool UPuzzleEmitterComponent::IsInvalidated(FGameplayTag SignalTag) const
+{
+	if (bHasBroadcastInvalidated) { return true; }
+	bool bHasConsumer = false;
+	for (const auto& ControllerEntry : ControllerGateAdmissions)
+	{
+		if (!ControllerEntry.Key.IsValid()) { continue; }
+		for (const auto& Admission : ControllerEntry.Value)
+		{
+			if (SignalTag.IsValid() && Admission.Key != SignalTag) { continue; }
+			bHasConsumer = true;
+			if (Admission.Value) { return false; }
+		}
+	}
+	return bHasConsumer;
+}
+
+void UPuzzleEmitterComponent::SetControllerGateAdmissions(APuzzleController* Controller, const TMap<FGameplayTag, bool>& Admissions)
+{
+	if (bHasBroadcastInvalidated || !IsValid(Controller)) { return; }
+	ControllerGateAdmissions.Add(Controller, Admissions);
+	NotifyGateInvalidationChanges();
+}
+
+void UPuzzleEmitterComponent::RemoveControllerGateAdmissions(APuzzleController* Controller)
+{
+	if (ControllerGateAdmissions.Remove(Controller) > 0) { NotifyGateInvalidationChanges(); }
+}
+
+void UPuzzleEmitterComponent::NotifyGateInvalidationChanges()
+{
+	if (bHasBroadcastInvalidated) { return; }
+	if (bNotifyingGateInvalidation) { bGateNotificationRequested = true; return; }
+	TGuardValue<bool> Guard(bNotifyingGateInvalidation, true);
+	do
+	{
+		bGateNotificationRequested = false;
+		TSet<FGameplayTag> Signals;
+		for (const auto& Previous : LastSignalInvalidations) { Signals.Add(Previous.Key); }
+		for (auto It = ControllerGateAdmissions.CreateIterator(); It; ++It)
+		{
+			if (!It.Key().IsValid()) { It.RemoveCurrent(); continue; }
+			for (const auto& Admission : It.Value()) { Signals.Add(Admission.Key); }
+		}
+		TMap<FGameplayTag, bool> Notifications;
+		for (FGameplayTag Signal : Signals)
+		{
+			const bool bInvalidated = IsInvalidated(Signal);
+			const bool bPrevious = LastSignalInvalidations.FindRef(Signal);
+			LastSignalInvalidations.Add(Signal, bInvalidated);
+			if (bPrevious != bInvalidated) { Notifications.Add(Signal, bInvalidated); }
+		}
+		// State is committed before callbacks; reentrant gate changes are reconciled in another pass.
+		for (const auto& Notification : Notifications)
+		{
+			if (bHasBroadcastInvalidated) { break; }
+			if (IsInvalidated(Notification.Key) != Notification.Value) { continue; }
+			OnGateInvalidationChangedNative.Broadcast(this, Notification.Key, Notification.Value);
+			if (!bHasBroadcastInvalidated && IsInvalidated(Notification.Key) == Notification.Value)
+			{
+				OnGateInvalidationChanged.Broadcast(this, Notification.Key, Notification.Value);
+			}
+		}
+	}
+	while (bGateNotificationRequested && !bHasBroadcastInvalidated);
 }
 
 void UPuzzleEmitterComponent::BroadcastInvalidated()

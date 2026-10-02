@@ -114,6 +114,11 @@ bool IsParadoxPairedTransferDebugEnabled()
 
 namespace ParadoxGameplayTags
 {
+	UE_DEFINE_GAMEPLAY_TAG(Action_HackTerminal, "GameplayAction.Type.Paradox.HackTerminal");
+	UE_DEFINE_GAMEPLAY_TAG(Interaction_HackTerminal, "Interaction.Paradox.HackTerminal");
+	UE_DEFINE_GAMEPLAY_TAG(Puzzle_Signal_HackingTerminal_Hacked, "Puzzle.Signal.Paradox.HackingTerminal.Hacked");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Hacking_Failure, "GameplayAction.Result.Failure.Paradox.Hacking");
+	UE_DEFINE_GAMEPLAY_TAG(Result_Hacking_Superseded, "GameplayAction.Result.Cancelled.Paradox.Hacking.Superseded");
 	UE_DEFINE_GAMEPLAY_TAG(Origin_Player, "GameplayAction.Origin.Player");
 	UE_DEFINE_GAMEPLAY_TAG(
 		Action_SetCrouched,

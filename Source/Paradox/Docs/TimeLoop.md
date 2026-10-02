@@ -151,8 +151,11 @@ the GameMode's time-loop component, controls completion:
 - `EnterGoap` (default) finishes the recorded action, then performs the GOAP handoff on the next
   tick. Replay, investigation, Behavior Tree, Gameplay Actions and movement stop, while the clone
   remains visible, collidable, GridWorld-occupied, semantically observable and consuming Oxygen.
-  Its perception listener and Temporal Vision stay disabled by Time Travel. A failed handoff keeps
-  it stationary and is reported through playback diagnostics.
+  Its perception listener and Temporal Vision resume after the VFX, using the authored sense
+  profile and current temporal detection session. Sight/Hearing still update knowledge and the
+  Hearing sphere; the temporal cone can still generate a paradox. Observation comparison stays
+  stopped, so these stimuli cannot restart investigation. A failed handoff or sensory reactivation
+  keeps it stationary and is reported through playback diagnostics.
 - `RetireInPlace` preserves the legacy behavior: listener, semantic Source and temporal detection
   are disabled; movement and GridWorld occupancy are released; collision is disabled; and the
   Actor is hidden until the next reconstruction.

@@ -1,5 +1,19 @@
 # Scheduler, lock e priorità
 
+## Esecuzione in background
+
+Una Definition può autorizzare bAllowBackgroundExecution (default false). L'istanza Running
+chiama il metodo protetto EnterBackgroundExecution: il componente rilascia atomicamente i lock
+posseduti e rivaluta subito la coda. Restano handle, lifecycle, journal e risultato finale.
+La transizione è idempotente e non riacquisisce lock; cancel/abort/teardown restano espliciti.
+
+GetExecutionLocks restituisce i lock dichiarati immutabili, GetHeldExecutionLocks quelli
+posseduti. Conflitti e lock esterni consultano i lock posseduti. Le queued non possiedono lock.
+
+Un'azione nativa può specializzare BuildTerminalOutcomeParameters: il componente copia il bag
+opzionale in FGameplayActionResult.OutcomeParameters dopo gli hook di cancellazione/interruzione
+e prima del cleanup. Usare valori replay-safe, senza riferimenti a oggetti runtime.
+
 ## Ordine deterministico
 
 Lo scheduler ordina le azioni con queste chiavi:
@@ -66,7 +80,7 @@ Il component tick viene abilitato automaticamente anche quando nessuna action ru
 Ogni fine attraversa un solo percorso:
 
 ```text
-Ending -> hook specifico -> Cleanup -> stato terminale -> rilascio lock -> Ended -> rilascio istanza
+Ending -> hook specifico -> copia OutcomeParameters -> Cleanup -> stato terminale -> rilascio lock -> Ended -> rilascio istanza
 ```
 
 Gli stati terminali sono `Succeeded`, `Failed`, `Cancelled`, `Interrupted` e `Aborted`. `DiagnosticMessage` è soltanto diagnostico; `TerminalState` e `ReasonTag` sono i dati autoritativi.

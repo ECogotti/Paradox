@@ -82,6 +82,18 @@ void UGameplayActionInstance::SetActionTickEnabled(const bool bEnabled)
 	}
 }
 
+EGameplayActionOperationResult UGameplayActionInstance::EnterBackgroundExecution()
+{
+	return OwningComponent
+		? OwningComponent->EnterBackgroundExecutionFromInstance(this)
+		: EGameplayActionOperationResult::InvalidState;
+}
+
+FInstancedPropertyBag UGameplayActionInstance::BuildTerminalOutcomeParameters(EGameplayActionState TerminalState) const
+{
+	return FInstancedPropertyBag();
+}
+
 void UGameplayActionInstance::InitializeInstance(
 	UGameplayActionComponent* InOwningComponent,
 	UGameplayActionDefinition* InDefinition,
@@ -101,6 +113,9 @@ void UGameplayActionInstance::InitializeInstance(
 	Priority = InPriority;
 	BlockedPolicy = InBlockedPolicy;
 	ExecutionLocks = InDefinition->ExecutionLocks;
+	HeldExecutionLocks.Reset();
+	bAllowBackgroundExecution = InDefinition->bAllowBackgroundExecution;
+	bBackgroundExecution = false;
 	bInterruptible = InDefinition->bInterruptible;
 	OptionalTimeout = InDefinition->OptionalTimeout;
 	MaxQueueTimeSeconds = InDefinition->MaxQueueTimeSeconds;

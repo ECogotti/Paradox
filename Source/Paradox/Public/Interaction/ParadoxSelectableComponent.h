@@ -2,6 +2,8 @@
 
 #include "Components/ActorComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/SlateWrapperTypes.h"
+#include "Components/WidgetComponent.h"
 #include "CoreMinimal.h"
 #include "Engine/EngineTypes.h"
 #include "Interaction/ParadoxSelectionTypes.h"
@@ -24,7 +26,7 @@ DECLARE_MULTICAST_DELEGATE_OneParam(
 	FParadoxSelectableAvailabilityChangedNative,
 	UParadoxSelectableComponent*);
 
-/** Adds hover, single-selection presentation, and an optional world-space widget to an Actor. */
+/** Adds hover, single-selection presentation, and an optional world/screen-space widget to an Actor. */
 UCLASS(ClassGroup = (Paradox), BlueprintType, Blueprintable, meta = (BlueprintSpawnableComponent))
 class PARADOX_API UParadoxSelectableComponent : public UActorComponent
 {
@@ -50,6 +52,10 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
 	TSubclassOf<UParadoxInteractionWidgetBase> SelectionWidgetClass;
 
+	/** World renders a 3D surface; Screen projects the Actor anchor into the selecting player's viewport. Applied when the widget is created. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
+	EWidgetSpace WidgetSpace = EWidgetSpace::Screen;
+
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
 	FComponentReference WidgetAnchor;
 
@@ -57,7 +63,7 @@ public:
 	FVector WidgetRelativeOffset = FVector(0.0f, 0.0f, 100.0f);
 
 	/** Keeps the world-space widget facing the selecting local player's camera while visible. */
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget", meta = (EditCondition = "WidgetSpace == EWidgetSpace::World"))
 	bool bFaceOwningPlayerCamera = true;
 
 	/** Rotation used when camera-facing is disabled. */
@@ -65,11 +71,28 @@ public:
 		EditAnywhere,
 		BlueprintReadOnly,
 		Category = "Paradox|Selection|Widget",
-		meta = (EditCondition = "!bFaceOwningPlayerCamera"))
+		meta = (EditCondition = "WidgetSpace == EWidgetSpace::World && !bFaceOwningPlayerCamera"))
 	FRotator WidgetRelativeRotation = FRotator::ZeroRotator;
 
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget", meta = (ClampMin = "1"))
+	/** Fixed widget size, in world units for World space or Slate units for Screen space. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget", meta = (ClampMin = "1", EditCondition = "!bWidgetDrawAtDesiredSize"))
 	FIntPoint WidgetDrawSize = FIntPoint(400, 160);
+
+	/** Uses the widget content's desired size instead of Widget Draw Size. Applied when the widget is created. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget")
+	bool bWidgetDrawAtDesiredSize = false;
+
+	/** Alignment at the Actor anchor: (0,0) is top-left, (0.5,0.5) is centered. Applied when the widget is created. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget", meta = (ClampMin = "0.0", ClampMax = "1.0"))
+	FVector2D WidgetPivot = FVector2D(0.5, 0.5);
+
+	/** Screen-space widgets sharing this name use one viewport layer. Applied when the widget is created. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget|Screen Space", meta = (EditCondition = "WidgetSpace == EWidgetSpace::Screen"))
+	FName WidgetScreenLayerName = TEXT("ParadoxInteractionWidgets");
+
+	/** Higher values draw the screen layer above lower layers. The first widget creating a shared layer determines its Z order. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Widget|Screen Space", meta = (EditCondition = "WidgetSpace == EWidgetSpace::Screen"))
+	int32 WidgetScreenLayerZOrder = -100;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox|Selection|Debug")
 	bool bEnableDebug = false;
@@ -100,6 +123,9 @@ public:
 
 	UFUNCTION(BlueprintPure, Category = "Paradox|Selection")
 	UWidgetComponent* GetInteractionWidget() const { return InteractionWidgetComponent.Get(); }
+
+	/** True when the hardware cursor is over an enabled control in this selected screen-space widget. */
+	bool IsPointerOverInteractiveScreenWidget() const;
 
 #if WITH_EDITOR
 	virtual EDataValidationResult IsDataValid(FDataValidationContext& Context) const override;
@@ -147,6 +173,9 @@ private:
 
 	UPROPERTY(Transient)
 	TObjectPtr<UWidgetComponent> InteractionWidgetComponent = nullptr;
+
+	/** Screen visibility is selection-owned only while hidden; restore the previous UMG hit-test policy on show. */
+	TOptional<ESlateVisibility> ScreenWidgetVisibilityBeforeHide;
 
 	TWeakObjectPtr<UParadoxSelectionComponent> ActiveSelectionComponent;
 	FParadoxSelectableAvailabilityChangedNative SelectionAvailabilityChangedNative;

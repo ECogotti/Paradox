@@ -1,4 +1,4 @@
-# Paradox selection and world-space interaction UI
+# Paradox selection and interaction UI
 
 ## Milestone 0 integration note
 
@@ -61,6 +61,9 @@ connected. Puzzle activation and timeline assignment gate only its Spawn interac
   GridWorld path preview are therefore presented at the same time.
 - An interactive world-widget control receives LMB before navigation, so activating a widget
   control does not also submit click-to-move.
+- Screen-space interaction controls receive the real UI pointer through Slate. The controller
+  also gives enabled interaction controls priority over navigation and Drop confirmation; decorative
+  regions do not consume LMB. RMB keeps the existing selection/deselection behavior.
 - Chrono Spawn uses this same generic selection path. Selection only displays its puzzle circuit
   and optional interaction widget; it never materializes a Character. The widget's Spawn control
   submits the action explicitly. Touch release resolves through the same generic selection
@@ -134,13 +137,35 @@ Pressure Plate outlines both `FloorMesh` and `PlateMesh`. Vertical Barrier outli
 `SelectionMesh`. Enabled inactive and occupied Chrono Spawns remain selectable for circuit
 inspection even though their Spawn interaction is unavailable.
 
-## Optional world-space widget
+## Optional world/screen-space widget
 
 Set `SelectionWidgetClass` on the selectable component to a Blueprint derived from
 `UParadoxInteractionWidgetBase`. Leaving it unset is valid and creates no widget.
 
 The component lazily creates one `UWidgetComponent`, reuses it while hidden, and destroys it during
-Actor teardown. It uses World space, default draw size `400 x 160`, and an offset of `Z +100`.
+Actor teardown. Screen space is the default, with draw size `400 x 160` and offset `Z +100`.
+The default `WidgetSpace = Screen` projects the Actor anchor into the selecting local player's viewport.
+Choose `WidgetSpace = World` in **Paradox > Selection > Widget** for a 3D surface instead. Explicit
+Blueprint or placed-component overrides retain their authored space. The screen-space widget follows the
+Actor, stays at a screen size independent of camera distance, and is not occluded by world geometry.
+It is not a fixed HUD panel. Both modes use the same widget class, selection context and interaction APIs.
+
+Configure these settings on the Blueprint component defaults or placed component before its first selection:
+
+| Setting | Usage |
+| --- | --- |
+| `WidgetSpace` | `World` for a 3D surface, `Screen` for viewport presentation. |
+| `WidgetAnchor`, `WidgetRelativeOffset` | Actor-owned Scene Component and local 3D offset; both modes project/place this anchor. The offset is not a pixel offset. |
+| `WidgetDrawSize` | Fixed size in world units for World or Slate layout units for Screen. Each dimension is at least 1. |
+| `bWidgetDrawAtDesiredSize` | Use the content's desired size instead of the fixed draw size. Default false. Avoid continuously resizing a World render target. |
+| `WidgetPivot` | Alignment around the anchor, from `(0,0)` top-left to `(1,1)` bottom-right; default `(0.5,0.5)`. |
+| `WidgetScreenLayerName` | Screen-only shared viewport layer, default `ParadoxInteractionWidgets`. Use another name when a separate layer is required. |
+| `WidgetScreenLayerZOrder` | Screen-only layer order, default `-100`; higher draws above lower. The first widget creating a shared layer determines its order, so use consistent values for a shared name. |
+| `bFaceOwningPlayerCamera`, `WidgetRelativeRotation` | World-only camera-facing or authored rotation; Screen needs no camera-facing tick. |
+
+Widget configuration is applied at creation and retained across deselection/reselection. The
+selecting local player is assigned again on every show, including when reusing the widget.
+
 Selection visibility is independent of simulation pause: the widget appears and disappears with
 selection during Tactical Pause, and its world-space redraw plus camera-facing update are allowed
 to tick while paused. On every show, the component explicitly requests a forced first render-target
@@ -149,12 +174,18 @@ Offscreen updating is enabled only to remove the pre-first-render deadlock; widg
 explicitly disabled again while hidden, as is the selectable camera-facing tick.
 `WidgetAnchor` may reference a Scene Component owned directly by the selected Actor; an external,
 invalid, or empty reference falls back to that Actor's root. Do not use a Pressure Plate or another
-gameplay Actor as the anchor for a Door widget. By default, the widget forward vector follows the
+gameplay Actor as the anchor for a Door widget. In World space, the widget forward vector follows the
 selecting camera's inverted forward vector (`-CameraForwardVector`); disable
-`bFaceOwningPlayerCamera` to use `WidgetRelativeRotation` instead. Its UI collision remains
-queryable by the widget pointer but never generates gameplay overlap events, blocks Pawns, or
+`bFaceOwningPlayerCamera` to use `WidgetRelativeRotation` instead in World space. World UI collision remains
+queryable by the virtual widget pointer but never generates gameplay overlap events, blocks Pawns, or
 affects navigation. Pickupable collision normalization does not overwrite this selection-owned UI
-query state, so a dropped item can expose the same hoverable/clickable widget again.
+query state, so a dropped item can expose the same hoverable/clickable widget again. Screen space
+uses native viewport hit testing, keeps 3D collision disabled even while selected, and does not request
+world render-target updates. Both modes disable component ticking while hidden.
+In Screen space, deselection also immediately collapses the hosted UMG widget, preventing drawing
+and hit testing even with component ticks stopped. Reselection restores its previous visibility
+and hit-test policy; repeated cleanup does not overwrite that saved policy. Replacing the selected
+Actor and World State reset use the same cleanup path, so old screen widgets do not accumulate.
 
 Before showing the widget, the native base receives read-only context for the selected Actor,
 selectable component, interaction component, selection authority, owning Player Controller, and
@@ -371,7 +402,9 @@ default and never logs per frame.
   that blocks the Visibility trace.
 - Widget is not visible: verify the assigned Blueprint derives from `ParadoxInteractionWidgetBase`,
   has visible authored content, and is assigned on the selected Actor's inherited selectable
-  component. Keep camera-facing enabled unless the anchor has an explicitly authored rotation.
+  component. For World space, keep camera-facing enabled unless the anchor has an explicitly authored rotation.
+  For Screen space, verify the selecting controller has a local player, the anchor is onscreen, and
+  the shared layer order is not behind another opaque UI layer.
 - Selecting an Actor affects a trigger: do not use that trigger Actor as `WidgetAnchor`. Anchors are
   intentionally restricted to components owned by the selected Actor, and generated widgets never
   emit overlap events.

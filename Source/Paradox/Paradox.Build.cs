@@ -42,6 +42,11 @@ public class Paradox : ModuleRules
 			"Slate",
 			"SlateCore"
 		});
+		if (Target.bBuildEditor)
+		{
+			// Transient Blueprint composition tests; no editor dependency in game targets.
+			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "KismetCompiler" });
+		}
 
 		// Uncomment if you are using Slate UI
 		// PrivateDependencyModuleNames.AddRange(new string[] { "Slate", "SlateCore" });

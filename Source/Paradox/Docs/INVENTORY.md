@@ -56,11 +56,12 @@ the inherited `PickupableMesh` normally uses query-only collision, ignores every
 selection. It still ignores Pawns, emits no overlaps, has physics/gravity disabled, and uses
 `CanEverAffectNavigation=false`, so it neither carves Unreal navigation nor prevents traversal.
 Every other inherited or Blueprint-added primitive is forced to `NoCollision`, except the transient
-world-space interaction `UWidgetComponent` owned by `UParadoxSelectableComponent`. That component
+interaction `UWidgetComponent` owned by `UParadoxSelectableComponent`. In World space that component
 retains its `UI` query profile only while shown, so the virtual mouse can hover and click it; it
 still ignores Pawns, emits no overlaps, has no physics, and cannot affect navigation. It returns to
 `NoCollision` when selection hides it. Pickupable state normalization deliberately preserves this
-selection-owned query state, including after Drop. The Static Mesh asset
+selection-owned query state, including after Drop. Screen-space interaction widgets remain
+non-collidable and receive clicks through the viewport instead. The Static Mesh asset
 must provide query geometry compatible with the controller's complex Visibility trace; for simple
 authored collision, set Collision Complexity to `Use Simple Collision As Complex`. Do not use
 pickupable collision or overlap events for gameplay unless the Actor explicitly opts into authored

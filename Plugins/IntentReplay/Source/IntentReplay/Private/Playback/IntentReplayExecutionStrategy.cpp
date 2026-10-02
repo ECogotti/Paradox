@@ -1,6 +1,10 @@
 #include "Playback/IntentReplayExecutionStrategy.h"
-
 #include "Components/GameplayActionComponent.h"
+
+bool UIntentReplayExecutionStrategy::IsExpectedTerminalResult(const FRecordedIntent&, const FGameplayActionResult&) const
+{
+	return false;
+}
 
 FGameplayActionSubmissionResult UIntentReplayExecutionStrategy::SubmitPreparedRequest(
 	UGameplayActionComponent* ActionComponent,

@@ -12,6 +12,8 @@
 #include "Components/GameplayActionComponent.h"
 #include "Components/IntentReplayComponent.h"
 #include "Components/GridNavigationOccupancyComponent.h"
+#include "Components/PerceptionKnowledgeHearingRangeRendererComponent.h"
+#include "Components/PerceptionKnowledgeListenerComponent.h"
 #include "Components/PerceptionKnowledgeSourceComponent.h"
 #include "Components/WorldStateParticipantComponent.h"
 #include "Components/EntityIdentityComponent.h"
@@ -23,6 +25,7 @@
 #include "Engine/Engine.h"
 #include "Engine/EngineBaseTypes.h"
 #include "Engine/GameInstance.h"
+#include "Engine/StaticMesh.h"
 #include "Engine/World.h"
 #include "Emitters/PuzzleEmitterComponent.h"
 #include "EntityRelationTags.h"
@@ -43,7 +46,12 @@
 #include "Oxygen/ParadoxOxygenComponent.h"
 #include "Oxygen/ParadoxOxygenDepletionDamageType.h"
 #include "Paradox.h"
+#include "Perception/AISense_Hearing.h"
+#include "Perception/AISense_Sight.h"
+#include "Perception/ParadoxSemanticNoiseSphere.h"
+#include "Perception/ParadoxSemanticStateCube.h"
 #include "Perception/ParadoxTemporalVisionComponent.h"
+#include "PerceptionKnowledgeTags.h"
 #include "Playback/ParadoxCloneReplayExecutionStrategy.h"
 #include "Recording/IntentReplayTrack.h"
 #include "Receivers/PuzzleReceiverComponent.h"
@@ -164,6 +172,12 @@ struct FParadoxTimeLoopTestAccessor
 		TimeLoop.RuntimeClones.Add(&Clone);
 		TimeLoop.CurrentPhase = EParadoxTimeLoopPhase::RunPreparation;
 		TimeLoop.SetPhase(EParadoxTimeLoopPhase::ActiveRun);
+		TimeLoop.TemporalDetectionSessionId = 7;
+		UParadoxTemporalVisionComponent* Vision = Clone.GetTemporalVisionComponent();
+		TimeLoop.TemporalVisionParticipants.AddUnique(Vision);
+		Vision->OnTemporalOverlapDetected.AddUniqueDynamic(
+			&TimeLoop,
+			&UParadoxTimeLoopComponent::HandleTemporalOverlapDetected);
 	}
 
 	static EParadoxCloneTimeTravelCompletionBehavior
@@ -229,6 +243,7 @@ namespace UE::Paradox::TimeLoop::Tests
 			{
 				return;
 			}
+			World->EndPlay(EEndPlayReason::Quit);
 			World->DestroyWorld(true);
 			if (GEngine)
 			{
@@ -2488,6 +2503,31 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 		TEXT("GOAP test clone begins with active GridWorld occupancy"),
 		GoapOccupancy && GoapOccupancy->IsActive());
 	FParadoxTimeLoopTestAccessor::ConfigureCloneDeparture(*TimeLoop, *Clone);
+	AParadoxCloneController* CloneController =
+		Cast<AParadoxCloneController>(Clone->GetController());
+	UPerceptionKnowledgeListenerComponent* Listener = CloneController
+		? CloneController->GetPerceptionKnowledgeListener()
+		: nullptr;
+	UPerceptionKnowledgeHearingRangeRendererComponent* HearingRenderer = CloneController
+		? CloneController->FindComponentByClass<UPerceptionKnowledgeHearingRangeRendererComponent>()
+		: nullptr;
+	UParadoxTemporalVisionComponent* GoapVision = Clone->GetTemporalVisionComponent();
+	FString Diagnostic;
+	if (!TestNotNull(TEXT("GOAP clone listener exists"), Listener)
+		|| !TestNotNull(TEXT("GOAP hearing renderer exists"), HearingRenderer)
+		|| !TestTrue(TEXT("GOAP temporal vision prepares"), GoapVision->PrepareTemporalVision(Diagnostic)))
+	{
+		AddError(Diagnostic);
+		return false;
+	}
+	HearingRenderer->SetStaticMesh(LoadObject<UStaticMesh>(
+		nullptr, TEXT("/Engine/BasicShapes/Sphere.Sphere")));
+	HearingRenderer->SetGameplayVisible(true);
+	TestTrue(TEXT("Hearing sphere is visible before departure"), HearingRenderer->IsHearingRangeVisible());
+	// Reproduce the recorded Time Travel action's suspension during the departure VFX.
+	TestTrue(TEXT("Departure suspends the listener"), Listener->SetListenerEnabled(false).IsSuccess());
+	GoapVision->DisableTemporalDetection(true);
+	TestFalse(TEXT("Departure hides the hearing sphere"), HearingRenderer->IsHearingRangeVisible());
 	TestTrue(
 		TEXT("Clone Health is alive before GOAP handoff"),
 		Clone->GetHealthComponent()
@@ -2503,7 +2543,6 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 			Oxygen->IsRunConsumptionActive());
 	}
 
-	FString Diagnostic;
 	TestTrue(
 		TEXT("Default clone departure schedules GOAP handoff"),
 		TimeLoop->CompleteCloneTimeTravelDeparture(*Clone, Diagnostic));
@@ -2538,6 +2577,46 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 	TestTrue(
 		TEXT("GOAP placeholder clone retains GridWorld occupancy"),
 		GoapOccupancy && GoapOccupancy->IsActive());
+	TestFalse(TEXT("GOAP listener resumes observation production"), Listener->IsObservationSuspended());
+	TestTrue(TEXT("Native Sight remains enabled in GOAP"), Listener->IsSenseEnabled(UAISense_Sight::StaticClass()));
+	TestTrue(TEXT("Native Hearing remains enabled in GOAP"), Listener->IsSenseEnabled(UAISense_Hearing::StaticClass()));
+	TestTrue(TEXT("GOAP restores the configured hearing sphere"), HearingRenderer->IsHearingRangeVisible());
+	TestEqual(TEXT("Hearing sphere uses the live listener range"),
+		HearingRenderer->GetRenderedHearingRange(), Listener->GetEffectiveHearingRange());
+	TestTrue(TEXT("Temporal detection is authoritative in GOAP"), GoapVision->IsTemporalDetectionAuthoritative());
+	TestEqual(TEXT("GOAP resumes the same temporal session"), GoapVision->GetDetectionSessionId(), 7);
+
+	AParadoxSemanticStateCube* Cube = TestWorld.World->SpawnActor<AParadoxSemanticStateCube>(
+		AParadoxSemanticStateCube::StaticClass(), FVector(400.0, 100.0, 40.0), FRotator::ZeroRotator);
+	AParadoxSemanticNoiseSphere* Noise = TestWorld.World->SpawnActor<AParadoxSemanticNoiseSphere>(
+		AParadoxSemanticNoiseSphere::StaticClass(), FVector(-400.0, 0.0, 0.0), FRotator::ZeroRotator);
+	if (!TestNotNull(TEXT("Visible GOAP state fixture exists"), Cube)
+		|| !TestNotNull(TEXT("GOAP hearing fixture exists"), Noise))
+	{
+		return false;
+	}
+	TestTrue(TEXT("GOAP fixture emits through native Hearing"), Noise->EmitSemanticNoise(Noise).IsSuccess());
+	for (int32 Tick = 0; Tick < 8; ++Tick)
+	{
+		TestWorld.AdvanceWorld(0.1f);
+	}
+	TestTrue(TEXT("GOAP actually receives semantic noise through native Hearing"),
+		Listener->GetRecentEvents().ContainsByPredicate(
+			[Noise](const FPerceptionKnowledgeEventObservation& Event)
+			{
+				return Event.SourceEntityId == Noise->GetPerceptionSource()->GetEntityId()
+					&& Event.SenseTag == PerceptionKnowledgeTags::Sense_Hearing;
+			}));
+	TestTrue(TEXT("GOAP actually acquires the visible source through native Sight"),
+		Listener->IsEntityCurrentlyPerceived(Cube->GetPerceptionSource()->GetEntityId(), PerceptionKnowledgeTags::Sense_Sight));
+	TestTrue(TEXT("Visible fixture changes state in GOAP"), Cube->SetPowered(true).IsSuccess());
+	FPerceptionKnowledgeKnownState KnownState;
+	bool bKnownPowered = false;
+	TestTrue(TEXT("GOAP knowledge receives visible state changes"),
+		Listener->GetKnownState(Cube->GetPerceptionSource()->GetEntityId(), ParadoxGameplayTags::State_Computer_Powered, KnownState)
+			&& KnownState.Value.GetBool(bKnownPowered) && bKnownPowered);
+	TestEqual(TEXT("Live GOAP observations do not restart investigation"),
+		Clone->GetBehaviorCoordinator()->GetCurrentMode(), EParadoxCloneBehaviorMode::Goap);
 
 	FParadoxTimeLoopTestAccessor::SetCloneTimeTravelCompletionBehavior(
 		*TimeLoop,
@@ -2579,6 +2658,62 @@ bool FParadoxCloneTimeTravelDepartureTest::RunTest(
 	TestFalse(
 		TEXT("Legacy retired clone temporal sight has no authority"),
 		TemporalVision && TemporalVision->IsTemporalDetectionAuthoritative());
+	AParadoxCloneController* LegacyController = Cast<AParadoxCloneController>(LegacyClone->GetController());
+	TestTrue(TEXT("Legacy retirement keeps its listener suspended"),
+		LegacyController && LegacyController->GetPerceptionKnowledgeListener()->IsObservationSuspended());
+
+	// Exercise the real Pawn query and temporal-order evaluation after the GOAP handoff.
+	AParadoxPlayerCharacter* FuturePlayer = TestWorld.World->SpawnActor<AParadoxPlayerCharacter>(
+		AParadoxPlayerCharacter::StaticClass(), FTransform(FVector(-600.0, 0.0, 0.0)), SpawnParameters);
+	AParadoxChronoSpawn* Spawn = SpawnChronoSpawn(*TestWorld.World, FVector(-600.0, 0.0, 0.0), TEXT("GoapParadoxSpawn"));
+	if (!TestNotNull(TEXT("Future temporal target exists"), FuturePlayer)
+		|| !TestNotNull(TEXT("GOAP paradox recovery spawn exists"), Spawn))
+	{
+		return false;
+	}
+	TestTrue(TEXT("GOAP observer receives T0"), Clone->GetTemporalEntityComponent()->AssignPlayer(0));
+	TestTrue(TEXT("Future player receives T1"), FuturePlayer->GetTemporalEntityComponent()->AssignPlayer(1));
+	TestTrue(TEXT("GOAP paradox recovery baseline exists"), FParadoxTimeLoopTestAccessor::PrepareWorldState(*TimeLoop, Diagnostic));
+	TestTrue(TEXT("GOAP temporal relation policy is configured"), FParadoxTimeLoopTestAccessor::ConfigureEntityRelations(*TimeLoop, Diagnostic));
+	FParadoxTimeLoopTestAccessor::ConfigureActiveRun(*TimeLoop, *FuturePlayer, { Spawn }, *Spawn);
+	GoapVision->RefreshTemporalCandidateFilter();
+	TestFalse(TEXT("Future player behind the GOAP clone does not cause a paradox"), TimeLoop->GetLastParadoxContext().IsValid());
+	FuturePlayer->SetActorLocation(FVector(450.0, -150.0, 0.0));
+	GoapVision->RefreshTemporalCandidateFilter();
+	const FParadoxContext Paradox = TimeLoop->GetLastParadoxContext();
+	TestTrue(TEXT("Entering the GOAP cone actually causes a temporal paradox"), Paradox.IsValid());
+	TestEqual(TEXT("GOAP paradox identifies the observer T0"), Paradox.ObserverTemporalIndex, 0);
+	TestEqual(TEXT("GOAP paradox identifies the future target T1"), Paradox.TargetTemporalIndex, 1);
+
+	// A target already inside the cone must be detected while the handoff timer is executing.
+	AParadoxCloneCharacter* ImmediateClone = TestWorld.World->SpawnActor<AParadoxCloneCharacter>(
+		AParadoxCloneCharacter::StaticClass(), FTransform::Identity, SpawnParameters);
+	if (!TestNotNull(TEXT("Immediate GOAP observer exists"), ImmediateClone))
+	{
+		return false;
+	}
+	TWeakObjectPtr<AParadoxCloneCharacter> WeakImmediateClone(ImmediateClone);
+	UParadoxTemporalVisionComponent* ImmediateVision = ImmediateClone->GetTemporalVisionComponent();
+	TestTrue(TEXT("Immediate observer receives T0"), ImmediateClone->GetTemporalEntityComponent()->AssignPlayer(0));
+	TestTrue(TEXT("Immediate observer prepares its cone"), ImmediateVision->PrepareTemporalVision(Diagnostic));
+	FParadoxTimeLoopTestAccessor::SetCloneTimeTravelCompletionBehavior(
+		*TimeLoop, EParadoxCloneTimeTravelCompletionBehavior::EnterGoap);
+	FParadoxTimeLoopTestAccessor::ConfigureCloneDeparture(*TimeLoop, *ImmediateClone);
+	FParadoxTimeLoopTestAccessor::ConfigureActiveRun(*TimeLoop, *FuturePlayer, { Spawn }, *Spawn);
+	FParadoxTimeLoopTestAccessor::ConfigureTemporalEvaluation(*TimeLoop, *FuturePlayer, 7);
+	TestTrue(TEXT("Recovered player receives T1 for the next run"), FuturePlayer->GetTemporalEntityComponent()->AssignPlayer(1));
+	FuturePlayer->SetActorHiddenInGame(false);
+	FuturePlayer->SetActorEnableCollision(true);
+	FuturePlayer->SetActorLocation(FVector(450.0, -150.0, 0.0));
+	TestTrue(TEXT("Immediate-occupant departure schedules the handoff"),
+		TimeLoop->CompleteCloneTimeTravelDeparture(*ImmediateClone, Diagnostic));
+	TestWorld.Advance(0.001f);
+	TestTrue(TEXT("An occupant already in the cone causes a new paradox during handoff"),
+		TimeLoop->GetLastParadoxContext().IsValid()
+			&& TimeLoop->GetLastParadoxContext().EventId != Paradox.EventId);
+	TestFalse(TEXT("Immediate paradox safely destroys the handing-off clone"), WeakImmediateClone.IsValid());
+	TestEqual(TEXT("Immediate GOAP paradox completes headless recovery"),
+		TimeLoop->GetCurrentPhase(), EParadoxTimeLoopPhase::ChronoSpawnSelection);
 	return true;
 }
 

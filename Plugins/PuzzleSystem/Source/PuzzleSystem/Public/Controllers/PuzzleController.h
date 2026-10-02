@@ -375,6 +375,10 @@ private:
 	UFUNCTION()
 	void HandleEmitterInvalidated(UPuzzleEmitterComponent* Emitter);
 
+	/** Publishes settled admission observations without mutating the source signal. */
+	void RefreshEmitterGateAdmissions();
+	uint64 GateAdmissionRevision = 0;
+
 	/** Valid input bindings resolved to concrete emitter components. */
 	TArray<FResolvedInputBinding> ResolvedInputBindings;
 

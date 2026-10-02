@@ -105,6 +105,10 @@ public:
 	static void ResetCounters();
 	void CompleteForTest();
 	void FailForTest();
+	EGameplayActionOperationResult EnterBackgroundForTest() { return EnterBackgroundExecution(); }
+	bool bTestOutcome = false;
+	int32 TestOutcomeValue = 0;
+	virtual FInstancedPropertyBag BuildTerminalOutcomeParameters(EGameplayActionState TerminalState) const override;
 	void EnableTickForTest(bool bEnabled) { SetActionTickEnabled(bEnabled); }
 	void CompleteOnNextTickForTest()
 	{

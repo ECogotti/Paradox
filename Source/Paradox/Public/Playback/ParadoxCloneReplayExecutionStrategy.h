@@ -18,6 +18,7 @@ class PARADOX_API UParadoxCloneReplayExecutionStrategy
 	GENERATED_BODY()
 
 public:
+	virtual bool IsExpectedTerminalResult(const FRecordedIntent& Intent, const FGameplayActionResult& Result) const override;
 	/**
 	 * When enabled, clone replay replaces the recorded movement goal-contention policy in the
 	 * runtime request copy. Disable it to preserve exactly the policy recorded by the player.

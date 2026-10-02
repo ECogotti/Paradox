@@ -397,6 +397,7 @@ bool APuzzleController::InitializePuzzleController()
 	if (!bConfigurationValid)
 	{
 		PUZZLESYSTEM_LOG_WARNING("Puzzle Controller '%s' failed configuration validation and will evaluate inactive.", *GetNameSafe(this));
+		RefreshEmitterGateAdmissions();
 		return false;
 	}
 
@@ -417,6 +418,7 @@ bool APuzzleController::InitializePuzzleController()
 
 void APuzzleController::ShutdownPuzzleController()
 {
+	++GateAdmissionRevision;
 	if (UWorld* World = GetWorld())
 	{
 		if (UPuzzleGraphSubsystem* GraphSubsystem = World->GetSubsystem<UPuzzleGraphSubsystem>())
@@ -426,6 +428,13 @@ void APuzzleController::ShutdownPuzzleController()
 	}
 
 	UnbindEmitters();
+	// Also release observations from failed initialization, which has no delegate subscriptions.
+	TSet<UPuzzleEmitterComponent*> PrimaryEmitters;
+	for (const FResolvedInputBinding& Binding : ResolvedInputBindings)
+	{
+		if (UPuzzleEmitterComponent* Emitter = Binding.Emitter.Get()) { PrimaryEmitters.Add(Emitter); }
+	}
+	for (UPuzzleEmitterComponent* Emitter : PrimaryEmitters) { Emitter->RemoveControllerGateAdmissions(this); }
 
 	for (const TWeakObjectPtr<UPuzzleReceiverComponent>& ReceiverPtr : ResolvedReceivers)
 	{
@@ -476,12 +485,34 @@ void APuzzleController::EvaluateController()
 	while (bReevaluationRequested);
 
 	bIsEvaluating = false;
+	RefreshEmitterGateAdmissions();
 	if (UWorld* World = GetWorld())
 	{
 		if (UPuzzleGraphSubsystem* GraphSubsystem = World->GetSubsystem<UPuzzleGraphSubsystem>())
 		{
 			GraphSubsystem->RefreshControllerState(this);
 		}
+	}
+}
+
+void APuzzleController::RefreshEmitterGateAdmissions()
+{
+	const uint64 NotificationRevision = ++GateAdmissionRevision;
+	TMap<TWeakObjectPtr<UPuzzleEmitterComponent>, TMap<FGameplayTag, bool>> AdmissionsByEmitter;
+	for (const FResolvedInputBinding& Binding : ResolvedInputBindings)
+	{
+		if (UPuzzleEmitterComponent* Emitter = Binding.Emitter.Get())
+		{
+			bool& bAllowsSignal = AdmissionsByEmitter.FindOrAdd(Emitter).FindOrAdd(Binding.SignalTag);
+			bAllowsSignal |= !Binding.bGateEnabled
+				|| (bIsInitialized && bConfigurationValid && Binding.bGateValid && Binding.bGateAllowsSignal);
+		}
+	}
+	// Copy the complete per-Emitter view before invoking any cosmetic/gameplay observer.
+	for (const auto& Entry : AdmissionsByEmitter)
+	{
+		if (NotificationRevision != GateAdmissionRevision) { break; }
+		if (UPuzzleEmitterComponent* Emitter = Entry.Key.Get()) { Emitter->SetControllerGateAdmissions(this, Entry.Value); }
 	}
 }
 

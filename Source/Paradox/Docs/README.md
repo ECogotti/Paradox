@@ -1,5 +1,8 @@
 # Paradox runtime module
 
+See [Hacking terminal](HACKING_TERMINAL.md) for HackTerminal, background attempts, replay/AI,
+WorldState and the required Blueprint widget binding contract.
+
 The runtime module owns the default player character and controller setup.
 
 ## Source layout

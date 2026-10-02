@@ -12,6 +12,9 @@ Il modulo espone solo dipendenze runtime (`Core`, `CoreUObject`, `Engine`, `Game
 
 ## Punti di integrazione
 
+- Le Definition possono autorizzare il background; vedere [Scheduler](../../../Docs/Scheduler.md)
+  per lock dichiarati/posseduti e dati semantici copiati prima del cleanup.
+
 - `GameplayAction.Lock.Movement` e il lock esatto condiviso dalle action che controllano il movimento.
 - `UGameplayActionComponent::OnActionEndedNative()` permette ai bridge C++ di osservare `Ended`
   dopo i delegate Blueprint ma prima che l'istanza venga rimossa dal componente.
