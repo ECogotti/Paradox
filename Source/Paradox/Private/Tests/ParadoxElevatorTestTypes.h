@@ -11,6 +11,35 @@ class AParadoxElevatorTestActor : public AParadoxElevator
 
 public:
 	bool RequestEndWithoutButtonForTest() { return RequestMoveTowardEnd(); }
+	int32 ButtonPressedCount = 0;
+	int32 ButtonReleasedCount = 0;
+	int32 ButtonMovementCompletedCount = 0;
+	bool bLastButtonCompletionPressed = false;
+
+	int32 GetButtonPresentationEventCountForTest() const
+	{
+		return ButtonPressedCount + ButtonReleasedCount + ButtonMovementCompletedCount;
+	}
+
+protected:
+	virtual void HandleButtonPressed_Implementation() override
+	{
+		Super::HandleButtonPressed_Implementation();
+		++ButtonPressedCount;
+	}
+
+	virtual void HandleButtonReleased_Implementation() override
+	{
+		Super::HandleButtonReleased_Implementation();
+		++ButtonReleasedCount;
+	}
+
+	virtual void HandleButtonMovementCompleted_Implementation(bool bIsPressed) override
+	{
+		Super::HandleButtonMovementCompleted_Implementation(bIsPressed);
+		++ButtonMovementCompletedCount;
+		bLastButtonCompletionPressed = bIsPressed;
+	}
 };
 
 UCLASS()

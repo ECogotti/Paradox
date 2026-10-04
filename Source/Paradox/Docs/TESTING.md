@@ -1,5 +1,15 @@
 # Clone behavior verification
 
+## Accretion extension
+
+Run `Paradox.Accretion.SeedsSwitchesAndLifecycle` in a full editor for game-world
+initialization, actual Niagara populations, deterministic restart/quality changes,
+matching foreground/midground seeds and destruction cleanup. Run
+`Tools/BlackHole/validate_accretion.py` through Unreal Python for transient perspective,
+orthographic, camera movement, fog, refraction and large-world render fixtures.
+`benchmark_accretion.py` records alternating 4K GPU regions. Setup and tuning are
+documented in [Accretion extension](ACCRETION_EXTENSION.md).
+
 ## Gameplay HUD
 
 Run `Paradox.GameplayHUD.*` to validate the native root, root-owned Tactical Pause and Inventory,

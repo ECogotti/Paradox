@@ -1,0 +1,46 @@
+{
+  "targets": [
+    {
+      "center": [
+        512,
+        202
+      ],
+      "baseline_contrast": 0.6493174397927736,
+      "minimum_animated_contrast": 0.6493174397927736,
+      "minimum_contrast_ratio": 1.0
+    },
+    {
+      "center": [
+        605,
+        272
+      ],
+      "baseline_contrast": 0.6566754120242886,
+      "minimum_animated_contrast": 0.6566754120242886,
+      "minimum_contrast_ratio": 1.0
+    },
+    {
+      "center": [
+        456,
+        283
+      ],
+      "baseline_contrast": 0.6566754120242886,
+      "minimum_animated_contrast": 0.6492625473675175,
+      "minimum_contrast_ratio": 0.9887115239568359
+    },
+    {
+      "center": [
+        564,
+        378
+      ],
+      "baseline_contrast": 0.6548033160289004,
+      "minimum_animated_contrast": 0.6548033160289004,
+      "minimum_contrast_ratio": 1.0
+    }
+  ],
+  "animation_frames": 48,
+  "preview_seconds": 4,
+  "no_saved_gameplay_map": true,
+  "animation_changed_pixels_outside_source": 15920,
+  "large_world_reference": "CaptureOff: same warmed camera and animation time immediately before translation",
+  "large_world_p99_rgb_error_outside_source": 0.0
+}

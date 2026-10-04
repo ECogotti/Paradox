@@ -3,6 +3,7 @@
 #if WITH_DEV_AUTOMATION_TESTS
 
 #include "Characters/ParadoxPlayerCharacter.h"
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/GameplayActionComponent.h"
@@ -17,6 +18,7 @@
 #include "GameplayActionTags.h"
 #include "Interfaces/MovementBaseInterface.h"
 #include "Inventory/ParadoxInventoryComponent.h"
+#include "NiagaraComponent.h"
 #include "Interaction/ParadoxSelectableComponent.h"
 #include "ParadoxElevatorTestTypes.h"
 #include "PressurePlateTestTypes.h"
@@ -119,6 +121,21 @@ bool FParadoxElevatorArchitectureTest::RunTest(const FString& Parameters)
 		AParadoxElevator::StaticClass()->IsChildOf(AParadoxVerticalBarrier::StaticClass()));
 	TestTrue(TEXT("Button visual rides the platform"),
 		Defaults->ButtonMesh && Defaults->ButtonMesh->GetAttachParent() == Defaults->BarrierMesh.Get());
+	TestTrue(TEXT("Button audio follows the button and does not auto-activate"),
+		Defaults->ButtonMovementAudio
+			&& Defaults->ButtonMovementAudio->GetAttachParent() == Defaults->ButtonMesh.Get()
+			&& !Defaults->ButtonMovementAudio->bAutoActivate);
+	TestTrue(TEXT("Button Niagara follows the button and does not auto-activate"),
+		Defaults->ButtonMovementVFX
+			&& Defaults->ButtonMovementVFX->GetAttachParent() == Defaults->ButtonMesh.Get()
+			&& !Defaults->ButtonMovementVFX->bAutoActivate);
+	for (const FName EventName : { FName(TEXT("HandleButtonPressed")),
+		FName(TEXT("HandleButtonReleased")), FName(TEXT("HandleButtonMovementCompleted")) })
+	{
+		const UFunction* Event = AParadoxElevator::StaticClass()->FindFunctionByName(EventName);
+		TestTrue(*FString::Printf(TEXT("Button event %s is available to Blueprint"), *EventName.ToString()),
+			Event && Event->HasAnyFunctionFlags(FUNC_BlueprintEvent));
+	}
 	TestTrue(TEXT("Button trigger rides the platform independently of button animation"),
 		Defaults->ButtonOccupancyVolume
 			&& Defaults->ButtonOccupancyVolume->GetAttachParent() == Defaults->BarrierMesh.Get());
@@ -336,6 +353,8 @@ bool FParadoxElevatorButtonAnimationTest::RunTest(const FString& Parameters)
 	Elevator->RequiredButtonActorTags.Add(TEXT("Heavy"));
 	ValidActor->Tags.Add(TEXT("Heavy"));
 	Scope.StartPlay();
+	TestEqual(TEXT("Initializing an empty elevator emits no button events"),
+		Elevator->GetButtonPresentationEventCountForTest(), 0);
 	InvalidActor->SetActorLocation(Elevator->ButtonOccupancyVolume->GetComponentLocation());
 	InvalidActor->Root->UpdateOverlaps(nullptr, true);
 	Elevator->RefreshButtonOccupancy();
@@ -346,6 +365,9 @@ bool FParadoxElevatorButtonAnimationTest::RunTest(const FString& Parameters)
 	Elevator->RefreshButtonOccupancy();
 	TestFalse(TEXT("Eligible entry does not move the platform before the press finishes"), Elevator->IsMoving());
 	TestEqual(TEXT("Press animation begins at the raised position"), Elevator->GetButtonMovementAlpha(), 0.0f);
+	TestEqual(TEXT("Press hook fires as the descent starts"), Elevator->ButtonPressedCount, 1);
+	Elevator->RefreshButtonOccupancy();
+	TestEqual(TEXT("Repeated occupancy refresh does not duplicate the press hook"), Elevator->ButtonPressedCount, 1);
 	const FVector RaisedButtonLocation = Elevator->ButtonMesh->GetRelativeLocation();
 	const FVector InitialPlatformLocation = Elevator->BarrierMesh->GetComponentLocation();
 	Elevator->Tick(0.1f);
@@ -357,15 +379,20 @@ bool FParadoxElevatorButtonAnimationTest::RunTest(const FString& Parameters)
 	Elevator->Tick(0.1f);
 	TestEqual(TEXT("Complete press reaches full depth"), Elevator->GetButtonMovementAlpha(), 1.0f);
 	TestTrue(TEXT("Only a complete press starts travel"), Elevator->IsMoving());
+	TestEqual(TEXT("Full depression emits one completion hook"), Elevator->ButtonMovementCompletedCount, 1);
+	TestTrue(TEXT("Press completion reports the down endpoint"), Elevator->bLastButtonCompletionPressed);
 	TestTrue(TEXT("Platform has not moved in the frame that completed the press"),
 		Elevator->BarrierMesh->GetComponentLocation().Equals(InitialPlatformLocation, KINDA_SMALL_NUMBER));
 	Elevator->Tick(1.0f);
 	TestTrue(TEXT("Trip reaches End with an occupied button"), Elevator->IsAtEnd());
 	TestFalse(TEXT("Button is logically released at arrival"), Elevator->IsButtonPressed());
+	TestEqual(TEXT("Arrival starts one release hook even while occupied"), Elevator->ButtonReleasedCount, 1);
 	TestFalse(TEXT("Physical occupancy prevents rearming"), Elevator->IsButtonArmed());
 	TestTrue(TEXT("Release animation keeps Actor Tick enabled at End"), Elevator->IsActorTickEnabled());
 	Elevator->Tick(0.25f);
 	TestEqual(TEXT("Release animation raises the button"), Elevator->GetButtonMovementAlpha(), 0.0f);
+	TestEqual(TEXT("Full release emits the second completion hook"), Elevator->ButtonMovementCompletedCount, 2);
+	TestFalse(TEXT("Release completion reports the raised endpoint"), Elevator->bLastButtonCompletionPressed);
 	TestTrue(TEXT("Button mesh returns to its authored raised transform"),
 		Elevator->ButtonMesh->GetRelativeLocation().Equals(RaisedButtonLocation, KINDA_SMALL_NUMBER));
 	TestFalse(TEXT("Idle raised elevator disables Actor Tick"), Elevator->IsActorTickEnabled());
@@ -427,6 +454,7 @@ bool FParadoxElevatorPressCancellationTest::RunTest(const FString& Parameters)
 	Elevator->RefreshButtonOccupancy();
 	TestFalse(TEXT("Character exit cancels the pending trip"), Elevator->IsMoving());
 	TestFalse(TEXT("Canceled press is no longer logically held"), Elevator->IsButtonPressed());
+	TestEqual(TEXT("Canceling a partial press emits one release hook"), Elevator->ButtonReleasedCount, 1);
 	Elevator->Tick(0.2f);
 	TestTrue(TEXT("Canceled Character press returns to Start"), Elevator->IsAtStart());
 	TestEqual(TEXT("Canceled Character press raises fully"), Elevator->GetButtonMovementAlpha(), 0.0f);
@@ -553,13 +581,19 @@ bool FParadoxElevatorWorldStateTest::RunTest(const FString& Parameters)
 		TestTrue(TEXT("Elevator reaches End before moving-state restore"), Elevator->IsAtEnd());
 		FWorldStateRestoreRequest MovingRestoreRequest;
 		MovingRestoreRequest.SnapshotId = MovingCapture.SnapshotId;
+		const int32 PresentationEventsBeforeRestore = Elevator->GetButtonPresentationEventCountForTest();
 		TestTrue(TEXT("Moving elevator snapshot restores"), WorldState->RestoreSnapshot(MovingRestoreRequest).IsSuccess());
+		TestEqual(TEXT("Moving-state restore does not replay button presentation"),
+			Elevator->GetButtonPresentationEventCountForTest(), PresentationEventsBeforeRestore);
 		TestTrue(TEXT("WorldState restores movement without a new button entry"), Elevator->IsMoving());
 		TestTrue(TEXT("Moving WorldState restores a pressed button"), Elevator->IsButtonPressed());
 		TestEqual(TEXT("Moving WorldState snaps button to pressed alpha"), Elevator->GetButtonMovementAlpha(), 1.0f);
 	}
 	FWorldStateRestoreRequest RestoreRequest;
+	const int32 PresentationEventsBeforeBaselineRestore = Elevator->GetButtonPresentationEventCountForTest();
 	TestTrue(TEXT("WorldState baseline restores"), WorldState->RestoreBaseline(RestoreRequest).IsSuccess());
+	TestEqual(TEXT("Baseline restore does not replay button presentation"),
+		Elevator->GetButtonPresentationEventCountForTest(), PresentationEventsBeforeBaselineRestore);
 	TestTrue(TEXT("WorldState restores Start"), Elevator->IsAtStart());
 	TestFalse(TEXT("WorldState restores a raised button"), Elevator->IsButtonPressed());
 	TestEqual(TEXT("WorldState restores exact raised alpha"), Elevator->GetButtonMovementAlpha(), 0.0f);
@@ -568,7 +602,10 @@ bool FParadoxElevatorWorldStateTest::RunTest(const FString& Parameters)
 
 	Occupant->SetActorLocation(Elevator->ButtonOccupancyVolume->GetComponentLocation());
 	Occupant->Root->UpdateOverlaps(nullptr, true);
+	const int32 PresentationEventsBeforeReset = Elevator->GetButtonPresentationEventCountForTest();
 	Elevator->ResetMover();
+	TestEqual(TEXT("Reset does not replay button presentation"),
+		Elevator->GetButtonPresentationEventCountForTest(), PresentationEventsBeforeReset);
 	TestFalse(TEXT("Reset while occupied requires an exit before rearming"), Elevator->IsButtonArmed());
 	Elevator->RefreshButtonOccupancy();
 	TestFalse(TEXT("Reset does not retrigger from persistent occupancy"), Elevator->IsMoving());

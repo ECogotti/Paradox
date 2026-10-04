@@ -1,0 +1,16 @@
+{
+  "seed": 240104,
+  "frames": 16,
+  "grid": [
+    4,
+    4
+  ],
+  "frame_size": 128,
+  "padding": "smooth zero-alpha borders",
+  "channels": [
+    "coarse",
+    "wisps",
+    "soft detail",
+    "density"
+  ]
+}

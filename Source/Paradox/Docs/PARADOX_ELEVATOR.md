@@ -32,7 +32,10 @@ its request alone never starts a trip.
    press. Selecting the elevator
    displays the incoming puzzle connection, and selecting the Plate displays its outgoing connection.
 6. Set `PressDepth`, `PressDuration`, and `ReleaseDuration` for the visual button. Both durations
-   may be zero. Assign inherited elevator travel sound and Niagara assets if desired.
+   may be zero. In **Paradox Elevator > Button Feedback**, assign `PressSound`, `ReleaseSound`,
+   `PressNiagaraSystem`, and `ReleaseNiagaraSystem` for automatic button effects. Position
+   `ButtonMovementAudio` and `ButtonMovementVFX` relative to `ButtonMesh` to choose the effect origin.
+   Assign inherited elevator travel sound and Niagara assets for platform movement.
 7. Size the inherited stationary `GridNavigationModifier` around the shaft cells that must be
    blocked while the platform moves. `BarrierMesh` contributes walkable GridWorld geometry at both
    exact endpoints; give it query collision that blocks the collision profile used by the relevant
@@ -87,6 +90,31 @@ Blueprint queries. `RefreshButtonOccupancy` reconciles the button's local overla
 called after scripted placement. `AParadoxPickupableActor` already calls it after Drop when its
 authored world collider overlaps this button. Enable **Enable Authored World Collision** and a
 query-capable overlap response on such pickupables; an Actor Tag alone cannot create an overlap.
+
+## Button presentation in Blueprint
+
+The elevator exposes three protected BlueprintNativeEvents in **Paradox Elevator > Button Events**:
+
+- `HandleButtonPressed`: fires once when an accepted press starts the button's descent, before
+  the Receiver activates. Use it for lights, materials, or other cosmetic reactions.
+- `HandleButtonReleased`: fires once when the button starts rising, either at platform arrival or
+  when an incomplete press is canceled. Leaving during platform travel does not fire this event.
+- `HandleButtonMovementCompleted(bIsPressed)`: reports the exact visual endpoint. `true` means
+  fully down; `false` means raised. With zero animation duration, start and completion occur in
+  the same frame.
+
+Add these events from the Blueprint's Overrides menu or Event Graph. Native implementations are
+empty presentation hooks; automatic sound and Niagara playback remains native and works even
+when a Blueprint override does not call Parent. Call Parent to retain any behavior added by an
+intermediate Blueprint. Keep the button transform and Receiver activation under the native logic.
+
+As on `PressurePlate`, reusable audio and Niagara components automatically select the press or
+release asset. If a direction-specific asset is unset, the component's asset authored before
+BeginPlay is the fallback. Leaving both unset disables that effect. These components follow
+`ButtonMesh` independently of the inherited platform movement effects. Niagara emission stops
+at the end of the button animation; one-shot sounds finish naturally. A reversal restarts feedback
+for the new direction. Reset, WorldState restore, and EndPlay stop button effects without firing
+press, release, or completion events.
 
 ## Reset, WorldState, and debugging
 

@@ -3,8 +3,12 @@
 #include "Puzzles/ParadoxVerticalBarrier.h"
 #include "ParadoxElevator.generated.h"
 
+class UAudioComponent;
 class UBoxComponent;
+class UNiagaraComponent;
+class UNiagaraSystem;
 class UPrimitiveComponent;
+class USoundBase;
 class UStaticMeshComponent;
 struct FWorldStateParticipantId;
 struct FWorldStateRestoreResult;
@@ -38,6 +42,14 @@ public:
 	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Elevator|Components")
 	TObjectPtr<UBoxComponent> ButtonOccupancyVolume = nullptr;
 
+	/** Reusable spatial audio source for button press and release feedback. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Elevator|Components")
+	TObjectPtr<UAudioComponent> ButtonMovementAudio = nullptr;
+
+	/** Reusable Niagara source for button press and release feedback. */
+	UPROPERTY(VisibleDefaultsOnly, BlueprintReadOnly, Category = "Paradox Elevator|Components")
+	TObjectPtr<UNiagaraComponent> ButtonMovementVFX = nullptr;
+
 	/** Every listed AActor tag is required for non-Character objects. Characters bypass this filter. */
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button")
 	TArray<FName> RequiredButtonActorTags;
@@ -51,6 +63,22 @@ public:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button", meta = (ClampMin = "0.0", Units = "s"))
 	float ReleaseDuration = 0.15f;
+
+	/** Sound played when the button starts descending; falls back to ButtonMovementAudio's authored sound. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button Feedback")
+	TObjectPtr<USoundBase> PressSound = nullptr;
+
+	/** Sound played when the button starts rising; falls back to ButtonMovementAudio's authored sound. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button Feedback")
+	TObjectPtr<USoundBase> ReleaseSound = nullptr;
+
+	/** Niagara system activated on press; falls back to ButtonMovementVFX's authored system. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button Feedback")
+	TObjectPtr<UNiagaraSystem> PressNiagaraSystem = nullptr;
+
+	/** Niagara system activated on release; falls back to ButtonMovementVFX's authored system. */
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Paradox Elevator|Button Feedback")
+	TObjectPtr<UNiagaraSystem> ReleaseNiagaraSystem = nullptr;
 
 	/** Logs button/Receiver transitions for this instance. Enabled by default in non-Shipping builds; no per-frame logs. */
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Paradox Elevator|Debug")
@@ -77,6 +105,21 @@ public:
 	bool RefreshButtonOccupancy();
 
 protected:
+	/** Presentation hook when an accepted press starts descending. Automatic audio/VFX do not require calling Parent. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox Elevator|Button Events")
+	void HandleButtonPressed();
+	virtual void HandleButtonPressed_Implementation();
+
+	/** Presentation hook when the button starts rising, including a canceled press or arrival. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox Elevator|Button Events")
+	void HandleButtonReleased();
+	virtual void HandleButtonReleased_Implementation();
+
+	/** Presentation hook after an exact button endpoint is reached; true means fully down, false means raised. */
+	UFUNCTION(BlueprintNativeEvent, Category = "Paradox Elevator|Button Events")
+	void HandleButtonMovementCompleted(bool bIsPressed);
+	virtual void HandleButtonMovementCompleted_Implementation(bool bIsPressed);
+
 	/** Additional project-specific acceptance policy after Actor validity and tag filtering. */
 	UFUNCTION(BlueprintNativeEvent, Category = "Paradox Elevator|Button")
 	bool CanActorActivateButton(AActor* Candidate, UPrimitiveComponent* CandidateComponent) const;
@@ -123,6 +166,10 @@ private:
 	void StopButtonAnimation();
 	void ApplyButtonAlpha(float Alpha);
 	void FinishButtonAnimation();
+	/** Starts direction-specific button feedback independently of the platform's inherited feedback. */
+	void StartButtonFeedback(bool bPressed);
+	/** Stops reusable button feedback during a reversal, reset, restore, or teardown. */
+	void StopButtonFeedback();
 	void RebuildButtonAfterAuthorityChange();
 	void RefreshButtonDebug() const;
 	void LogButtonState(const TCHAR* Stage, const AActor* OtherActor = nullptr,
@@ -135,6 +182,13 @@ private:
 	void HandleWorldStateRestoreFinished(const FWorldStateRestoreResult& Result);
 
 	TSet<TWeakObjectPtr<AActor>> ButtonOccupants;
+	/** Strong transient fallbacks retained when direction-specific assets replace component defaults. */
+	UPROPERTY(Transient)
+	TObjectPtr<USoundBase> DefaultButtonMovementSound = nullptr;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UNiagaraSystem> DefaultButtonMovementNiagaraSystem = nullptr;
+
 	FTransform RaisedButtonRelativeTransform = FTransform::Identity;
 	FDelegateHandle WorldStateRestoreCompletedHandle;
 	FDelegateHandle WorldStateRestoreFailedHandle;

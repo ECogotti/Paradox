@@ -45,7 +45,7 @@ public class Paradox : ModuleRules
 		if (Target.bBuildEditor)
 		{
 			// Transient Blueprint composition tests; no editor dependency in game targets.
-			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "KismetCompiler" });
+			PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "UMGEditor", "KismetCompiler", "NiagaraEditor", "AssetRegistry" });
 		}
 
 		// Uncomment if you are using Slate UI

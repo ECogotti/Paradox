@@ -17,6 +17,10 @@ responsibility and their implementations use the matching path under `Private`:
 - `Public/Components` and `Private/Components` contain reusable project components;
 - `Public/Camera` and `Private/Camera` contain the independent orthographic rig, map bounds, and
   camera value types;
+- `Public/Environment` and `Private/Environment` contain the [black-hole actor](BLACK_HOLE.md),
+  its main-view HDR background capture, Blueprint material controls and
+  [compiled feature switches](BLACK_HOLE_FEATURES.md) and the
+  [world-space accretion extension](ACCRETION_EXTENSION.md);
 - `Public/Settings` and `Private/Settings` contain the Project Settings defaults;
 - `Public/TimeLoop` and `Private/TimeLoop` contain Chrono Spawns, temporal identity, and the
   authoritative recording/reset/reconstruction coordinator;

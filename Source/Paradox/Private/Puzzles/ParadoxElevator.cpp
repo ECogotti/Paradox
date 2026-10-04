@@ -1,5 +1,6 @@
 #include "Puzzles/ParadoxElevator.h"
 
+#include "Components/AudioComponent.h"
 #include "Components/BoxComponent.h"
 #include "Components/GridNavigationModifierComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -8,8 +9,11 @@
 #include "Engine/World.h"
 #include "GameFramework/Character.h"
 #include "Interaction/ParadoxSelectableComponent.h"
+#include "NiagaraComponent.h"
+#include "NiagaraSystem.h"
 #include "Paradox.h"
 #include "Receivers/PuzzleReceiverComponent.h"
+#include "Sound/SoundBase.h"
 #include "Subsystems/WorldStateSubsystem.h"
 #include "TimerManager.h"
 
@@ -56,6 +60,14 @@ AParadoxElevator::AParadoxElevator()
 	ButtonMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	ButtonMesh->SetCanEverAffectNavigation(false);
 
+	ButtonMovementAudio = CreateDefaultSubobject<UAudioComponent>(TEXT("ButtonMovementAudio"));
+	ButtonMovementAudio->SetupAttachment(ButtonMesh);
+	ButtonMovementAudio->SetAutoActivate(false);
+
+	ButtonMovementVFX = CreateDefaultSubobject<UNiagaraComponent>(TEXT("ButtonMovementVFX"));
+	ButtonMovementVFX->SetupAttachment(ButtonMesh);
+	ButtonMovementVFX->SetAutoActivate(false);
+
 	ButtonOccupancyVolume = CreateDefaultSubobject<UBoxComponent>(TEXT("ButtonOccupancyVolume"));
 	ButtonOccupancyVolume->SetupAttachment(BarrierMesh);
 	ButtonOccupancyVolume->SetMobility(EComponentMobility::Movable);
@@ -89,6 +101,9 @@ void AParadoxElevator::BeginPlay()
 {
 	Super::BeginPlay();
 	RaisedButtonRelativeTransform = ButtonMesh ? ButtonMesh->GetRelativeTransform() : FTransform::Identity;
+	DefaultButtonMovementSound = ButtonMovementAudio ? ButtonMovementAudio->GetSound() : nullptr;
+	DefaultButtonMovementNiagaraSystem = ButtonMovementVFX ? ButtonMovementVFX->GetAsset() : nullptr;
+	StopButtonFeedback();
 	bButtonInitialized = true;
 	bButtonArmed = true;
 	if (ButtonOccupancyVolume)
@@ -312,6 +327,18 @@ bool AParadoxElevator::IsButtonEnabled() const
 		&& PuzzleReceiver->GetActivationMode() == EPuzzleReceiverActivationMode::Manual
 		&& PuzzleReceiver->AreActivationPrerequisitesSatisfied()
 		&& !PuzzleReceiver->IsManualActivationRequested();
+}
+
+void AParadoxElevator::HandleButtonPressed_Implementation()
+{
+}
+
+void AParadoxElevator::HandleButtonReleased_Implementation()
+{
+}
+
+void AParadoxElevator::HandleButtonMovementCompleted_Implementation(const bool bIsPressed)
+{
 }
 
 bool AParadoxElevator::CanActorActivateButton_Implementation(AActor* Candidate, UPrimitiveComponent* CandidateComponent) const
@@ -709,6 +736,25 @@ void AParadoxElevator::StartButtonAnimation(const bool bPressed)
 			*GetNameSafe(this), bPressed, ButtonAnimationStartAlpha, ButtonAnimationTargetAlpha,
 			ButtonAnimationDuration, PressDepth);
 	}
+	bButtonAnimating = true;
+	RefreshMovementTickState();
+	if (bButtonInitialized && !bSuppressButtonActivation && !bWorldStateRestoring)
+	{
+		StartButtonFeedback(bPressed);
+		if (bPressed)
+		{
+			HandleButtonPressed();
+		}
+		else
+		{
+			HandleButtonReleased();
+		}
+	}
+	// A Blueprint presentation hook may reset the elevator or cancel this press synchronously.
+	if (!bButtonAnimating || ButtonAnimationTargetAlpha != (bPressed ? 1.0f : 0.0f))
+	{
+		return;
+	}
 	if (Remaining <= KINDA_SMALL_NUMBER || PressDepth <= KINDA_SMALL_NUMBER
 		|| ButtonAnimationDuration <= KINDA_SMALL_NUMBER || !GetWorld())
 	{
@@ -716,8 +762,6 @@ void AParadoxElevator::StartButtonAnimation(const bool bPressed)
 		FinishButtonAnimation();
 		return;
 	}
-	bButtonAnimating = true;
-	RefreshMovementTickState();
 }
 
 void AParadoxElevator::AdvanceButtonAnimation(const float DeltaSeconds)
@@ -739,6 +783,7 @@ void AParadoxElevator::AdvanceButtonAnimation(const float DeltaSeconds)
 void AParadoxElevator::StopButtonAnimation()
 {
 	bButtonAnimating = false;
+	StopButtonFeedback();
 	RefreshMovementTickState();
 }
 
@@ -763,7 +808,19 @@ void AParadoxElevator::FinishButtonAnimation()
 	bButtonAnimating = false;
 	ButtonAnimationElapsed = 0.0f;
 	ButtonAnimationDuration = 0.0f;
+	if (ButtonMovementVFX)
+	{
+		ButtonMovementVFX->Deactivate();
+	}
 	RefreshMovementTickState();
+	if (bButtonInitialized && !bSuppressButtonActivation && !bWorldStateRestoring)
+	{
+		HandleButtonMovementCompleted(ButtonAnimationTargetAlpha >= 1.0f);
+	}
+	if (!bButtonInitialized || bSuppressButtonActivation || bWorldStateRestoring)
+	{
+		return;
+	}
 	if (bCompletedPress)
 	{
 		RefreshButtonOccupancy();
@@ -773,6 +830,46 @@ void AParadoxElevator::FinishButtonAnimation()
 	if (!bButtonPressed && !IsMoving() && ButtonOccupants.IsEmpty())
 	{
 		bButtonArmed = true;
+	}
+}
+
+void AParadoxElevator::StartButtonFeedback(const bool bPressed)
+{
+	if (!bButtonInitialized || bSuppressButtonActivation || bWorldStateRestoring)
+	{
+		return;
+	}
+	if (ButtonMovementAudio)
+	{
+		ButtonMovementAudio->Stop();
+		USoundBase* SelectedSound = bPressed ? PressSound.Get() : ReleaseSound.Get();
+		ButtonMovementAudio->SetSound(SelectedSound ? SelectedSound : DefaultButtonMovementSound.Get());
+		if (ButtonMovementAudio->GetSound())
+		{
+			ButtonMovementAudio->Play();
+		}
+	}
+	if (ButtonMovementVFX)
+	{
+		ButtonMovementVFX->Deactivate();
+		UNiagaraSystem* SelectedSystem = bPressed ? PressNiagaraSystem.Get() : ReleaseNiagaraSystem.Get();
+		ButtonMovementVFX->SetAsset(SelectedSystem ? SelectedSystem : DefaultButtonMovementNiagaraSystem.Get());
+		if (ButtonMovementVFX->GetAsset())
+		{
+			ButtonMovementVFX->Activate(true);
+		}
+	}
+}
+
+void AParadoxElevator::StopButtonFeedback()
+{
+	if (ButtonMovementAudio)
+	{
+		ButtonMovementAudio->Stop();
+	}
+	if (ButtonMovementVFX)
+	{
+		ButtonMovementVFX->Deactivate();
 	}
 }
 
